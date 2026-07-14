@@ -83,8 +83,9 @@
 - **«Either voice_clone_prompt or ref_audio must be provided»**
   -> гонка двойной загрузки Qwen3 (исправлена замком в tts/manager.py).
   Если появилась вновь — не переустанавливать пакеты, смотреть код load().
-- **«Нет референса голоса»** -> нет voice/saika_ref.wav или пустой
-  tts.voice_ref_text в config.json. Лечение: шаг voice в setup/first_run.py.
+- **«Нет референса голоса»** -> нет wav по пути tts.voice_ref_wav
+  (по умолчанию voice/ref.wav) или пустой tts.voice_ref_text в config.json.
+  Лечение: шаг voice в setup/first_run.py.
 
 ## Разное
 
