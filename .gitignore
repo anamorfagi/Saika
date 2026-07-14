@@ -1,0 +1,28 @@
+# окружения — восстанавливаются start.bat / install_voxtral
+.venv/
+.venv_voxtral/
+
+# модели и кэши — качаются сами (гигабайты)
+models/
+.pip_cache/
+.pip_tmp/
+
+# сторонние репозитории — клонирует setup/first_run.py
+third_party/
+
+# локальный ffmpeg — качает setup (бинарники, ~100 МБ; лимит GitHub)
+tools/ffmpeg/
+
+# личный голосовой референс — публичному репо его видеть не надо
+voice/
+
+# личные данные и рантайм
+data/
+logs/
+.setup_state.json
+
+# мусор
+__pycache__/
+*.pyc
+Saika_portable.zip
+Saika_package_skipped.txt

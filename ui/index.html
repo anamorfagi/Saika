@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Сайка</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --border:#2a2f3a;
+    --text:#e8eaf0; --dim:#8a90a0; --accent:#7aa2ff; --ok:#4ade80;
+    --warn:#fbbf24; --err:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.5 "Segoe UI",system-ui,sans-serif;height:100vh;
+    display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:10px;padding:10px 18px;
+    border-bottom:1px solid var(--border)}
+  header .name{font-weight:600;font-size:17px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+  .dot.ok{background:var(--ok)} .dot.err{background:var(--err)}
+  #problems{margin-left:auto;font-size:12px;color:var(--warn);max-width:50%;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #main{flex:1;display:flex;overflow:hidden}
+  #sysbar{width:220px;flex:none;border-right:1px solid var(--border);
+    padding:14px 14px;overflow-y:auto;font-size:12px;color:var(--dim);
+    background:var(--panel)}
+  #sysbar .hdr{font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+    margin-bottom:8px;color:var(--dim)}
+  #sysbar .gname{color:var(--text);margin:8px 0 2px;font-size:12px}
+  #sysbar .row{display:flex;justify-content:space-between;margin-top:6px}
+  .sbar{height:6px;background:#262c38;border-radius:3px;overflow:hidden;
+    margin:3px 0 4px}
+  .sbar i{display:block;height:100%;border-radius:3px;transition:width .5s}
+  #sysbar .legend{margin-top:14px;font-size:11px;line-height:1.7;
+    border-top:1px solid var(--border);padding-top:10px}
+  @media (max-width:900px){#sysbar{display:none}}
+  #chat{flex:1;overflow-y:auto;padding:18px;display:flex;
+    flex-direction:column;gap:10px}
+  .msg{max-width:75%;padding:10px 14px;border-radius:14px;white-space:pre-wrap}
+  .msg.user{align-self:flex-end;background:#2b3550}
+  .msg.saika{align-self:flex-start;background:var(--panel2)}
+  .msg .meta{font-size:11px;color:var(--dim);margin-top:4px}
+  /* нижняя панель */
+  #bar{display:flex;align-items:center;gap:8px;padding:12px 16px;
+    border-top:1px solid var(--border);background:var(--panel)}
+  #input{flex:1;background:var(--panel2);border:1px solid var(--border);
+    color:var(--text);border-radius:12px;padding:10px 14px;font-size:15px;
+    outline:none}
+  .iconbtn{position:relative;width:40px;height:40px;border-radius:10px;
+    border:1px solid var(--border);background:var(--panel2);color:var(--dim);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+    font-size:18px;user-select:none}
+  .iconbtn:hover{color:var(--text);border-color:var(--accent)}
+  .iconbtn.active{color:#fff;background:#31406b;border-color:var(--accent)}
+  .iconbtn.rec{color:#fff;background:#6b3131;border-color:var(--err);
+    animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(248,113,113,.15)}}
+  /* индикатор уровня микрофона внутри кнопки 🎧 */
+  .iconbtn .lvl{position:absolute;left:5px;right:5px;bottom:3px;height:3px;
+    border-radius:2px;background:var(--ok);transform-origin:left;
+    transform:scaleX(0);transition:transform .08s linear}
+  .iconbtn.rec .lvl{background:#ffd166}
+  .chip{height:40px;border-radius:10px;border:1px solid var(--border);
+    background:var(--panel2);color:var(--dim);padding:0 12px;cursor:pointer;
+    display:flex;align-items:center;gap:6px;font-size:13px;max-width:220px}
+  .chip b{color:var(--text);font-weight:500;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  /* всплывающие меню как в Claude */
+  .pop{position:absolute;bottom:52px;left:0;min-width:260px;max-height:320px;
+    overflow-y:auto;background:var(--panel2);border:1px solid var(--border);
+    border-radius:12px;padding:6px;display:none;z-index:10;
+    box-shadow:0 8px 30px rgba(0,0,0,.5)}
+  .pop.show{display:block}
+  .pop .title{font-size:11px;text-transform:uppercase;color:var(--dim);
+    padding:6px 10px 2px}
+  .pop .item{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;
+    display:flex;align-items:center;gap:8px}
+  .pop .item:hover{background:#262c38}
+  .pop .item.sel{color:var(--accent)}
+  .pop .item .st{margin-left:auto;font-size:11px;color:var(--dim)}
+  .pop .item .st.ok{color:var(--ok)} .pop .item .st.bad{color:var(--err)}
+  .pop .item button.mini{background:none;border:1px solid var(--border);
+    border-radius:6px;color:var(--dim);cursor:pointer;font-size:12px;
+    width:26px;height:22px;line-height:1;flex:none}
+  .pop .item button.mini:hover{color:var(--text);border-color:var(--accent)}
+  .pop .engerr{font-size:11px;color:var(--err);padding:0 10px 6px 28px;
+    white-space:normal;word-break:break-word;cursor:text;user-select:text}
+  /* бегущая полоска загрузки модели */
+  .pop .loadbar{height:3px;margin:2px 10px 6px;border-radius:2px;
+    overflow:hidden;background:#262c38}
+  .pop .loadbar i{display:block;height:100%;width:40%;border-radius:2px;
+    background:var(--accent);animation:slide 1.1s linear infinite}
+  @keyframes slide{from{margin-left:-40%}to{margin-left:100%}}
+  .wrap{position:relative}
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="dot-llm" title="LLM"></div>
+  <div class="dot" id="dot-stt" title="Слух"></div>
+  <div class="dot" id="dot-tts" title="Голос"></div>
+  <div class="name">Сайка</div>
+  <div id="problems"></div>
+</header>
+
+<div id="main">
+  <div id="sysbar"></div>
+  <div id="chat"></div>
+</div>
+
+<div id="bar">
+  <!-- тумблер слуха: вкл/выкл + индикатор уровня -->
+  <button class="iconbtn" id="btn-listen" title="Слушать меня (вкл/выкл)">🎧
+    <span class="lvl" id="lvl"></span></button>
+  <!-- микро: выбор устройства + движка слуха + прослушка -->
+  <div class="wrap">
+    <button class="iconbtn" id="btn-mic" title="Настройки микрофона">🎙</button>
+    <div class="pop" id="pop-mic">
+      <div class="title">Микрофон в системе</div>
+      <div id="mic-devices"></div>
+      <div class="title">Проверка</div>
+      <div class="item" id="btn-monitor">🔉 Прослушать этот микрофон</div>
+      <div class="title">Движок слуха</div>
+      <div id="stt-engines"></div>
+    </div>
+  </div>
+  <!-- модель -->
+  <div class="wrap">
+    <button class="chip" id="btn-model">🧠 <b id="model-label">модель…</b></button>
+    <div class="pop" id="pop-model"><div id="model-list"></div></div>
+  </div>
+  <!-- голос -->
+  <div class="wrap">
+    <button class="iconbtn" id="btn-tts" title="Голос">🔊</button>
+    <div class="pop" id="pop-tts">
+      <div class="title">Озвучка</div>
+      <div id="tts-engines"></div>
+    </div>
+  </div>
+  <input id="input" placeholder="Скажи или напиши…" autocomplete="off">
+  <button class="iconbtn" id="btn-send" title="Отправить">➤</button>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let ws, micOn=false, micStream, audioCtx, workletNode, selectedMic=localStorage.micId||'';
+let playCtx, playTime=0, curSr=24000, status={};
+
+/* ---------- WebSocket ---------- */
+function connect(){
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType='arraybuffer';
+  ws.onmessage = e=>{
+    if(typeof e.data === 'string'){ handleJson(JSON.parse(e.data)); }
+    else{ playPcm(e.data); }
+  };
+  ws.onclose = ()=> setTimeout(connect, 1500);
+}
+let curSaikaMsg=null;
+function handleJson(m){
+  if(m.type==='stt'){ addMsg('user', m.text, 'услышано: '+m.engine); curSaikaMsg=null; }
+  else if(m.type==='token'){
+    if(!curSaikaMsg) curSaikaMsg=addMsg('saika','');
+    curSaikaMsg.firstChild.textContent += m.text;
+    $('#chat').scrollTop = 1e9;
+  }
+  else if(m.type==='audio_meta'){ curSr=m.sr; }
+  else if(m.type==='done'){ curSaikaMsg=null; }
+  else if(m.type==='error'){ addMsg('saika','⚠ '+m.text); curSaikaMsg=null; }
+  else if(m.type==='problem'){ showProblem(m); }
+}
+function addMsg(who, text, meta){
+  const d=document.createElement('div');
+  d.className='msg '+who;
+  const t=document.createElement('div'); t.textContent=text; d.appendChild(t);
+  if(meta){const md=document.createElement('div');md.className='meta';
+    md.textContent=meta; d.appendChild(md);}
+  $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+  return d;
+}
+function showProblem(p){
+  $('#problems').textContent = p.error ? `⚠ ${p.component}: ${p.action}` : `✓ ${p.component}: ${p.action}`;
+  setTimeout(()=>{ $('#problems').textContent=''; }, 8000);
+}
+
+/* ---------- воспроизведение (float32 PCM) ---------- */
+function playPcm(buf){
+  if(!playCtx) playCtx = new AudioContext();
+  const f32 = new Float32Array(buf);
+  const ab = playCtx.createBuffer(1, f32.length, curSr);
+  ab.copyToChannel(f32, 0);
+  const src = playCtx.createBufferSource();
+  src.buffer=ab; src.connect(playCtx.destination);
+  const now=playCtx.currentTime;
+  if(playTime < now) playTime = now + 0.05;
+  src.start(playTime);
+  playTime += ab.duration;
+}
+
+/* ---------- микрофон: захват -> int16 16k -> WS ---------- */
+const workletCode = `
+class Cap extends AudioWorkletProcessor{
+  constructor(){ super(); this.buf=[]; this.ratio=sampleRate/16000; this.acc=0; }
+  process(inputs){
+    const ch=inputs[0][0]; if(!ch) return true;
+    // простое прореживание до 16k
+    for(let i=0;i<ch.length;i+=this.ratio){
+      this.buf.push(ch[Math.floor(i)|0]);
+    }
+    if(this.buf.length>=1600){ // 100ms
+      const out=new Int16Array(this.buf.length);
+      for(let i=0;i<this.buf.length;i++){
+        let v=Math.max(-1,Math.min(1,this.buf[i]));
+        out[i]=v*32767;
+      }
+      this.port.postMessage(out.buffer,[out.buffer]);
+      this.buf=[];
+    }
+    return true;
+  }
+}
+registerProcessor('cap',Cap);`;
+
+async function startMic(){
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: selectedMic? {deviceId:{exact:selectedMic}} : true });
+  audioCtx = new AudioContext();
+  const blob = new Blob([workletCode],{type:'application/javascript'});
+  await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+  const src = audioCtx.createMediaStreamSource(micStream);
+  workletNode = new AudioWorkletNode(audioCtx,'cap');
+  workletNode.port.onmessage = e=>{
+    if(ws && ws.readyState===1) ws.send(e.data);
+    // индикатор уровня: RMS чанка -> полоска в кнопке 🎧
+    const a=new Int16Array(e.data); let s=0, n=0;
+    for(let i=0;i<a.length;i+=4){ const v=a[i]/32768; s+=v*v; n++; }
+    const rms=Math.sqrt(s/Math.max(1,n));
+    $('#lvl').style.transform='scaleX('+Math.min(1,rms*8)+')';
+  };
+  src.connect(workletNode);
+  micOn=true; $('#btn-listen').classList.add('rec');
+  $('#input').placeholder='Слушаю… говори (или напиши)';
+}
+function stopMic(){
+  micOn=false; $('#btn-listen').classList.remove('rec');
+  $('#lvl').style.transform='scaleX(0)';
+  $('#input').placeholder='Скажи или напиши…';
+  if(workletNode) workletNode.disconnect();
+  if(micStream) micStream.getTracks().forEach(t=>t.stop());
+  if(audioCtx) audioCtx.close();
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({type:'mic_stop'}));
+}
+
+/* ---------- прослушка микрофона (слышишь сам себя) ---------- */
+let monOn=false, monStream, monCtx;
+async function toggleMonitor(){
+  if(monOn){
+    if(monCtx) monCtx.close();
+    if(monStream) monStream.getTracks().forEach(t=>t.stop());
+    monOn=false;
+    $('#btn-monitor').textContent='🔉 Прослушать этот микрофон';
+    $('#btn-monitor').classList.remove('sel');
+    return;
+  }
+  try{
+    monStream = await navigator.mediaDevices.getUserMedia({
+      audio: selectedMic? {deviceId:{exact:selectedMic}} : true });
+    monCtx = new AudioContext();
+    monCtx.createMediaStreamSource(monStream).connect(monCtx.destination);
+    monOn=true;
+    $('#btn-monitor').textContent='🔇 Выключить прослушку';
+    $('#btn-monitor').classList.add('sel');
+  }catch(e){ alert('Не удалось открыть микрофон: '+e); }
+}
+
+/* ---------- всплывающие меню ---------- */
+function togglePop(id){
+  document.querySelectorAll('.pop').forEach(p=>{
+    if(p.id!==id) p.classList.remove('show');});
+  $('#'+id).classList.toggle('show');
+}
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.wrap'))
+    document.querySelectorAll('.pop').forEach(p=>p.classList.remove('show'));
+});
+
+async function fillMicPop(){
+  try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e){}
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  const mics = devs.filter(d=>d.kind==='audioinput');
+  $('#mic-devices').innerHTML='';
+  mics.forEach((d,i)=>{
+    const el=document.createElement('div');
+    el.className='item'+((selectedMic? d.deviceId===selectedMic : i===0)?' sel':'');
+    el.textContent='🎙 '+(d.label||('Микрофон '+(i+1)));
+    el.onclick=()=>{selectedMic=d.deviceId;localStorage.micId=d.deviceId;
+      fillMicPop(); if(micOn){stopMic();startMic();}
+      if(monOn){toggleMonitor().then(()=>toggleMonitor());}};
+    $('#mic-devices').appendChild(el);
+  });
+  fillSttEngines();
+}
+
+function fillSttEngines(){
+  const names={faster_whisper:'Faster-Whisper (large-v3-turbo)',
+    gigaam:'GigaAM v3 (Сбер)', vosk:'Vosk (лёгкий, офлайн)',
+    whispercpp:'Whisper.cpp', tone:'T-one (Т-Банк)',
+    voxtral:'Voxtral Realtime 4B (Mistral)'};
+  const st = status.stt||{};
+  const box=$('#stt-engines'); box.innerHTML='';
+  (st.engines||[]).forEach(nm=>{
+    const el=document.createElement('div');
+    el.className='item'+(nm===st.current?' sel':'');
+    const h=(st.health||{})[nm]||'unknown';
+    const loaded=(st.loaded||{})[nm];
+    const err=(st.errors||{})[nm]||'';
+    // статус: ✗ ошибка > ● в памяти > — не загружен
+    const stIcon = h==='broken' ? '<span class="st bad">✗</span>'
+                 : loaded ? '<span class="st ok">● в памяти</span>'
+                 : '<span class="st">—</span>';
+    el.innerHTML=`👂 ${names[nm]||nm} ${stIcon}
+      <button class="mini" title="${loaded?'Выгрузить модель из памяти'
+        :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
+    el.onclick=async()=>{await api('/api/select',{kind:'stt',value:nm});
+      await refresh(); };
+    const b=el.querySelector('.mini');
+    b.onclick=async(e)=>{
+      e.stopPropagation();
+      b.textContent='⏳'; b.disabled=true;
+      await api('/api/stt/model',{name:nm, action: loaded?'unload':'load'});
+      await refresh();
+    };
+    box.appendChild(el);
+    if(err){
+      const ed=document.createElement('div');
+      ed.className='engerr';
+      ed.textContent='⚠ '+err;
+      ed.onclick=e=>e.stopPropagation();
+      box.appendChild(ed);
+    }
+  });
+}
+
+/* ---------- панель системы слева ---------- */
+let sysinfo=null;
+const GB=b=>(b/2**30).toFixed(1)+' ГБ';
+function sbar(label,pct,extra){
+  const c=pct<60?'var(--ok)':pct<85?'var(--warn)':'var(--err)';
+  return `<div class="row"><span>${label}</span><span>${extra??Math.round(pct)+'%'}</span></div>
+    <div class="sbar"><i style="width:${Math.min(100,pct)}%;background:${c}"></i></div>`;
+}
+async function pollSystem(){
+  try{
+    sysinfo = await (await fetch('/api/system')).json();
+    let h='<div class="hdr">Система</div>';
+    const c=sysinfo.cpu||{};
+    if(c.percent!=null) h+=sbar(`ЦП${c.cores?' · '+c.cores+' пот.':''}`, c.percent);
+    const r=sysinfo.ram||{};
+    if(r.total) h+=sbar('ОЗУ', r.percent, GB(r.used)+' / '+GB(r.total));
+    const g=sysinfo.gpu;
+    if(g){
+      h+=`<div class="gname">${g.name}</div>`;
+      h+=sbar('VRAM', g.vram_used/g.vram_total*100, GB(g.vram_used)+' / '+GB(g.vram_total));
+      if(g.util!=null) h+=sbar('GPU', g.util);
+      if(g.temp!=null) h+=`<div class="row"><span>Температура</span><span>${g.temp}°C</span></div>`;
+    }
+    h+=`<div class="legend">Вес моделей для этого ПК:<br>
+      <span style="color:var(--ok)">●</span> лёгкая — целиком в VRAM<br>
+      <span style="color:var(--warn)">●</span> впритык — может тормозить<br>
+      <span style="color:var(--err)">●</span> тяжёлая — уйдёт в ОЗУ, медленно</div>`;
+    $('#sysbar').innerHTML=h;
+  }catch(e){}
+}
+
+/* вес модели: размер с диска ×1.2 (kv-кэш и пр.) против VRAM */
+function weightDot(m){
+  if(!m.size || !sysinfo || !sysinfo.gpu) return '';
+  const req=m.size*1.2, v=sysinfo.gpu.vram_total, k=req/v;
+  const c=k<=0.7?'var(--ok)':k<=1.05?'var(--warn)':'var(--err)';
+  const t=k<=0.7?'лёгкая: целиком поместится в VRAM'
+        :k<=1.05?'впритык: заполнит почти всю VRAM, возможны тормоза'
+        :'тяжёлая: не влезет в VRAM, часть уйдёт в ОЗУ — будет медленно';
+  return `<span style="color:${c};flex:none" title="${t} (~${GB(req)} из ${GB(v)})">●</span>`;
+}
+
+let modelPoll=null;
+async function fillModelPop(){
+  const r = await (await fetch('/api/models')).json();
+  const loaded = new Set(r.loaded||[]);
+  const list=$('#model-list'); list.innerHTML='';
+  const groups={ollama:'Ollama',lmstudio:'LM Studio'};
+  for(const [backend,label] of Object.entries(groups)){
+    const ms = r.models.filter(m=>m.backend===backend);
+    const t=document.createElement('div');t.className='title';
+    t.textContent=label + (ms.length? '' : ' — не запущен');
+    list.appendChild(t);
+    ms.forEach(m=>{
+      const el=document.createElement('div');
+      const sel = status.llm && status.llm.model===m.name &&
+                  status.llm.backend===m.backend;
+      el.className='item'+(sel?' sel':'');
+      const dot = loaded.has(m.name)?' <span class="st ok" title="в памяти">в памяти</span>':'';
+      el.innerHTML=weightDot(m)+'🧠 '+m.name+dot;
+      el.onclick=async()=>{
+        await api('/api/select',{kind:'model',value:m.name,backend:m.backend});
+        refresh();
+        if(!loaded.has(m.name)){
+          // полоска под моделью, пока Ollama грузит её в память
+          const bar=document.createElement('div');
+          bar.className='loadbar'; bar.innerHTML='<i></i>';
+          el.after(bar);
+          clearInterval(modelPoll);
+          modelPoll=setInterval(async()=>{
+            try{
+              const rr=await (await fetch('/api/models')).json();
+              if((rr.loaded||[]).includes(m.name)){
+                clearInterval(modelPoll); fillModelPop();
+              }
+            }catch(e){}
+          }, 2000);
+          setTimeout(()=>clearInterval(modelPoll), 600000);
+        } else { fillModelPop(); }
+      };
+      list.appendChild(el);
+    });
+  }
+}
+
+function fillTtsPop(){
+  const names={qwen3:'Qwen3-TTS — голос Сайки', silero:'Silero (запасной)',
+    edge:'Edge-TTS (онлайн)'};
+  const st=status.tts||{};
+  const box=$('#tts-engines'); box.innerHTML='';
+  (st.engines||[]).forEach(nm=>{
+    const el=document.createElement('div');
+    el.className='item'+(nm===st.current?' sel':'');
+    const h=(st.health||{})[nm]||'unknown';
+    const loaded=(st.loaded||{})[nm];   // true/false, null = онлайн-движок
+    const err=(st.errors||{})[nm]||'';
+    const stIcon = h==='broken' ? '<span class="st bad">✗</span>'
+                 : loaded===true ? '<span class="st ok">● в памяти</span>'
+                 : loaded===null ? '<span class="st">☁ онлайн</span>'
+                 : '<span class="st">—</span>';
+    const btn = loaded===null ? '' :
+      `<button class="mini" title="${loaded?'Выгрузить модель из памяти'
+        :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
+    el.innerHTML=`🔊 ${names[nm]||nm} ${stIcon}${btn}`;
+    el.onclick=async()=>{await api('/api/select',{kind:'tts',value:nm});
+      await refresh();};
+    const b=el.querySelector('.mini');
+    if(b) b.onclick=async(e)=>{
+      e.stopPropagation();
+      b.textContent='⏳'; b.disabled=true;
+      await api('/api/tts/model',{name:nm, action: loaded?'unload':'load'});
+      await refresh();
+    };
+    box.appendChild(el);
+    if(err){
+      const ed=document.createElement('div');
+      ed.className='engerr';
+      ed.textContent='⚠ '+err;
+      ed.onclick=e=>e.stopPropagation();
+      box.appendChild(ed);
+    }
+  });
+}
+
+async function api(url, body){
+  return (await fetch(url,{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)})).json();
+}
+
+async function refresh(){
+  try{
+    status = await (await fetch('/api/status')).json();
+    $('#model-label').textContent = status.llm.model || 'выбери модель';
+    const anyLlm = Object.values(status.llm.backends).some(v=>v);
+    $('#dot-llm').className='dot '+(anyLlm?'ok':'err');
+    $('#dot-stt').className='dot '+(status.stt.health[status.stt.current]==='broken'?'err':'ok');
+    $('#dot-tts').className='dot '+(status.tts.health[status.tts.current]==='broken'?'err':'ok');
+    fillTtsPop(); fillSttEngines();
+  }catch(e){}
+}
+
+/* ---------- события ---------- */
+$('#btn-listen').onclick = ()=> micOn? stopMic(): startMic();
+$('#btn-mic').onclick = ()=>{ fillMicPop(); togglePop('pop-mic'); };
+$('#pop-mic').addEventListener('click', e=>e.stopPropagation());
+$('#btn-monitor').onclick = toggleMonitor;
+$('#btn-model').onclick = ()=>{ fillModelPop(); togglePop('pop-model'); };
+$('#btn-tts').onclick = ()=>{ togglePop('pop-tts'); };
+$('#btn-send').onclick = send;
+$('#input').addEventListener('keydown', e=>{ if(e.key==='Enter') send(); });
+function send(){
+  const v=$('#input').value.trim(); if(!v||!ws||ws.readyState!==1) return;
+  ws.send(JSON.stringify({type:'text',text:v}));
+  addMsg('user', v); curSaikaMsg=null;
+  $('#input').value='';
+}
+
+/* кнопка записи: одиночный клик по значку меню, отдельная логика:
+   долгое нажатие пробела = говорить (push-to-talk) */
+document.addEventListener('keydown', e=>{
+  if(e.code==='Space' && e.target===document.body && !micOn){
+    e.preventDefault(); startMic(); }
+});
+document.addEventListener('keyup', e=>{
+  if(e.code==='Space' && micOn && e.target===document.body){ stopMic(); }
+});
+
+connect();
+refresh(); setInterval(refresh, 5000);
+pollSystem(); setInterval(pollSystem, 3000);
+fillMicPop();
+</script>
+</body>
+</html>

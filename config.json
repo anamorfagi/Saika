@@ -1,0 +1,104 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "auto_open_browser": true
+  },
+  "llm": {
+    "backend": "lmstudio",
+    "ollama_url": "http://127.0.0.1:11434",
+    "lmstudio_url": "http://127.0.0.1:1234",
+    "model": "google/gemma-4-12b",
+    "temperature": 0.8,
+    "max_history": 30
+  },
+  "stt": {
+    "engine": "gigaam",
+    "language": "ru",
+    "sample_rate": 16000,
+    "vad": {
+      "rms_threshold": 0.012,
+      "silence_ms": 700,
+      "min_speech_ms": 300,
+      "max_segment_s": 25
+    },
+    "fallback_order": [
+      "faster_whisper",
+      "gigaam",
+      "vosk",
+      "whispercpp",
+      "tone"
+    ],
+    "engines": {
+      "faster_whisper": {
+        "model": "large-v3-turbo",
+        "device": "auto",
+        "compute_type": "auto"
+      },
+      "gigaam": {
+        "model": "v3_e2e_rnnt"
+      },
+      "vosk": {
+        "model_dir": "models/vosk-model-small-ru-0.22"
+      },
+      "whispercpp": {
+        "model": "medium",
+        "n_threads": 8
+      },
+      "tone": {},
+      "voxtral": {
+        "model": "mistralai/Voxtral-Mini-4B-Realtime-2602",
+        "venv": ".venv_voxtral",
+        "worker": "workers/voxtral_worker.py",
+        "setup": "setup/install_voxtral.bat",
+        "port": 8766,
+        "timeout_s": 180
+      }
+    }
+  },
+  "tts": {
+    "engine": "qwen3",
+    "enabled": true,
+    "voice_ref": "voice/saika_voise_ru.mp3",
+    "voice_ref_wav": "voice/saika_ref.wav",
+    "voice_ref_text": "Я проснулась раньше будильника, когда комната всё ещё была укутана синим рассветом. Несколько секунд я просто слушала своё дыхание и ощущала тихую тяжесть грядущего дня. Раньше утра пугали меня, слишком много ожиданий, слишком много незавершённых мыслей. Теперь они кажутся чистыми страницами. Я сварила кофе, наблюдая, как поднимается пар, словно что-то живое, и улыбнулась этому маленькому ритуалу. Снаружи город медленно просыпался, притворяясь спокойным. Я надела куртку и вышла в холодный воздух, позволяя ему прояснить голову. Я не знаю точно, куда иду, и, к моему удивлению, это больше не тревожит. Я поняла, что движение вперёд не всегда требует идеального плана. Иногда достаточно доверять собственным шагам, даже если они не уверены.",
+    "fallback_order": [
+      "qwen3",
+      "silero",
+      "edge"
+    ],
+    "qwen3": {
+      "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "language": "Russian",
+      "emit_every_frames": 4,
+      "decode_window_frames": 80,
+      "attn": "auto",
+      "optimize": true
+    },
+    "silero": {
+      "speaker": "xenia",
+      "sample_rate": 48000
+    },
+    "edge": {
+      "voice": "ru-RU-SvetlanaNeural"
+    }
+  },
+  "memory": {
+    "db_path": "data/saika_memory.db",
+    "chroma_path": "data/chroma",
+    "raw_limit_messages": 500,
+    "raw_limit_hours": 4,
+    "compress_raw_every_min": 120,
+    "core_update_every_days": 7,
+    "episode_hard_cap": 10000,
+    "regular_min_sessions": 3,
+    "regular_min_messages": 30,
+    "stranger_ttl_days": 30,
+    "rag_top_k": 5
+  },
+  "owner": {
+    "name": "Anamorf",
+    "id": "owner"
+  },
+  "assistant_name": "Сайка"
+}
