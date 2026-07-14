@@ -9,16 +9,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem -- commit identity (local to this repo if not set globally)
-git config user.name >nul 2>&1
-if errorlevel 1 git config user.name "Anamorf"
-git config user.email >nul 2>&1
-if errorlevel 1 git config user.email "anamorf.agi@gmail.com"
-
 if not exist ".git" (
     echo [*] Initializing repository, branch: main
     git init -b main
 )
+
+rem -- commit identity AFTER init (needs an existing repo for local config)
+git config user.name >nul 2>&1
+if errorlevel 1 git config user.name "Anamorf"
+git config user.email >nul 2>&1
+if errorlevel 1 git config user.email "anamorf.agi@gmail.com"
 
 git add -A
 git commit -m "Saika: working snapshot"
