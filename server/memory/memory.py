@@ -150,12 +150,19 @@ class Memory:
                 "(SELECT id FROM events ORDER BY id DESC LIMIT ?)", (limit,))
             self._conn.commit()
 
-    def recent_raw(self, person_id=None, limit=30):
+    def recent_raw(self, person_id=None, limit=30, since_ts=0.0):
         q = "SELECT role,text FROM events"
-        args = []
+        conds, args = [], []
         if person_id:
-            q += " WHERE person_id=?"
+            conds.append("person_id=?")
             args.append(person_id)
+        if since_ts:
+            # «новый диалог»: сообщения до отметки не попадают в контекст
+            # (в долгой памяти/эпизодах они остаются)
+            conds.append("ts>?")
+            args.append(since_ts)
+        if conds:
+            q += " WHERE " + " AND ".join(conds)
         q += " ORDER BY id DESC LIMIT ?"
         args.append(limit)
         with self.lock:

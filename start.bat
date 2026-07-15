@@ -69,6 +69,9 @@ where ollama >nul 2>&1 && (
     tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /i "ollama.exe" >nul || start "" /min ollama serve
 )
 
+:: ---------- start HandsPC (tools: web search etc.) if present ----------
+if exist "%~dp0..\HandsPC\run.bat" start "HandsPC" /min cmd /c "%~dp0..\HandsPC\run.bat"
+
 :: ---------- run with self-restart ----------
 set RESTARTS=0
 :run

@@ -93,6 +93,34 @@
     background:var(--accent);animation:slide 1.1s linear infinite}
   @keyframes slide{from{margin-left:-40%}to{margin-left:100%}}
   .wrap{position:relative}
+  /* DreamPC — диффузионная модель, отдельная модалка */
+  .dp-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+    z-index:50;align-items:center;justify-content:center}
+  .dp-modal.show{display:flex}
+  .dp-card{width:640px;max-width:92vw;max-height:82vh;background:var(--panel);
+    border:1px solid var(--border);border-radius:14px;padding:16px;
+    display:flex;flex-direction:column;gap:10px}
+  .dp-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  #dp-prompt{background:var(--panel2);border:1px solid var(--border);
+    color:var(--text);border-radius:10px;padding:10px;font:14px/1.4 inherit;
+    min-height:60px;resize:vertical}
+  .dp-output{flex:1;overflow-y:auto;background:var(--panel2);
+    border:1px solid var(--border);border-radius:10px;padding:12px;
+    white-space:pre-wrap;min-height:120px;font-size:14px}
+  .dp-stats{font-size:12px;color:var(--dim)}
+  /* git-синк — кнопка в правом верхнем углу */
+  .badge{position:absolute;top:1px;right:1px;min-width:14px;height:14px;
+    border-radius:7px;background:var(--warn);color:#000;font-size:10px;
+    font-weight:600;line-height:14px;text-align:center;padding:0 2px;
+    display:none}
+  .badge.show{display:block}
+  .pop.top{bottom:auto;top:44px;left:auto;right:0}
+  #git-msg{width:100%;margin:6px 0;background:var(--panel);
+    border:1px solid var(--border);color:var(--text);border-radius:8px;
+    padding:6px 8px;font-size:13px;box-sizing:border-box}
+  #git-push{width:100%;justify-content:center}
+  #git-result{font-size:12px;margin-top:6px;white-space:pre-wrap;
+    max-width:280px}
 </style>
 </head>
 <body>
@@ -101,7 +129,19 @@
   <div class="dot" id="dot-stt" title="Слух"></div>
   <div class="dot" id="dot-tts" title="Голос"></div>
   <div class="name">Сайка</div>
+  <button class="iconbtn" id="btn-clear" title="Новый диалог (забыть контекст беседы)"
+    style="width:30px;height:30px;font-size:14px">🧹</button>
   <div id="problems"></div>
+  <div class="wrap">
+    <button class="iconbtn" id="btn-git" title="Git: закоммитить и запушить на GitHub"
+      style="width:30px;height:30px;font-size:14px">⬆<span class="badge" id="git-badge"></span></button>
+    <div class="pop top" id="pop-git">
+      <div class="title" id="git-branch">ветка…</div>
+      <input id="git-msg" placeholder="Сообщение коммита (необязательно)">
+      <button class="chip" id="git-push">⬆ Закоммитить и запушить</button>
+      <div id="git-result"></div>
+    </div>
+  </div>
 </header>
 
 <div id="main">
@@ -138,8 +178,23 @@
       <div id="tts-engines"></div>
     </div>
   </div>
+  <!-- DreamPC: экспериментальная диффузионная модель -->
+  <button class="iconbtn" id="btn-dreampc" title="DreamPC — диффузионная модель LLaDA-8B (эксперимент)">🧪</button>
   <input id="input" placeholder="Скажи или напиши…" autocomplete="off">
   <button class="iconbtn" id="btn-send" title="Отправить">➤</button>
+</div>
+
+<div id="dp-modal" class="dp-modal">
+  <div class="dp-card">
+    <div class="dp-head">
+      <b>🧪 DreamPC — LLaDA-8B (диффузионная модель, эксперимент)</b>
+      <button class="iconbtn" id="dp-close" style="width:30px;height:30px;font-size:14px">✕</button>
+    </div>
+    <textarea id="dp-prompt" placeholder="Спроси что-нибудь… ответ будет проявляться из шума, не по токену за раз"></textarea>
+    <button class="chip" id="dp-run" style="align-self:flex-start;color:var(--text)">▶ Проявить</button>
+    <div id="dp-output" class="dp-output"></div>
+    <div id="dp-stats" class="dp-stats"></div>
+  </div>
 </div>
 
 <script>
@@ -160,10 +215,32 @@ function connect(){
 let curSaikaMsg=null;
 function handleJson(m){
   if(m.type==='stt'){ addMsg('user', m.text, 'услышано: '+m.engine); curSaikaMsg=null; }
+  else if(m.type==='stt_ignored'){
+    // услышала, но это фон (не обращались) — показываем серым, не отвечает
+    const d=document.createElement('div');
+    d.style.cssText='align-self:flex-end;font-size:11px;color:var(--dim);'+
+      'max-width:60%;padding:0 6px';
+    d.textContent='🙉 '+m.text;
+    $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+  }
   else if(m.type==='token'){
     if(!curSaikaMsg) curSaikaMsg=addMsg('saika','');
     curSaikaMsg.firstChild.textContent += m.text;
     $('#chat').scrollTop = 1e9;
+  }
+  else if(m.type==='tool'){
+    const d=document.createElement('div');
+    d.style.cssText='align-self:flex-start;font-size:11px;color:var(--dim);padding:0 6px';
+    d.textContent='🔎 '+m.name+' '+(m.args||'');
+    $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+    curSaikaMsg=null;
+  }
+  else if(m.type==='stats'){
+    if(curSaikaMsg){
+      const md=document.createElement('div'); md.className='meta';
+      md.textContent='⚡ '+m.tps+' ток/с · '+m.tokens+' токенов';
+      curSaikaMsg.appendChild(md);
+    }
   }
   else if(m.type==='audio_meta'){ curSr=m.sr; }
   else if(m.type==='done'){ curSaikaMsg=null; }
@@ -184,18 +261,37 @@ function showProblem(p){
   setTimeout(()=>{ $('#problems').textContent=''; }, 8000);
 }
 
-/* ---------- воспроизведение (float32 PCM) ---------- */
+/* ---------- воспроизведение (float32 PCM) + перебивание ---------- */
+let gainNode=null, activeSrcs=[], duckSince=0;
 function playPcm(buf){
-  if(!playCtx) playCtx = new AudioContext();
+  if(!playCtx){
+    playCtx = new AudioContext();
+    gainNode = playCtx.createGain();
+    gainNode.connect(playCtx.destination);
+  }
   const f32 = new Float32Array(buf);
   const ab = playCtx.createBuffer(1, f32.length, curSr);
   ab.copyToChannel(f32, 0);
   const src = playCtx.createBufferSource();
-  src.buffer=ab; src.connect(playCtx.destination);
+  src.buffer=ab; src.connect(gainNode);
   const now=playCtx.currentTime;
   if(playTime < now) playTime = now + 0.05;
   src.start(playTime);
   playTime += ab.duration;
+  activeSrcs.push(src);
+  src.onended=()=>{const i=activeSrcs.indexOf(src); if(i>=0) activeSrcs.splice(i,1);};
+}
+function saikaSpeaking(){
+  return playCtx && playTime > playCtx.currentTime + 0.05;
+}
+function bargeIn(){
+  // пользователь перебил: глушим, рвём очередь, останавливаем генерацию
+  if(gainNode) gainNode.gain.setTargetAtTime(0, playCtx.currentTime, .04);
+  activeSrcs.forEach(s=>{try{s.stop();}catch(e){}});
+  activeSrcs=[]; playTime=0;
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({type:'interrupt'}));
+  setTimeout(()=>{ if(gainNode)
+    gainNode.gain.setTargetAtTime(1, playCtx.currentTime, .05); }, 300);
 }
 
 /* ---------- микрофон: захват -> int16 16k -> WS ---------- */
@@ -237,10 +333,25 @@ async function startMic(){
     for(let i=0;i<a.length;i+=4){ const v=a[i]/32768; s+=v*v; n++; }
     const rms=Math.sqrt(s/Math.max(1,n));
     $('#lvl').style.transform='scaleX('+Math.min(1,rms*8)+')';
+
+    // перебивание: Сайка говорит, а ты начал — пригибаем её голос,
+    // говоришь дальше ~полсекунды — она замолкает и слушает
+    if(saikaSpeaking()){
+      if(rms > 0.03){                       // порог выше обычного VAD:
+        if(!duckSince) duckSince=Date.now(); // в колонках играет её голос
+        if(gainNode) gainNode.gain.setTargetAtTime(0.15, playCtx.currentTime, .08);
+        if(Date.now()-duckSince > 450){ bargeIn(); duckSince=0; }
+      } else if(duckSince && Date.now()-duckSince > 900){
+        duckSince=0;                        // ложная тревога — вернуть звук
+        if(gainNode) gainNode.gain.setTargetAtTime(1, playCtx.currentTime, .2);
+      }
+    } else duckSince=0;
   };
   src.connect(workletNode);
   micOn=true; $('#btn-listen').classList.add('rec');
   $('#input').placeholder='Слушаю… говори (или напиши)';
+  // включение микро = намерение поговорить: открываем окно диалога
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({type:'mic_on'}));
 }
 function stopMic(){
   micOn=false; $('#btn-listen').classList.remove('rec');
@@ -264,9 +375,13 @@ async function toggleMonitor(){
     return;
   }
   try{
-    monStream = await navigator.mediaDevices.getUserMedia({
-      audio: selectedMic? {deviceId:{exact:selectedMic}} : true });
-    monCtx = new AudioContext();
+    // сырой звук без DSP браузера: echoCancellation глушит сам себя
+    // (вычитает из микро то, что слышит в колонках), AGC плавает
+    const c={echoCancellation:false, noiseSuppression:false,
+             autoGainControl:false};
+    if(selectedMic) c.deviceId={exact:selectedMic};
+    monStream = await navigator.mediaDevices.getUserMedia({audio:c});
+    monCtx = new AudioContext({latencyHint:'interactive'});
     monCtx.createMediaStreamSource(monStream).connect(monCtx.destination);
     monOn=true;
     $('#btn-monitor').textContent='🔇 Выключить прослушку';
@@ -400,8 +515,22 @@ async function fillModelPop(){
       const sel = status.llm && status.llm.model===m.name &&
                   status.llm.backend===m.backend;
       el.className='item'+(sel?' sel':'');
-      const dot = loaded.has(m.name)?' <span class="st ok" title="в памяти">в памяти</span>':'';
-      el.innerHTML=weightDot(m)+'🧠 '+m.name+dot;
+      const isLoaded = loaded.has(m.name);
+      const dot = isLoaded?' <span class="st ok" title="в памяти">в памяти</span>':'';
+      // LM Studio выгружать по API не умеет — у него только ⬇
+      const btn = m.backend==='ollama'
+        ? `<button class="mini" title="${isLoaded?'Выгрузить из памяти'
+            :'Загрузить в память'}">${isLoaded?'⏏':'⬇'}</button>`
+        : (!isLoaded ? '<button class="mini" title="Загрузить в память">⬇</button>' : '');
+      el.innerHTML=weightDot(m)+'🧠 '+m.name+dot+btn;
+      const mb=el.querySelector('.mini');
+      if(mb) mb.onclick=async(e)=>{
+        e.stopPropagation();
+        mb.textContent='⏳'; mb.disabled=true;
+        await api('/api/llm/model',{name:m.name,backend:m.backend,
+                                    action:isLoaded?'unload':'load'});
+        fillModelPop();
+      };
       el.onclick=async()=>{
         await api('/api/select',{kind:'model',value:m.name,backend:m.backend});
         refresh();
@@ -491,6 +620,95 @@ $('#pop-mic').addEventListener('click', e=>e.stopPropagation());
 $('#btn-monitor').onclick = toggleMonitor;
 $('#btn-model').onclick = ()=>{ fillModelPop(); togglePop('pop-model'); };
 $('#btn-tts').onclick = ()=>{ togglePop('pop-tts'); };
+$('#btn-clear').onclick = async()=>{
+  await api('/api/dialog/clear',{});
+  $('#chat').innerHTML=''; curSaikaMsg=null;
+  addMsg('saika','— новый диалог —').style.opacity=.5;
+};
+/* ---------- git-синк ---------- */
+async function fillGitPop(){
+  try{
+    const st = await (await fetch('/api/git/status')).json();
+    const badge = $('#git-badge');
+    if(!st.is_repo){
+      $('#git-branch').textContent='это не git-репозиторий';
+      badge.classList.remove('show');
+      return;
+    }
+    $('#git-branch').textContent = `ветка ${st.branch}` +
+      (st.has_remote? '' : ' · нет remote');
+    if(st.changed>0){
+      badge.textContent = st.changed>99?'99+':st.changed;
+      badge.classList.add('show');
+    } else badge.classList.remove('show');
+  }catch(e){}
+}
+$('#btn-git').onclick = ()=>{ fillGitPop(); togglePop('pop-git'); };
+$('#pop-git').addEventListener('click', e=>e.stopPropagation());
+$('#git-push').onclick = async()=>{
+  const btn=$('#git-push'), res=$('#git-result');
+  btn.disabled=true; btn.textContent='⏳ работаю…'; res.textContent='';
+  try{
+    const r = await api('/api/git/sync', {message: $('#git-msg').value.trim()});
+    if(r.ok){
+      res.style.color='var(--ok)';
+      res.textContent = '✓ ' + (r.message || 'готово');
+      $('#git-msg').value='';
+    } else {
+      res.style.color='var(--err)';
+      res.textContent = '⚠ ('+r.step+') ' + (r.error||'ошибка') +
+        (r.message? '\n'+r.message : '');
+    }
+  }catch(e){ res.style.color='var(--err)'; res.textContent='⚠ '+e; }
+  btn.disabled=false; btn.textContent='⬆ Закоммитить и запушить';
+  fillGitPop();
+};
+setInterval(fillGitPop, 15000);
+
+$('#btn-dreampc').onclick = ()=>{ $('#dp-modal').classList.add('show'); };
+$('#dp-close').onclick = ()=>{ $('#dp-modal').classList.remove('show'); };
+$('#dp-modal').addEventListener('click', e=>{ if(e.target.id==='dp-modal') $('#dp-modal').classList.remove('show'); });
+$('#dp-run').onclick = dreampcGenerate;
+async function dreampcGenerate(){
+  const promptEl=$('#dp-prompt'), outEl=$('#dp-output'), statsEl=$('#dp-stats'), btn=$('#dp-run');
+  const prompt = promptEl.value.trim(); if(!prompt) return;
+  btn.disabled=true; btn.textContent='⏳ подключаюсь…'; outEl.textContent=''; statsEl.textContent='';
+  try{
+    const ensure = await api('/api/dreampc/ensure',{});
+    if(ensure.error){ outEl.textContent='⚠ '+ensure.error; btn.disabled=false; btn.textContent='▶ Проявить'; return; }
+    btn.textContent='⏳ проявляю…';
+    const resp = await fetch(`http://127.0.0.1:${ensure.port}/generate`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({prompt})
+    });
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf='';
+    while(true){
+      const {done,value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value,{stream:true});
+      let parts = buf.split('\n\n');
+      buf = parts.pop();
+      for(const part of parts){
+        const line = part.trim();
+        if(!line.startsWith('data:')) continue;
+        const data = JSON.parse(line.slice(5));
+        if(data.type==='step'){
+          outEl.textContent = data.text;
+          statsEl.textContent = `шаг ${data.step}/${data.total}`;
+          outEl.scrollTop = outEl.scrollHeight;
+        } else if(data.type==='done'){
+          outEl.textContent = data.text;
+          statsEl.textContent = `⚡ ${data.tps} ток/с (эффективно) · ${data.tokens} токенов · ${data.steps} шагов диффузии за ${data.elapsed} с`;
+        } else if(data.type==='error'){
+          outEl.textContent = '⚠ '+data.text;
+        }
+      }
+    }
+  }catch(e){ outEl.textContent='⚠ '+e; }
+  btn.disabled=false; btn.textContent='▶ Проявить';
+}
 $('#btn-send').onclick = send;
 $('#input').addEventListener('keydown', e=>{ if(e.key==='Enter') send(); });
 function send(){
@@ -514,6 +732,7 @@ connect();
 refresh(); setInterval(refresh, 5000);
 pollSystem(); setInterval(pollSystem, 3000);
 fillMicPop();
+fillGitPop();
 </script>
 </body>
 </html>

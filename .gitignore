@@ -1,6 +1,7 @@
-# окружения — восстанавливаются start.bat / install_voxtral
+# окружения — восстанавливаются start.bat / install_voxtral / install_dreampc
 .venv/
 .venv_voxtral/
+.venv_dreampc/
 
 # модели и кэши — качаются сами (гигабайты)
 models/
