@@ -162,6 +162,14 @@
   грузить модель без CUDA, а не тихо падает на CPU.
   Если словил это ДО фикса: сразу `taskkill` процесс воркера (см. выше),
   затем `python setup/install_dreampc.py --remove` и установка заново.
+- **Установка падает на "Failed to establish a new connection: getaddrinfo
+  failed" при скачивании tokenizers/safetensors/huggingface_hub** -> это
+  сеть/DNS до pypi.org в моменте, не баг venv/CUDA. install_dreampc.py
+  теперь сам проверяет доступность pypi.org и, если сети нет, сразу честно
+  об этом пишет (не гоняет бессмысленный снос+переустановку venv). Просто
+  подожди сеть/VPN и нажми 🧪 ещё раз — то, что уже успело поставиться
+  (transformers/accelerate/bitsandbytes), при повторе не перекачивается
+  («Requirement already satisfied»).
 - **Классификатор "проблема окружения" пропустил ImportError** —
   str(exception) не содержит имени класса (ImportError/
   ModuleNotFoundError), только текст сообщения. Ловили на

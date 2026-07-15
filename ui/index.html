@@ -126,6 +126,14 @@
   #git-pull{margin-bottom:2px}
   #git-result{font-size:12px;margin-top:6px;white-space:pre-wrap;
     max-width:280px}
+  /* эквалайзер звуковых волн над нижней панелью: реагирует на голос
+     Сайки (TTS) и на уровень микрофона, когда она молчит */
+  #eq{height:26px;flex:none;display:flex;align-items:flex-end;
+    justify-content:center;gap:2px;padding:4px 16px 2px;
+    border-top:1px solid var(--border);background:var(--panel);
+    overflow:hidden}
+  #eq i{display:block;flex:none;width:3px;height:2px;border-radius:2px;
+    background:var(--accent);opacity:.85;transition:height .07s linear}
 </style>
 </head>
 <body>
@@ -154,6 +162,8 @@
   <div id="sysbar"></div>
   <div id="chat"></div>
 </div>
+
+<div id="eq"></div>
 
 <div id="bar">
   <!-- тумблер слуха: вкл/выкл + индикатор уровня -->
@@ -207,6 +217,7 @@
 const $ = s => document.querySelector(s);
 let ws, micOn=false, micStream, audioCtx, workletNode, selectedMic=localStorage.micId||'';
 let playCtx, playTime=0, curSr=24000, status={};
+let micLevel=0;
 
 /* ---------- WebSocket ---------- */
 function connect(){
@@ -268,12 +279,16 @@ function showProblem(p){
 }
 
 /* ---------- воспроизведение (float32 PCM) + перебивание ---------- */
-let gainNode=null, activeSrcs=[], duckSince=0;
+let gainNode=null, activeSrcs=[], duckSince=0, ttsAnalyser=null;
 function playPcm(buf){
   if(!playCtx){
     playCtx = new AudioContext();
     gainNode = playCtx.createGain();
-    gainNode.connect(playCtx.destination);
+    ttsAnalyser = playCtx.createAnalyser();
+    ttsAnalyser.fftSize = 64;
+    ttsAnalyser.smoothingTimeConstant = 0.6;
+    gainNode.connect(ttsAnalyser);
+    ttsAnalyser.connect(playCtx.destination);
   }
   const f32 = new Float32Array(buf);
   const ab = playCtx.createBuffer(1, f32.length, curSr);
@@ -338,6 +353,7 @@ async function startMic(){
     const a=new Int16Array(e.data); let s=0, n=0;
     for(let i=0;i<a.length;i+=4){ const v=a[i]/32768; s+=v*v; n++; }
     const rms=Math.sqrt(s/Math.max(1,n));
+    micLevel = rms;
     $('#lvl').style.transform='scaleX('+Math.min(1,rms*8)+')';
 
     // перебивание: Сайка говорит, а ты начал — пригибаем её голос,
@@ -778,6 +794,35 @@ refresh(); setInterval(refresh, 5000);
 pollSystem(); setInterval(pollSystem, 3000);
 fillMicPop();
 fillGitPop();
+
+/* ---------- эквалайзер над нижней панелью ---------- */
+const EQ_BARS = 40;
+(function initEq(){
+  const el = $('#eq');
+  for(let i=0;i<EQ_BARS;i++) el.appendChild(document.createElement('i'));
+})();
+const eqBars = document.querySelectorAll('#eq i');
+let eqData = null;
+function eqFrame(){
+  requestAnimationFrame(eqFrame);
+  const speaking = saikaSpeaking();
+  if(speaking && ttsAnalyser){
+    if(!eqData) eqData = new Uint8Array(ttsAnalyser.frequencyBinCount);
+    ttsAnalyser.getByteFrequencyData(eqData);
+  }
+  for(let i=0;i<eqBars.length;i++){
+    let v = 0;
+    if(speaking && eqData){
+      const idx = Math.floor(i/eqBars.length*eqData.length);
+      v = eqData[idx]/255;
+    } else if(micOn){
+      // Сайка молчит, микрофон слушает — лёгкая пляска баров по уровню голоса
+      v = Math.min(1, micLevel*3.5) * (0.35+0.65*Math.random());
+    }
+    eqBars[i].style.height = Math.max(2, Math.round(v*24))+'px';
+  }
+}
+eqFrame();
 </script>
 </body>
 </html>

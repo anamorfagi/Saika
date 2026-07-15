@@ -62,6 +62,15 @@ def run(cmd):
     return subprocess.run([str(c) for c in cmd], env=env).returncode == 0
 
 
+def _pypi_reachable() -> bool:
+    import socket
+    try:
+        socket.create_connection(("pypi.org", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
 def _cuda_ok() -> bool:
     if not VENV_PY.exists():
         return False
@@ -87,19 +96,25 @@ def _install_once() -> bool:
 
     pth.unlink(missing_ok=True)
 
-    print("[2/3] Ставлю transformers + accelerate + bitsandbytes + "
-          "huggingface_hub + tokenizers + safetensors (--no-deps, торч не "
-          "трогаем — иначе pip подтянет свой CPU-only)…", flush=True)
-    # Всё, что версийно жёстко привязано к transformers, ставим своей
-    # копией (--no-deps, не общей с main venv): свежий transformers (5.x)
-    # требует новее huggingface_hub/tokenizers/safetensors, чем стоит в
-    # main venv (там старьё под transformers==4.57.3 для Qwen3-TTS) — без
-    # своих копий падает "cannot import name 'is_offline_mode'" и подобное
-    # (см. known_issues.md, поймано 2026-07-15). numpy/requests/pyyaml и
-    # т.п. по-прежнему берём из main venv — эти API стабильнее и не рвутся.
+    print("[2/3] Ставлю transformers (обычным pip resolve — сам подберёт "
+          "совместимые huggingface_hub/tokenizers/safetensors)…", flush=True)
+    # transformers НЕ требует torch как обязательную зависимость (он у него
+    # опциональный extras) — поэтому ставим его БЕЗ --no-deps и даём pip-у
+    # самому разрешить huggingface_hub/tokenizers/safetensors. Раньше все
+    # эти пакеты ставились по отдельности с --no-deps каждый на последней
+    # версии — словили tokenizers==0.23.1 при transformers 5.13.1, который
+    # требует <=0.23.0 (см. known_issues.md, 2026-07-15): версии разъехались,
+    # потому что pip не видел зависимостей друг между другом. Обычный
+    # resolve этого не допустит.
+    if not run([VENV_PY, "-m", "pip", "install", "-U",
+                "transformers", "--timeout", "180", "--retries", "10"]):
+        return False
+
+    print("[2b/3] Ставлю accelerate + bitsandbytes (--no-deps — вот ЭТИ двое "
+          "реально тянут torch как обязательную зависимость, торч не "
+          "трогаем, иначе pip подтянет свой CPU-only)…", flush=True)
     if not run([VENV_PY, "-m", "pip", "install", "-U", "--no-deps",
-                "transformers", "accelerate", "bitsandbytes", "huggingface_hub",
-                "tokenizers", "safetensors",
+                "accelerate", "bitsandbytes",
                 "--timeout", "180", "--retries", "10"]):
         return False
 
@@ -147,6 +162,17 @@ def main():
 
     ok = _install_once()
     if not ok and VENV.exists():
+        # не гоняем бессмысленную переустановку, если дело явно в сети —
+        # снос+установка заново всё равно упрётся в ту же самую стену
+        if not _pypi_reachable():
+            print("""
+[X] Установка не прошла, и PyPI (pypi.org) сейчас недоступен с этой сети —
+    похоже, дело в интернете/VPN, а не в venv или CUDA. Подожди, пока сеть
+    восстановится, и запусти установку ещё раз (кнопка 🧪 в UI или
+    python setup/install_dreampc.py) — заново возиться с venv не нужно,
+    просто повтори, когда будет доступ к pypi.org.
+""", flush=True)
+            sys.exit(1)
         # даже свежая установка умудрилась остаться без CUDA — пробуем
         # ОДИН раз с полного нуля (мало ли pip закэшировал что-то не то)
         print("[i] После установки CUDA всё ещё не видна — сношу и "
@@ -156,7 +182,14 @@ def main():
         ok = _install_once()
 
     if not ok:
-        print("""
+        if not _pypi_reachable():
+            print("""
+[X] Установка не прошла — PyPI (pypi.org) недоступен с этой сети прямо
+    сейчас. Это не баг venv/CUDA, а сеть/VPN. Попробуй ещё раз, когда
+    будет интернет.
+""", flush=True)
+        else:
+            print("""
 [X] Не удалось поставить окружение с рабочей CUDA даже после чистой
     переустановки. Похоже, дело не в venv, а в чём-то более глубоком —
     например, у основного .venv тоже нет GPU-torch, или сломаны драйверы
