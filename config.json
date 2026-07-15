@@ -28,7 +28,7 @@
     "window_s": 30
   },
   "stt": {
-    "engine": "gigaam",
+    "engine": "faster_whisper",
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
@@ -72,7 +72,7 @@
     }
   },
   "tts": {
-    "engine": "qwen3",
+    "engine": "silero",
     "enabled": true,
     "voice_ref": "voice/ref.mp3",
     "voice_ref_wav": "voice/ref.wav",
