@@ -1,21 +1,49 @@
-"""Спавнер воркера DreamPC (диффузионная LLaDA-8B) — отдельный процесс/venv,
-по образцу server/stt/external.py, но не привязан к STTEngine (это не STT).
+"""Спавнер + автопочинка воркера DreamPC (диффузионная LLaDA-8B).
 
-- venv есть -> запускаем воркер (если ещё не жив) и ждём /health
-- venv нет  -> открываем окно установщика (setup/install_dreampc.bat) один раз
-  и честно падаем — UI покажет ошибку, повторный клик после установки заведёт
-"""
+Полностью автономно: человек жмёт 🧪 в UI и просто смотрит на прогресс —
+никаких консольных окон, никаких ручных команд.
+
+- venv нет -> тихо (без окна) запускаем setup/install_dreampc.py в фоне,
+  UI поллит /api/dreampc/install_status и видит прогресс.
+- воркер жив, но здоров -> обычный запуск запроса.
+- воркер жив, но /health вернул ошибку окружения (нет CUDA, битые DLL,
+  ImportError и т.п.) -> сами убиваем воркер и запускаем переустановку
+  (install_dreampc.py сам разберётся, что там сломано и снесёт/переставит).
+  Временные проблемы (сеть до HF и т.п.) НЕ считаются проблемой окружения —
+  воркер сам их перепробует при следующей генерации (см.
+  workers/dreampc_worker.py, _try_load), тут ничего чинить не нужно.
+- после MAX_AUTO_REPAIRS неудачных подряд автопочинок — прекращаем попытки
+  и отдаём ошибку как есть, чтобы не долбить одно и то же вхолостую (если
+  дело не в venv, а, например, в драйверах видеокарты)."""
 import logging
 import os
 import subprocess
+import threading
 import time
 
 from server.config import CFG, resolve
+from server.proc_utils import kill_by_port
 
 log = logging.getLogger("saika.dreampc")
 
 _proc = None
-_setup_started = False
+_install_proc = None
+_install_log = None
+_fail_streak = 0
+_lock = threading.Lock()
+
+MAX_AUTO_REPAIRS = 2
+
+# ключевые слова, по которым отличаем "проблема окружения" (лечится
+# переустановкой) от временных проблем (сеть и т.п., лечатся сами).
+# ВАЖНО: str(exception) НЕ включает имя класса исключения (ImportError,
+# ModuleNotFoundError) — только текст сообщения. Ловили баг на
+# "cannot import name 'is_offline_mode' from 'huggingface_hub'": ни
+# "importerror", ни "modulenotfounderror" там не встречаются, и
+# автопочинка эту ошибку игнорировала (2026-07-15). Матчим по реальным
+# фразам, которые Python и torch/transformers пишут в текст сообщения.
+ENV_ERROR_SIGNS = ("cuda", "could not load this library", "no module named",
+                   "cannot import name", "cannot import", ".dll", ".pyd")
 
 
 def _cfg():
@@ -26,12 +54,14 @@ def _url(path):
     return f"http://127.0.0.1:{_cfg().get('port', 8768)}{path}"
 
 
-def _alive():
+def _health():
+    """Распарсенный /health, либо None если воркер вообще не отвечает."""
     import requests
     try:
-        return requests.get(_url("/health"), timeout=2).ok
+        r = requests.get(_url("/health"), timeout=2)
+        return r.json() if r.ok else None
     except Exception:
-        return False
+        return None
 
 
 def _venv_python():
@@ -49,68 +79,125 @@ def kill_stale():
     приходилось вручную искать PID по порту и делать taskkill. Вызывается
     один раз при старте сервера (main.py) — так простой перезапуск start.bat
     всегда даёт свежий воркер с текущим кодом."""
-    port = _cfg().get("port", 8768)
-    try:
-        import psutil
-    except Exception:
-        return
-    for proc in psutil.process_iter(["pid", "name"]):
+    kill_by_port(_cfg().get("port", 8768), "зависший воркер DreamPC")
+
+
+def _looks_like_env_problem(text: str) -> bool:
+    t = (text or "").lower()
+    return any(s in t for s in ENV_ERROR_SIGNS)
+
+
+def install_status() -> dict:
+    """Статус фоновой (пере)установки окружения — для прогресса в UI."""
+    running = _install_proc is not None and _install_proc.poll() is None
+    tail = ""
+    if _install_log is not None and _install_log.exists():
         try:
-            conns_fn = getattr(proc, "net_connections", None) or proc.connections
-            conns = conns_fn(kind="inet")
+            lines = _install_log.read_text(
+                encoding="utf-8", errors="ignore").splitlines()
+            tail = "\n".join(lines[-20:])
         except Exception:
-            continue
-        for c in conns:
-            if (c.laddr and c.laddr.port == port
-                    and c.status == psutil.CONN_LISTEN):
-                log.info("dreampc: убиваю зависший воркер с прошлого "
-                         "запуска (pid %s)", proc.info.get("pid"))
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                break
+            pass
+    done = _install_proc is not None and _install_proc.poll() is not None
+    ok = done and _install_proc.returncode == 0
+    return {"running": running, "done": done, "ok": ok, "log_tail": tail}
+
+
+def _start_install():
+    """Запускает setup/install_dreampc.py тихо в фоне (без окна/pause),
+    вывод — в logs/dreampc_install.log. Сам разберётся, что чинить."""
+    global _install_proc, _install_log
+    main_py = resolve(".venv/Scripts/python.exe" if os.name == "nt"
+                      else ".venv/bin/python")
+    script = resolve("setup/install_dreampc.py")
+    _install_log = resolve("logs") / "dreampc_install.log"
+    _install_log.parent.mkdir(exist_ok=True)
+    logf = open(_install_log, "w", encoding="utf-8")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    log.info("dreampc: запускаю автоустановку/автопочинку окружения в фоне")
+    _install_proc = subprocess.Popen(
+        [str(main_py), str(script)], cwd=str(resolve(".")),
+        stdout=logf, stderr=subprocess.STDOUT, creationflags=flags)
+
+
+def _handle_worker_error(err: str) -> dict:
+    global _fail_streak
+    if not _looks_like_env_problem(err):
+        # временная штука (сеть до HF и т.п.) — воркер сам перепробует
+        # на следующей генерации, тут чинить нечего
+        return {"error": err}
+    if _fail_streak >= MAX_AUTO_REPAIRS:
+        return {"error": f"автопочинка окружения пробовала {_fail_streak} "
+                          f"раз(а) и не помогла — похоже, дело не в venv "
+                          f"DreamPC: {err}"}
+    _fail_streak += 1
+    log.warning("dreampc: похоже на проблему окружения (%s) — "
+               "автопочинка, попытка %s/%s", err, _fail_streak, MAX_AUTO_REPAIRS)
+    kill_stale()
+    _start_install()
+    return {"ok": True, "installing": True,
+            "note": "нашла проблему окружения, переустанавливаю автоматически"}
 
 
 def ensure_running() -> dict:
-    """Возвращает {"ok":True,"port":N} либо {"error":"..."}."""
-    global _proc, _setup_started
-    cfg = _cfg()
-    port = cfg.get("port", 8768)
+    """Возвращает {"ok":True,"port":N} / {"ok":True,"installing":True,...}
+    / {"error":"..."}."""
+    global _proc, _install_proc, _fail_streak
+    with _lock:
+        cfg = _cfg()
+        port = cfg.get("port", 8768)
 
-    if _alive():
-        return {"ok": True, "port": port}
+        # 1) установка уже идёт или только что закончилась?
+        if _install_proc is not None:
+            code = _install_proc.poll()
+            if code is None:
+                return {"ok": True, "installing": True,
+                        "note": "устанавливаю/чиню окружение — первый раз "
+                                "может занять несколько минут"}
+            _install_proc = None
+            if code != 0:
+                return {"error": f"автоустановка не справилась (код {code}) "
+                                  "— смотри logs/dreampc_install.log"}
+            _fail_streak = 0
+            # провалимся дальше — установка прошла, запускаем воркер
 
-    venv_py = _venv_python()
-    if not venv_py.exists():
-        setup = resolve(cfg.get("setup", "setup/install_dreampc.bat"))
-        if os.name == "nt" and setup.exists():
-            if not _setup_started:
-                _setup_started = True
-                subprocess.Popen(["cmd", "/c", "start",
-                                  "Установка DreamPC", str(setup)])
-            return {"error": "окружения ещё нет — открыл окно установки. "
-                              "Когда закончится, нажми 🧪 ещё раз."}
-        return {"error": f"нет окружения ({venv_py.parent.parent}) — "
-                          f"запусти {cfg.get('setup', 'установщик')}"}
+        # 2) воркер уже жив?
+        health = _health()
+        if health is not None:
+            if not health.get("error"):
+                _fail_streak = 0
+                return {"ok": True, "port": port}
+            return _handle_worker_error(health["error"])
 
-    worker = resolve(cfg.get("worker", "workers/dreampc_worker.py"))
-    model = cfg.get("model", "GSAI-ML/LLaDA-8B-Instruct")
-    cmd = [str(venv_py), str(worker), "--port", str(port), "--model", model]
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    log.info("dreampc: запускаю воркер: %s", " ".join(cmd))
-    _proc = subprocess.Popen(cmd, cwd=str(resolve(".")), creationflags=flags)
+        # 3) venv вообще есть?
+        venv_py = _venv_python()
+        if not venv_py.exists():
+            _start_install()
+            return {"ok": True, "installing": True,
+                    "note": "окружения ещё нет — ставлю автоматически "
+                            "(первый раз небыстро: библиотеки + веса модели)"}
 
-    deadline = time.time() + 60
-    while time.time() < deadline:
-        if _alive():
-            return {"ok": True, "port": port}
-        if _proc.poll() is not None:
-            return {"error": f"воркер упал при старте (код {_proc.returncode}), "
-                              "см. logs/dreampc_worker.log"}
-        time.sleep(1)
-    # не ответил за минуту — не обязательно ошибка: первый запуск может
-    # качать модель (~16 ГБ) в фоне, /health отвечает сразу, но раз не
-    # отвечает вовсе — процесс, видимо, ещё поднимается
-    return {"ok": True, "port": port,
-            "note": "воркер стартует, первая загрузка модели может занять время"}
+        # 4) спавним воркер и ждём /health
+        worker = resolve(cfg.get("worker", "workers/dreampc_worker.py"))
+        model = cfg.get("model", "GSAI-ML/LLaDA-8B-Instruct")
+        cmd = [str(venv_py), str(worker), "--port", str(port), "--model", model]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        log.info("dreampc: запускаю воркер: %s", " ".join(cmd))
+        _proc = subprocess.Popen(cmd, cwd=str(resolve(".")), creationflags=flags)
+
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            h = _health()
+            if h is not None:
+                if not h.get("error"):
+                    _fail_streak = 0
+                    return {"ok": True, "port": port}
+                return _handle_worker_error(h["error"])
+            if _proc.poll() is not None:
+                return {"error": f"воркер упал при старте (код "
+                                  f"{_proc.returncode}), см. "
+                                  "logs/dreampc_worker.log"}
+            time.sleep(1)
+        return {"ok": True, "port": port,
+                "note": "воркер стартует, первая загрузка модели может "
+                        "занять время"}

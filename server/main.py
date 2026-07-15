@@ -6,6 +6,7 @@ FastAPI + WebSocket. Браузер шлёт PCM с микрофона, серв
 автопереключение -> фоновая починка.
 """
 import asyncio
+import atexit
 import json
 import logging
 import queue
@@ -15,6 +16,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 import uvicorn
@@ -26,6 +28,7 @@ from server.persona import build_system_prompt
 from server.llm import manager as llm
 from server.llm import dreampc
 from server import git_sync
+from server.proc_utils import kill_by_port, register_console_close_handler
 from server.stt.manager import STTManager
 from server.tts.manager import TTSManager, split_sentences
 from server.memory.memory import Memory, start_scheduler
@@ -247,16 +250,34 @@ async def git_sync_endpoint(payload: dict):
     return result
 
 
+@app.post("/api/git/pull")
+async def git_pull_endpoint():
+    """Кнопка ⬇ в углу UI: git pull --ff-only — подтянуть код с другого ПК.
+    Новые компоненты (venv/воркеры) после этого ставятся лениво, по клику
+    на свою кнопку — как сейчас у DreamPC/Voxtral, не сразу все скопом."""
+    result = await asyncio.get_event_loop().run_in_executor(None, git_sync.pull)
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=400)
+    return result
+
+
 @app.post("/api/dreampc/ensure")
 async def dreampc_ensure():
-    """Поднимает воркер DreamPC (диффузионная LLaDA-8B) по требованию.
-    Первый запуск может открыть окно установщика (venv ещё не поставлен)
-    или запустить закачку весов модели — в обоих случаях не блокируем UI."""
+    """Поднимает воркер DreamPC (диффузионная LLaDA-8B) по требованию —
+    полностью автономно: сама ставит окружение при первом разе, сама её же
+    переустанавливает, если находит проблему (см. server/llm/dreampc.py).
+    Ничего не блокирует UI — статус установки уходит через
+    /api/dreampc/install_status."""
     result = await asyncio.get_event_loop().run_in_executor(
         None, dreampc.ensure_running)
     if result.get("error"):
         return JSONResponse(result, status_code=400)
     return result
+
+
+@app.get("/api/dreampc/install_status")
+def dreampc_install_status():
+    return dreampc.install_status()
 
 
 @app.post("/api/memory/compress")
@@ -486,9 +507,28 @@ async def ws_endpoint(ws: WebSocket):
         send_task.cancel()
 
 
+def _handspc_port():
+    url = CFG.get("tools.handspc_url", "http://127.0.0.1:8767")
+    return urlparse(url).port or 8767
+
+
+def _close_handspc():
+    """HandsPC — отдельная программа (C:\\AI\\HandsPC, своё окно), не дочерний
+    процесс Сайки, поэтому сама по себе не закрывается вместе с ней. По
+    просьбе пользователя (2026-07-15): закрытие окна Сайки должно тянуть
+    за собой и HandsPC — ищем процесс по порту и убиваем."""
+    if kill_by_port(_handspc_port(), "HandsPC"):
+        log.info("HandsPC закрыт вместе с Сайкой")
+
+
 def main():
     (ROOT / "logs").mkdir(exist_ok=True)
     dreampc.kill_stale()  # чистим детач-воркер с прошлого запуска (если завис)
+    # закрытие HandsPC при завершении Сайки — и по Ctrl+C/обычному выходу
+    # (atexit), и по крестику на окне консоли (Windows CTRL_CLOSE_EVENT,
+    # который обычный atexit/signal не ловит — см. proc_utils)
+    atexit.register(_close_handspc)
+    register_console_close_handler(_close_handspc)
     start_scheduler(memory, llm.chat_once)
     host = CFG.get("server.host", "127.0.0.1")
     port = CFG.get("server.port", 8765)

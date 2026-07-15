@@ -114,11 +114,16 @@
     font-weight:600;line-height:14px;text-align:center;padding:0 2px;
     display:none}
   .badge.show{display:block}
+  .pulldot{position:absolute;bottom:1px;right:1px;width:8px;height:8px;
+    border-radius:50%;background:var(--ok);box-shadow:0 0 4px var(--ok);
+    display:none}
+  .pulldot.show{display:block}
   .pop.top{bottom:auto;top:44px;left:auto;right:0}
   #git-msg{width:100%;margin:6px 0;background:var(--panel);
     border:1px solid var(--border);color:var(--text);border-radius:8px;
     padding:6px 8px;font-size:13px;box-sizing:border-box}
-  #git-push{width:100%;justify-content:center}
+  #git-push,#git-pull{width:100%;justify-content:center}
+  #git-pull{margin-bottom:2px}
   #git-result{font-size:12px;margin-top:6px;white-space:pre-wrap;
     max-width:280px}
 </style>
@@ -133,10 +138,11 @@
     style="width:30px;height:30px;font-size:14px">🧹</button>
   <div id="problems"></div>
   <div class="wrap">
-    <button class="iconbtn" id="btn-git" title="Git: закоммитить и запушить на GitHub"
-      style="width:30px;height:30px;font-size:14px">⬆<span class="badge" id="git-badge"></span></button>
+    <button class="iconbtn" id="btn-git" title="Git: обновления и синк с GitHub"
+      style="width:30px;height:30px;font-size:14px">⬆<span class="badge" id="git-badge"></span><span class="pulldot" id="git-pulldot" title="Есть обновления с другого ПК"></span></button>
     <div class="pop top" id="pop-git">
       <div class="title" id="git-branch">ветка…</div>
+      <button class="chip" id="git-pull">⬇ Подтянуть обновления</button>
       <input id="git-msg" placeholder="Сообщение коммита (необязательно)">
       <button class="chip" id="git-push">⬆ Закоммитить и запушить</button>
       <div id="git-result"></div>
@@ -629,22 +635,43 @@ $('#btn-clear').onclick = async()=>{
 async function fillGitPop(){
   try{
     const st = await (await fetch('/api/git/status')).json();
-    const badge = $('#git-badge');
+    const badge = $('#git-badge'), pulldot = $('#git-pulldot');
     if(!st.is_repo){
       $('#git-branch').textContent='это не git-репозиторий';
-      badge.classList.remove('show');
+      badge.classList.remove('show'); pulldot.classList.remove('show');
       return;
     }
-    $('#git-branch').textContent = `ветка ${st.branch}` +
-      (st.has_remote? '' : ' · нет remote');
+    let info = `ветка ${st.branch}`;
+    if(!st.has_remote) info += ' · нет remote';
+    if(st.behind>0) info += ` · ⬇${st.behind} с другого ПК`;
+    if(st.ahead>0) info += ` · ⬆${st.ahead} не запушено`;
+    $('#git-branch').textContent = info;
     if(st.changed>0){
       badge.textContent = st.changed>99?'99+':st.changed;
       badge.classList.add('show');
     } else badge.classList.remove('show');
+    if(st.behind>0) pulldot.classList.add('show');
+    else pulldot.classList.remove('show');
   }catch(e){}
 }
 $('#btn-git').onclick = ()=>{ fillGitPop(); togglePop('pop-git'); };
 $('#pop-git').addEventListener('click', e=>e.stopPropagation());
+$('#git-pull').onclick = async()=>{
+  const btn=$('#git-pull'), res=$('#git-result');
+  btn.disabled=true; btn.textContent='⏳ тяну…'; res.textContent='';
+  try{
+    const r = await api('/api/git/pull', {});
+    if(r.ok){
+      res.style.color='var(--ok)';
+      res.textContent = '✓ ' + (r.message || 'обновлено');
+    } else {
+      res.style.color='var(--err)';
+      res.textContent = '⚠ ' + (r.error||'ошибка');
+    }
+  }catch(e){ res.style.color='var(--err)'; res.textContent='⚠ '+e; }
+  btn.disabled=false; btn.textContent='⬇ Подтянуть обновления';
+  fillGitPop();
+};
 $('#git-push').onclick = async()=>{
   const btn=$('#git-push'), res=$('#git-result');
   btn.disabled=true; btn.textContent='⏳ работаю…'; res.textContent='';
@@ -669,14 +696,32 @@ $('#btn-dreampc').onclick = ()=>{ $('#dp-modal').classList.add('show'); };
 $('#dp-close').onclick = ()=>{ $('#dp-modal').classList.remove('show'); };
 $('#dp-modal').addEventListener('click', e=>{ if(e.target.id==='dp-modal') $('#dp-modal').classList.remove('show'); });
 $('#dp-run').onclick = dreampcGenerate;
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+/* сама ставит/чинит окружение — поллим прогресс, пока идёт установка,
+   и только потом продолжаем к реальной генерации */
+async function dreampcEnsure(outEl){
+  let r = await api('/api/dreampc/ensure',{});
+  while(r.installing){
+    const tail = r.log_tail? '\n\n'+r.log_tail : '';
+    outEl.textContent = '🔧 ' + (r.note||'настраиваю окружение…') + tail;
+    await sleep(4000);
+    const st = await (await fetch('/api/dreampc/install_status')).json();
+    if(st.done){
+      r = await api('/api/dreampc/ensure',{});
+    } else {
+      r = {...r, log_tail: st.log_tail};
+    }
+  }
+  return r;
+}
 async function dreampcGenerate(){
   const promptEl=$('#dp-prompt'), outEl=$('#dp-output'), statsEl=$('#dp-stats'), btn=$('#dp-run');
   const prompt = promptEl.value.trim(); if(!prompt) return;
   btn.disabled=true; btn.textContent='⏳ подключаюсь…'; outEl.textContent=''; statsEl.textContent='';
   try{
-    const ensure = await api('/api/dreampc/ensure',{});
+    const ensure = await dreampcEnsure(outEl);
     if(ensure.error){ outEl.textContent='⚠ '+ensure.error; btn.disabled=false; btn.textContent='▶ Проявить'; return; }
-    btn.textContent='⏳ проявляю…';
+    outEl.textContent=''; btn.textContent='⏳ проявляю…';
     const resp = await fetch(`http://127.0.0.1:${ensure.port}/generate`,{
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({prompt})
