@@ -25,7 +25,8 @@ def _lmstudio_url():
 
 
 def list_models() -> list[dict]:
-    """Объединённый список моделей обоих бэкендов: [{backend, name}]."""
+    """Объединённый список моделей обоих бэкендов: [{backend, name, size}].
+    size (байты) нужен UI для индикатора нагрузки на систему."""
     out = []
     try:
         r = requests.get(_ollama_url() + "/api/tags", timeout=3)
@@ -34,12 +35,29 @@ def list_models() -> list[dict]:
                         "size": m.get("size")})
     except Exception as e:
         log.debug("ollama offline: %s", e)
+    # LM Studio: сперва REST API v1 — там есть size_bytes (для индикатора веса),
+    # если версия старая и его нет, откатываемся на OpenAI-совместимый /v1/models
+    lm_ok = False
     try:
-        r = requests.get(_lmstudio_url() + "/v1/models", timeout=3)
-        for m in r.json().get("data", []):
-            out.append({"backend": "lmstudio", "name": m["id"]})
+        r = requests.get(_lmstudio_url() + "/api/v1/models", timeout=3)
+        r.raise_for_status()
+        for m in r.json().get("models", []):
+            if m.get("type") == "embedding":
+                continue
+            out.append({"backend": "lmstudio",
+                        "name": m.get("key") or m.get("id"),
+                        "size": m.get("size_bytes")})
+        lm_ok = True
     except Exception as e:
-        log.debug("lmstudio offline: %s", e)
+        log.debug("lmstudio REST v1 unavailable: %s", e)
+    if not lm_ok:
+        try:
+            r = requests.get(_lmstudio_url() + "/v1/models", timeout=3)
+            for m in r.json().get("data", []):
+                out.append({"backend": "lmstudio", "name": m["id"],
+                            "size": None})
+        except Exception as e:
+            log.debug("lmstudio offline: %s", e)
     return out
 
 
@@ -87,14 +105,25 @@ def warmup(backend: str, model: str) -> bool:
 
 
 def unload_model(backend: str, model: str) -> bool:
-    """Выгружает модель из памяти. Умеет только Ollama (keep_alive=0);
-    LM Studio выгружает по своему TTL, ручки у него нет."""
-    if backend != "ollama":
+    """Выгружает модель из памяти.
+    Ollama — keep_alive=0. LM Studio — REST API v1 (/api/v1/models/unload,
+    появился в актуальных версиях LM Studio; на старых вернёт False,
+    выгружай через TTL или вручную в приложении)."""
+    if backend == "ollama":
+        requests.post(_ollama_url() + "/api/generate",
+                      json={"model": model, "keep_alive": 0}, timeout=30)
+        log.info("Модель %s выгружена", model)
+        return True
+    try:
+        r = requests.post(_lmstudio_url() + "/api/v1/models/unload",
+                          json={"instance_id": model}, timeout=30)
+        r.raise_for_status()
+        log.info("Модель %s выгружена (LM Studio)", model)
+        return True
+    except Exception as e:
+        log.warning("LM Studio: выгрузка %s не удалась (нужна свежая версия "
+                    "с REST API v1 /models/unload): %s", model, e)
         return False
-    requests.post(_ollama_url() + "/api/generate",
-                  json={"model": model, "keep_alive": 0}, timeout=30)
-    log.info("Модель %s выгружена", model)
-    return True
 
 
 def backend_status() -> dict:

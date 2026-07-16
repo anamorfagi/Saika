@@ -77,6 +77,10 @@ set RESTARTS=0
 :run
 echo.
 echo [*] Starting Saika... (Ctrl+C to exit)
+:: открыть вкладку только на первом запуске; при рестарте после падения
+:: уже открытая вкладка сама переподключится и обновится (по BOOT_ID),
+:: новую не плодим — иначе серия крэшей засыпает браузер вкладками
+if %RESTARTS%==0 (set "SAIKA_AUTO_OPEN=1") else (set "SAIKA_AUTO_OPEN=0")
 "%VPY%" -m server.main
 set CODE=%errorlevel%
 if %CODE%==0 goto end

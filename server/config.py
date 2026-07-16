@@ -66,6 +66,10 @@ if _ffmpeg_bin.exists():
 os.environ.setdefault("HF_HOME", str(ROOT / "models" / "hf"))
 os.environ.setdefault("TORCH_HOME", str(ROOT / "models" / "torch"))
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+# HF по умолчанию рвёт соединение через 10 сек — на нестабильной/медленной
+# сети это даёт бесконечные «read operation timed out» и загрузки крупных
+# моделей (LLaDA 16 ГБ, T-one, GigaAM) ползут или висят. Даём 60 сек.
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
 # Xet-бэкенд (cas-server.xethub.hf.co) часто блокируется провайдерами —
 # качаем по обычному HTTPS через CDN hf.co.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")

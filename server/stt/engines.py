@@ -112,7 +112,23 @@ class GigaAMEngine(STTEngine):
         import gigaam
 
         model_name = CFG.get("stt.engines.gigaam.model", "v3_e2e_rnnt")
-        self.model = gigaam.load_model(model_name)
+        try:
+            self.model = gigaam.load_model(model_name)
+        except Exception as e:
+            # частично скачанный чекпоинт бьётся по контрольной сумме
+            # («Model checksum failed»). gigaam сам не перекачивает — сносим
+            # битый .ckpt из кэша (~/.cache/gigaam) и грузим заново.
+            if "checksum" not in str(e).lower():
+                raise
+            from pathlib import Path
+            ckpt = Path.home() / ".cache" / "gigaam" / f"{model_name}.ckpt"
+            log.warning("GigaAM: битый чекпоинт (%s) — удаляю %s и качаю заново",
+                        e, ckpt)
+            try:
+                ckpt.unlink(missing_ok=True)
+            except Exception as del_err:
+                log.warning("GigaAM: не смог удалить %s: %s", ckpt, del_err)
+            self.model = gigaam.load_model(model_name)
 
     def transcribe(self, pcm16, sample_rate):
         self.load()
@@ -213,10 +229,16 @@ class WhisperCppEngine(STTEngine):
 class ToneEngine(STTEngine):
     name = "tone"
     kind = "streaming"
+    # T-one требует кадры РОВНО по 2400 сэмплов (300 мс @ 8кГц у пайплайна,
+    # 150 мс @ 16кГц у нас). Браузер шлёт произвольные чанки (~1600), отсюда
+    # была ошибка «Shape of 'audio_chunk' must be (2400,), but got (1634,)».
+    # Копим PCM и отдаём пайплайну ровными кадрами.
+    FRAME = 2400
 
     def __init__(self):
         self.pipeline = None
         self.state = None
+        self._buf = np.empty(0, dtype=np.int16)
 
     def load(self):
         if self.pipeline:
@@ -225,18 +247,42 @@ class ToneEngine(STTEngine):
 
         self.pipeline = StreamingCTCPipeline.from_hugging_face()
         self.state = None
+        self._buf = np.empty(0, dtype=np.int16)
 
     def feed(self, pcm16, sample_rate):
         self.load()
-        new_phrases, self.state = self.pipeline.forward(pcm16, self.state)
-        return [getattr(p, "text", str(p)).strip() for p in (new_phrases or []) if p]
+        self._buf = np.concatenate([self._buf, pcm16.astype(np.int16)])
+        phrases = []
+        while len(self._buf) >= self.FRAME:
+            frame = self._buf[:self.FRAME]
+            self._buf = self._buf[self.FRAME:]
+            new_phrases, self.state = self.pipeline.forward(frame, self.state)
+            phrases += [getattr(p, "text", str(p)).strip()
+                        for p in (new_phrases or []) if p]
+        return phrases
 
     def flush(self):
         if not self.pipeline:
             return []
+        phrases = []
+        # добиваем неполный остаток, дополнив тишиной до целого кадра
+        if len(self._buf) > 0:
+            pad = self.FRAME - (len(self._buf) % self.FRAME)
+            if pad != self.FRAME:
+                self._buf = np.concatenate(
+                    [self._buf, np.zeros(pad, dtype=np.int16)])
+            while len(self._buf) >= self.FRAME:
+                frame = self._buf[:self.FRAME]
+                self._buf = self._buf[self.FRAME:]
+                new_phrases, self.state = self.pipeline.forward(frame, self.state)
+                phrases += [getattr(p, "text", str(p)).strip()
+                            for p in (new_phrases or []) if p]
+        self._buf = np.empty(0, dtype=np.int16)
         new_phrases, _ = self.pipeline.finalize(self.state)
         self.state = None
-        return [getattr(p, "text", str(p)).strip() for p in (new_phrases or []) if p]
+        phrases += [getattr(p, "text", str(p)).strip()
+                    for p in (new_phrases or []) if p]
+        return phrases
 
     def transcribe(self, pcm16, sample_rate):
         self.load()

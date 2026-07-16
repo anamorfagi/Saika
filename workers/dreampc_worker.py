@@ -35,6 +35,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 os.environ.setdefault("HF_HOME", str(ROOT / "models" / "hf"))
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# HF рвёт соединение через 10 сек по умолчанию — на медленной сети 16 ГБ
+# LLaDA качаются вечными таймаутами с докачкой. 60 сек = меньше обрывов.
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
 
 # main_env.pth подключает site-packages ОСНОВНОГO venv (torch/fastapi общие
 # с остальной Сайкой) — вместе с ними подтягиваются torchaudio/torchvision,
@@ -98,7 +101,17 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"])
 
 MODEL_REPO = "GSAI-ML/LLaDA-8B-Instruct"
-MASK_ID = 126336  # id токена [MASK] у LLaDA (см. generate.py в исходном репо)
+# id спец-токена [MASK] у разных диффузионных моделей РАЗНЫЙ. Захардкоженный
+# один id ломал переключение моделей. Держим карту + авто-выбор по репо;
+# можно переопределить в config.json (dreampc.mask_id) или через --mask-id.
+MASK_IDS = {
+    "GSAI-ML/LLaDA-8B-Instruct": 126336,
+    "GSAI-ML/LLaDA-8B-Base": 126336,
+    "GSAI-ML/LLaDA-1.5": 126336,
+    "inclusionAI/LLaDA-MoE-7B-A1B-Instruct": 156895,
+    "inclusionAI/LLaDA-MoE-7B-A1B-Base": 156895,
+}
+MASK_ID = 126336  # выставляется в __main__ по модели (см. MASK_IDS)
 
 _model = None
 _tokenizer = None
@@ -300,8 +313,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8768)
     ap.add_argument("--model", default=MODEL_REPO)
+    ap.add_argument("--mask-id", type=int, default=0,
+                    help="id токена [MASK]; 0 = авто по модели (MASK_IDS)")
     args = ap.parse_args()
     MODEL_REPO = args.model
+    # mask-токен: явный аргумент > карта по модели > дефолт LLaDA-8B
+    MASK_ID = args.mask_id or MASK_IDS.get(MODEL_REPO, 126336)
+    log.info("DreamPC воркер: модель=%s, mask_id=%s", MODEL_REPO, MASK_ID)
     (ROOT / "logs").mkdir(exist_ok=True)
     threading.Thread(target=_try_load, daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

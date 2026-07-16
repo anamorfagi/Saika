@@ -134,6 +134,19 @@
     overflow:hidden}
   #eq i{display:block;flex:none;width:3px;height:2px;border-radius:2px;
     background:var(--accent);opacity:.85;transition:height .07s linear}
+  /* Беймакс: мелкая приглушённая строка (как «услышано») с анимированной
+     иконкой-ремонтником — молоточек стучит */
+  .bm{align-self:flex-start;display:flex;align-items:center;gap:6px;
+    font-size:11px;color:var(--dim);max-width:70%;padding:1px 6px;line-height:1.35}
+  .bm .bm-gif{height:18px;width:auto;flex:none;image-rendering:auto}
+  .bm .bm-ico{display:inline-block;font-size:13px;transform-origin:70% 80%;
+    animation:bmtap .6s ease-in-out infinite}
+  .bm.ok .bm-ico{animation:bmwipe 1.6s ease-in-out infinite}
+  .bm.meh .bm-ico{animation:bmtap 1s ease-in-out infinite}
+  @keyframes bmtap{0%,100%{transform:rotate(-20deg)}45%{transform:rotate(14deg)}
+    55%{transform:rotate(14deg)}}
+  @keyframes bmwipe{0%,100%{transform:translateX(-1px) rotate(-6deg)}
+    50%{transform:translateX(2px) rotate(6deg)}}
 </style>
 </head>
 <body>
@@ -164,6 +177,8 @@
 </div>
 
 <div id="eq"></div>
+<!-- скрытый плеер для дубля голоса на второе устройство (слышать самому) -->
+<audio id="tts-dup" style="display:none" autoplay></audio>
 
 <div id="bar">
   <!-- тумблер слуха: вкл/выкл + индикатор уровня -->
@@ -175,8 +190,15 @@
     <div class="pop" id="pop-mic">
       <div class="title">Микрофон в системе</div>
       <div id="mic-devices"></div>
+      <div class="title">Режим слуха</div>
+      <div class="item" id="btn-always" title="Обычный режим: при включённом микрофоне отвечает на всё, что слышит. Умный слух (тест) — отвечает только по имени «Сайка» или пока идёт разговор.">
+        <span id="always-ic">👂</span>&nbsp;<span id="always-label">Обычный (слушает всё)</span>
+      </div>
       <div class="title">Проверка</div>
       <div class="item" id="btn-monitor">🔉 Прослушать этот микрофон</div>
+      <input type="range" id="mon-vol" min="0" max="150" step="1"
+             title="Громкость прослушки себя"
+             style="width:100%;margin:4px 0">
       <div class="title">Движок слуха</div>
       <div id="stt-engines"></div>
     </div>
@@ -186,12 +208,21 @@
     <button class="chip" id="btn-model">🧠 <b id="model-label">модель…</b></button>
     <div class="pop" id="pop-model"><div id="model-list"></div></div>
   </div>
+  <!-- остановить озвучку -->
+  <button class="iconbtn" id="btn-stop" title="Остановить озвучку (замолчать)">⏹</button>
   <!-- голос -->
   <div class="wrap">
     <button class="iconbtn" id="btn-tts" title="Голос">🔊</button>
     <div class="pop" id="pop-tts">
       <div class="title">Озвучка</div>
       <div id="tts-engines"></div>
+      <div class="title">Громкость озвучки</div>
+      <input type="range" id="tts-vol" min="0" max="150" step="1"
+             title="Громкость голоса Сайки" style="width:100%;margin:4px 0">
+      <div class="title">Устройство вывода голоса</div>
+      <div id="tts-outputs"></div>
+      <div class="title">Дублировать</div>
+      <div id="tts-dup-outputs"></div>
     </div>
   </div>
   <!-- DreamPC: экспериментальная диффузионная модель -->
@@ -203,9 +234,15 @@
 <div id="dp-modal" class="dp-modal">
   <div class="dp-card">
     <div class="dp-head">
-      <b>🧪 DreamPC — LLaDA-8B (диффузионная модель, эксперимент)</b>
+      <b>🧪 DreamPC — диффузионная модель (эксперимент)</b>
       <button class="iconbtn" id="dp-close" style="width:30px;height:30px;font-size:14px">✕</button>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--dim)">Модель:</span>
+      <select id="dp-model" style="flex:1;min-width:200px;background:var(--panel2);
+        color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px"></select>
+    </div>
+    <div id="dp-model-note" style="font-size:11px;color:var(--dim)"></div>
     <textarea id="dp-prompt" placeholder="Спроси что-нибудь… ответ будет проявляться из шума, не по токену за раз"></textarea>
     <button class="chip" id="dp-run" style="align-self:flex-start;color:var(--text)">▶ Проявить</button>
     <div id="dp-output" class="dp-output"></div>
@@ -218,6 +255,13 @@ const $ = s => document.querySelector(s);
 let ws, micOn=false, micStream, audioCtx, workletNode, selectedMic=localStorage.micId||'';
 let playCtx, playTime=0, curSr=24000, status={};
 let micLevel=0;
+// вывод голоса + громкости (сохраняются в localStorage)
+let outDevice=localStorage.outId||'';                       // основной вывод TTS (напр. кабель)
+let dupDevice=localStorage.dupId||'';                       // дубль вывода (слышать самому)
+let ttsVolume=localStorage.ttsVol!=null?+localStorage.ttsVol:1;   // 0..1.5
+let monVolume=localStorage.monVol!=null?+localStorage.monVol:1;   // 0..1.5
+let ttsVolNode=null, monGain=null, dupDest=null;
+const CABLE_RE=/cable|virtual|vb-?audio|voicemeeter|vac/i;   // виртуальные кабели
 
 /* ---------- WebSocket ---------- */
 function connect(){
@@ -230,8 +274,32 @@ function connect(){
   ws.onclose = ()=> setTimeout(connect, 1500);
 }
 let curSaikaMsg=null;
+let bootId=null;
 function handleJson(m){
-  if(m.type==='stt'){ addMsg('user', m.text, 'услышано: '+m.engine); curSaikaMsg=null; }
+  if(m.type==='hello'){
+    // id запуска сервера. Другой, чем был — сервер перезапустился
+    // (упал и поднялся), эта вкладка устарела -> F5. Первый коннект просто
+    // запоминаем.
+    if(bootId && bootId!==m.boot){ location.reload(); return; }
+    bootId=m.boot;
+    return;
+  }
+  if(m.type==='stt'){
+    // услышано + метрики: движок, за сколько распознал, во сколько услышала
+    let meta='услышано: '+m.engine;
+    if(m.stt_ms!=null) meta+=' · распознала за '+(m.stt_ms>=1000?(m.stt_ms/1000).toFixed(1)+'с':m.stt_ms+'мс');
+    if(m.heard_at) meta+=' · '+m.heard_at;
+    addMsg('user', m.text, meta); curSaikaMsg=null;
+  }
+  else if(m.type==='stt_stop'){
+    // стоп-команда: глушим её голос локально и показываем пометку
+    if(typeof bargeIn==='function'){ try{bargeIn();}catch(e){} }
+    const d=document.createElement('div');
+    d.style.cssText='align-self:center;font-size:11px;color:var(--dim);padding:2px 6px';
+    d.textContent='⏹ остановлена: «'+m.text+'»';
+    $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+    curSaikaMsg=null;
+  }
   else if(m.type==='stt_ignored'){
     // услышала, но это фон (не обращались) — показываем серым, не отвечает
     const d=document.createElement('div');
@@ -255,14 +323,34 @@ function handleJson(m){
   else if(m.type==='stats'){
     if(curSaikaMsg){
       const md=document.createElement('div'); md.className='meta';
-      md.textContent='⚡ '+m.tps+' ток/с · '+m.tokens+' токенов';
+      let t='⚡ '+m.tps+' ток/с · '+m.tokens+' токенов';
+      // задержка «услышала -> начала отвечать»
+      if(m.latency_ms!=null) t+=' · думала '+(m.latency_ms/1000).toFixed(1)+'с';
+      md.textContent=t;
       curSaikaMsg.appendChild(md);
     }
   }
   else if(m.type==='audio_meta'){ curSr=m.sr; }
   else if(m.type==='done'){ curSaikaMsg=null; }
   else if(m.type==='error'){ addMsg('saika','⚠ '+m.text); curSaikaMsg=null; }
+  else if(m.type==='baymax'){ addBaymax(m); }
   else if(m.type==='problem'){ showProblem(m); }
+}
+function addBaymax(m){
+  // не речь, а мелкая приглушённая строка с анимированным ремонтником.
+  // Сначала пробуем гифку (ui/baymax/*.gif), нет — анимированный эмодзи.
+  const mood=m.mood||'bad';
+  const gif = mood==='ok'?'fixed':mood==='meh'?'tinker':'fixing';
+  const emoji = mood==='ok'?'🩹':mood==='meh'?'🔧':'🔨';
+  const d=document.createElement('div'); d.className='bm '+mood;
+  const img=document.createElement('img'); img.className='bm-gif';
+  img.alt=''; img.src='/baymax/'+gif+'.gif';
+  img.onerror=()=>{ const s=document.createElement('span');
+    s.className='bm-ico'; s.textContent=emoji; img.replaceWith(s); };
+  const t=document.createElement('span'); t.textContent=m.text;
+  d.appendChild(img); d.appendChild(t);
+  $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+  curSaikaMsg=null;
 }
 function addMsg(who, text, meta){
   const d=document.createElement('div');
@@ -283,12 +371,23 @@ let gainNode=null, activeSrcs=[], duckSince=0, ttsAnalyser=null;
 function playPcm(buf){
   if(!playCtx){
     playCtx = new AudioContext();
-    gainNode = playCtx.createGain();
+    gainNode = playCtx.createGain();          // ducking при перебивании
+    ttsVolNode = playCtx.createGain();        // пользовательская громкость
+    ttsVolNode.gain.value = ttsVolume;
     ttsAnalyser = playCtx.createAnalyser();
     ttsAnalyser.fftSize = 64;
     ttsAnalyser.smoothingTimeConstant = 0.6;
-    gainNode.connect(ttsAnalyser);
+    gainNode.connect(ttsVolNode);
+    ttsVolNode.connect(ttsAnalyser);
     ttsAnalyser.connect(playCtx.destination);
+    // параллельная ветка «дубль»: тот же звук уводим в MediaStream и
+    // проигрываем через отдельный <audio> на другое устройство — так голос
+    // идёт и на кабель (OBS), и в наушники (себе)
+    dupDest = playCtx.createMediaStreamDestination();
+    ttsVolNode.connect(dupDest);
+    const dupEl=$('#tts-dup'); if(dupEl) dupEl.srcObject=dupDest.stream;
+    applyOutputDevice();                       // основное устройство (кабель)
+    applyDupDevice();                          // дубль (наушники)
   }
   const f32 = new Float32Array(buf);
   const ab = playCtx.createBuffer(1, f32.length, curSr);
@@ -304,6 +403,26 @@ function playPcm(buf){
 }
 function saikaSpeaking(){
   return playCtx && playTime > playCtx.currentTime + 0.05;
+}
+async function applyOutputDevice(){
+  // роутим озвучку на выбранное устройство (напр. виртуальный кабель).
+  // AudioContext.setSinkId — Chrome 110+; пусто = системное по умолчанию.
+  if(!playCtx || !playCtx.setSinkId) return;
+  try{ await playCtx.setSinkId(outDevice || ''); }
+  catch(e){ console.warn('Не удалось выбрать устройство вывода:', e); }
+}
+async function applyDupDevice(){
+  // дубль голоса на второе устройство (чтобы слышать самому, пока основной
+  // вывод занят кабелем для OBS). Пусто = дубль выключен.
+  const el=$('#tts-dup'); if(!el || !dupDest) return;
+  if(!el.srcObject) el.srcObject=dupDest.stream;
+  if(dupDevice){
+    try{ if(el.setSinkId) await el.setSinkId(dupDevice); }
+    catch(e){ console.warn('Дубль-устройство не выбралось:', e); }
+    el.play().catch(()=>{});   // play() внутри клика по устройству = жест, ок
+  } else {
+    el.pause();
+  }
 }
 function bargeIn(){
   // пользователь перебил: глушим, рвём очередь, останавливаем генерацию
@@ -404,7 +523,10 @@ async function toggleMonitor(){
     if(selectedMic) c.deviceId={exact:selectedMic};
     monStream = await navigator.mediaDevices.getUserMedia({audio:c});
     monCtx = new AudioContext({latencyHint:'interactive'});
-    monCtx.createMediaStreamSource(monStream).connect(monCtx.destination);
+    monGain = monCtx.createGain();
+    monGain.gain.value = monVolume;
+    monCtx.createMediaStreamSource(monStream).connect(monGain);
+    monGain.connect(monCtx.destination);
     monOn=true;
     $('#btn-monitor').textContent='🔇 Выключить прослушку';
     $('#btn-monitor').classList.add('sel');
@@ -436,7 +558,53 @@ async function fillMicPop(){
       if(monOn){toggleMonitor().then(()=>toggleMonitor());}};
     $('#mic-devices').appendChild(el);
   });
+  const mv=$('#mon-vol'); if(mv) mv.value=Math.round(monVolume*100);
   fillSttEngines();
+}
+
+async function fillOutputs(){
+  // список устройств вывода голоса + авто-подхват виртуального кабеля
+  try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e){}
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  const outs = devs.filter(d=>d.kind==='audiooutput');
+  // если пользователь ещё ничего не выбирал — по умолчанию берём кабель
+  if(!outDevice){
+    const cable = outs.find(d=>CABLE_RE.test(d.label||''));
+    if(cable){ outDevice=cable.deviceId; localStorage.outId=outDevice;
+      applyOutputDevice(); }
+  }
+  const box=$('#tts-outputs'); if(!box) return; box.innerHTML='';
+  outs.forEach((d,i)=>{
+    const isCable=CABLE_RE.test(d.label||'');
+    const el=document.createElement('div');
+    const sel = outDevice ? d.deviceId===outDevice : d.deviceId==='default';
+    el.className='item'+(sel?' sel':'');
+    el.textContent=(isCable?'🔌 ':'🔈 ')+(d.label||('Устройство '+(i+1)))
+      +(isCable?' · кабель':'');
+    el.onclick=async()=>{ outDevice=d.deviceId; localStorage.outId=outDevice;
+      await applyOutputDevice(); fillOutputs(); };
+    box.appendChild(el);
+  });
+  const tv=$('#tts-vol'); if(tv) tv.value=Math.round(ttsVolume*100);
+
+  // список дубля (слышать самому) — с пунктом «не дублировать» сверху
+  const dbox=$('#tts-dup-outputs'); if(dbox){ dbox.innerHTML='';
+    const off=document.createElement('div');
+    off.className='item'+(dupDevice?'':' sel');
+    off.textContent='🚫 не дублировать';
+    off.onclick=async()=>{ dupDevice=''; localStorage.dupId='';
+      await applyDupDevice(); fillOutputs(); };
+    dbox.appendChild(off);
+    outs.forEach((d,i)=>{
+      const isCable=CABLE_RE.test(d.label||'');
+      const el=document.createElement('div');
+      el.className='item'+(d.deviceId===dupDevice?' sel':'');
+      el.textContent=(isCable?'🔌 ':'🎧 ')+(d.label||('Устройство '+(i+1)));
+      el.onclick=async()=>{ dupDevice=d.deviceId; localStorage.dupId=dupDevice;
+        await applyDupDevice(); fillOutputs(); };
+      dbox.appendChild(el);
+    });
+  }
 }
 
 function fillSttEngines(){
@@ -456,12 +624,18 @@ function fillSttEngines(){
     const stIcon = h==='broken' ? '<span class="st bad">✗</span>'
                  : loaded ? '<span class="st ok">● в памяти</span>'
                  : '<span class="st">—</span>';
-    el.innerHTML=`👂 ${names[nm]||nm} ${stIcon}
+    el.innerHTML=`${weightDotBytes(STT_WEIGHT[nm],1,true)}👂 ${names[nm]||nm} ${stIcon}
       <button class="mini" title="${loaded?'Выгрузить модель из памяти'
         :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
-    el.onclick=async()=>{await api('/api/select',{kind:'stt',value:nm});
-      await refresh(); };
     const b=el.querySelector('.mini');
+    // клик по строке — ТОЛЬКО переключить движок (мгновенно). Загрузку в
+    // память НЕ дёргаем: если модель качается/висит, клик-загрузка застревал
+    // на ⏳ и переключиться было нельзя. Грузим по кнопке ⬇ или лениво при
+    // первой фразе.
+    el.onclick=async()=>{
+      await api('/api/select',{kind:'stt',value:nm});
+      await refresh();
+    };
     b.onclick=async(e)=>{
       e.stopPropagation();
       b.textContent='⏳'; b.disabled=true;
@@ -510,16 +684,26 @@ async function pollSystem(){
   }catch(e){}
 }
 
-/* вес модели: размер с диска ×1.2 (kv-кэш и пр.) против VRAM */
-function weightDot(m){
-  if(!m.size || !sysinfo || !sysinfo.gpu) return '';
-  const req=m.size*1.2, v=sysinfo.gpu.vram_total, k=req/v;
+/* вес модели против VRAM этого ПК: цветная точка. factor учитывает
+   накладные (kv-кэш у LLM). approx=true — размер оценочный (STT/TTS). */
+function weightDotBytes(bytes, factor, approx){
+  if(!bytes || !sysinfo || !sysinfo.gpu) return '';
+  const req=bytes*(factor||1), v=sysinfo.gpu.vram_total, k=req/v;
   const c=k<=0.7?'var(--ok)':k<=1.05?'var(--warn)':'var(--err)';
-  const t=k<=0.7?'лёгкая: целиком поместится в VRAM'
+  const t=(k<=0.7?'лёгкая: целиком поместится в VRAM'
         :k<=1.05?'впритык: заполнит почти всю VRAM, возможны тормоза'
-        :'тяжёлая: не влезет в VRAM, часть уйдёт в ОЗУ — будет медленно';
-  return `<span style="color:${c};flex:none" title="${t} (~${GB(req)} из ${GB(v)})">●</span>`;
+        :'тяжёлая: не влезет в VRAM, часть уйдёт в ОЗУ — будет медленно')
+        +` (${approx?'≈':'~'}${GB(req)} из ${GB(v)})`;
+  return `<span style="color:${c};flex:none" title="${t}">●</span>`;
 }
+/* вес модели: размер с диска ×1.2 (kv-кэш и пр.) против VRAM */
+function weightDot(m){ return weightDotBytes(m.size, 1.2, false); }
+
+/* оценочный вес STT/TTS-движков в памяти (байты). Для индикатора нагрузки —
+   реального API размеров у них нет, цифры приблизительные по классам моделей. */
+const STT_WEIGHT={faster_whisper:1.6e9, gigaam:1.0e9, vosk:0.05e9,
+  whispercpp:1.5e9, tone:0.2e9, voxtral:9e9};
+const TTS_WEIGHT={qwen3:3.6e9, silero:0.1e9, edge:null};
 
 let modelPoll=null;
 async function fillModelPop(){
@@ -539,11 +723,8 @@ async function fillModelPop(){
       el.className='item'+(sel?' sel':'');
       const isLoaded = loaded.has(m.name);
       const dot = isLoaded?' <span class="st ok" title="в памяти">в памяти</span>':'';
-      // LM Studio выгружать по API не умеет — у него только ⬇
-      const btn = m.backend==='ollama'
-        ? `<button class="mini" title="${isLoaded?'Выгрузить из памяти'
-            :'Загрузить в память'}">${isLoaded?'⏏':'⬇'}</button>`
-        : (!isLoaded ? '<button class="mini" title="Загрузить в память">⬇</button>' : '');
+      const btn = `<button class="mini" title="${isLoaded?'Выгрузить из памяти'
+          :'Загрузить в память'}">${isLoaded?'⏏':'⬇'}</button>`;
       el.innerHTML=weightDot(m)+'🧠 '+m.name+dot+btn;
       const mb=el.querySelector('.mini');
       if(mb) mb.onclick=async(e)=>{
@@ -596,10 +777,14 @@ function fillTtsPop(){
     const btn = loaded===null ? '' :
       `<button class="mini" title="${loaded?'Выгрузить модель из памяти'
         :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
-    el.innerHTML=`🔊 ${names[nm]||nm} ${stIcon}${btn}`;
-    el.onclick=async()=>{await api('/api/select',{kind:'tts',value:nm});
-      await refresh();};
+    el.innerHTML=`${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 ${names[nm]||nm} ${stIcon}${btn}`;
     const b=el.querySelector('.mini');
+    // клик по строке — только переключить (мгновенно). Загрузка — по ⬇ или
+    // лениво при первой озвучке, чтобы зависшая загрузка не блокировала выбор
+    el.onclick=async()=>{
+      await api('/api/select',{kind:'tts',value:nm});
+      await refresh();
+    };
     if(b) b.onclick=async(e)=>{
       e.stopPropagation();
       b.textContent='⏳'; b.disabled=true;
@@ -631,8 +816,19 @@ async function refresh(){
     $('#dot-llm').className='dot '+(anyLlm?'ok':'err');
     $('#dot-stt').className='dot '+(status.stt.health[status.stt.current]==='broken'?'err':'ok');
     $('#dot-tts').className='dot '+(status.tts.health[status.tts.current]==='broken'?'err':'ok');
+    renderAlways();
     fillTtsPop(); fillSttEngines();
   }catch(e){}
+}
+
+function renderAlways(){
+  const on = !!(status && status.attention_always);
+  const el=$('#btn-always'); if(!el) return;
+  el.classList.toggle('sel', on);
+  $('#always-ic').textContent = on?'👂':'🧠';
+  $('#always-label').textContent = on
+    ? 'Обычный (слушает всё)'
+    : 'Умный слух — тест (по имени / в разговоре)';
 }
 
 /* ---------- события ---------- */
@@ -640,8 +836,23 @@ $('#btn-listen').onclick = ()=> micOn? stopMic(): startMic();
 $('#btn-mic').onclick = ()=>{ fillMicPop(); togglePop('pop-mic'); };
 $('#pop-mic').addEventListener('click', e=>e.stopPropagation());
 $('#btn-monitor').onclick = toggleMonitor;
+$('#btn-stop').onclick = ()=>{ if(typeof bargeIn==='function') bargeIn(); };
+$('#btn-always').onclick = async(e)=>{
+  e.stopPropagation();
+  const next = !(status && status.attention_always);
+  await api('/api/select',{kind:'attention_always', value:next});
+  await refresh();
+};
 $('#btn-model').onclick = ()=>{ fillModelPop(); togglePop('pop-model'); };
-$('#btn-tts').onclick = ()=>{ togglePop('pop-tts'); };
+$('#btn-tts').onclick = ()=>{ fillTtsPop(); fillOutputs(); togglePop('pop-tts'); };
+$('#tts-vol').oninput = e=>{
+  ttsVolume=e.target.value/100; localStorage.ttsVol=ttsVolume;
+  if(ttsVolNode) ttsVolNode.gain.setTargetAtTime(ttsVolume, playCtx.currentTime, .02);
+};
+$('#mon-vol').oninput = e=>{
+  monVolume=e.target.value/100; localStorage.monVol=monVolume;
+  if(monGain) monGain.gain.setTargetAtTime(monVolume, monCtx.currentTime, .02);
+};
 $('#btn-clear').onclick = async()=>{
   await api('/api/dialog/clear',{});
   $('#chat').innerHTML=''; curSaikaMsg=null;
@@ -708,8 +919,30 @@ $('#git-push').onclick = async()=>{
 };
 setInterval(fillGitPop, 15000);
 
-$('#btn-dreampc').onclick = ()=>{ $('#dp-modal').classList.add('show'); };
+$('#btn-dreampc').onclick = ()=>{ $('#dp-modal').classList.add('show'); fillDreampcModels(); };
 $('#dp-close').onclick = ()=>{ $('#dp-modal').classList.remove('show'); };
+async function fillDreampcModels(){
+  try{
+    const r = await (await fetch('/api/dreampc/models')).json();
+    const sel=$('#dp-model'); sel.innerHTML='';
+    (r.models||[]).forEach(m=>{
+      const o=document.createElement('option');
+      o.value=m.name; o.textContent=m.label||m.name;
+      o.dataset.note=m.note||'';
+      if(m.name===r.current) o.selected=true;
+      sel.appendChild(o);
+    });
+    const cur=sel.selectedOptions[0];
+    $('#dp-model-note').textContent = cur? (cur.dataset.note||'') : '';
+    sel.onchange=async()=>{
+      const opt=sel.selectedOptions[0];
+      $('#dp-model-note').textContent='меняю модель… (перекачается при первом запуске)';
+      await api('/api/dreampc/model',{name:sel.value});
+      $('#dp-model-note').textContent=(opt.dataset.note||'')+
+        ' · при следующем «Проявить» поднимется новая модель';
+    };
+  }catch(e){}
+}
 $('#dp-modal').addEventListener('click', e=>{ if(e.target.id==='dp-modal') $('#dp-modal').classList.remove('show'); });
 $('#dp-run').onclick = dreampcGenerate;
 const sleep = ms => new Promise(r=>setTimeout(r, ms));

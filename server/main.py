@@ -9,11 +9,13 @@ import asyncio
 import atexit
 import json
 import logging
+import os
 import queue
 import re
 import subprocess
 import threading
 import time
+import uuid
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,6 +26,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from server.config import CFG, ROOT
+from server import baymax
 from server.persona import build_system_prompt
 from server.llm import manager as llm
 from server.llm import dreampc
@@ -49,15 +52,27 @@ app = FastAPI(title="Saika")
 PROBLEMS: list[dict] = []          # лента проблем/починок для UI
 EVENT_CLIENTS: set = set()          # активные websockets
 DIALOG_CUTOFF = {"ts": 0.0}         # «новый диалог»: контекст только после отметки
+# уникальный id этого запуска процесса: вкладка запоминает его при коннекте
+# и, если после переподключения видит другой id, значит сервер
+# перезапустился (упал и поднялся start.bat'ом) — делает F5 сама. Так одна
+# и та же вкладка всегда свежая, а новые вкладки на рестартах не плодятся.
+BOOT_ID = uuid.uuid4().hex
 
 
-def report_problem(component, error, action):
+def report_problem(component, error, action, diag=None):
     item = {"component": component, "error": error, "action": action}
     PROBLEMS.append(item)
     del PROBLEMS[:-50]
+    # Беймакс: та же новость, но живым языком, отдельным пузырём в чат
+    try:
+        bm = baymax.line(component, error, action, diag)
+    except Exception:
+        bm = None
     for ws_queue in list(EVENT_CLIENTS):
         try:
             ws_queue.put_nowait({"type": "problem", **item})
+            if bm:
+                ws_queue.put_nowait({"type": "baymax", **bm})
         except Exception:
             pass
 
@@ -76,6 +91,18 @@ def index():
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/baymax/{fname}")
+def baymax_asset(fname: str):
+    """Маленькие гифки Беймакса по настроению (ui/baymax/*.gif|png). Отдаём
+    только файлы из этой папки — без выхода наружу по пути."""
+    if "/" in fname or "\\" in fname or ".." in fname:
+        return JSONResponse({"error": "bad name"}, status_code=400)
+    p = ROOT / "ui" / "baymax" / fname
+    if not p.exists() or p.suffix.lower() not in (".gif", ".png", ".webp"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, headers={"Cache-Control": "max-age=60"})
+
+
 @app.get("/api/status")
 def status():
     return {
@@ -87,12 +114,71 @@ def status():
         "memory": memory.stats(),
         "problems": PROBLEMS[-10:],
         "assistant": CFG.get("assistant_name", "Сайка"),
+        "attention_always": CFG.get("attention.always", False),
     }
 
 
 @app.get("/api/models")
 def models():
     return {"models": llm.list_models(), "loaded": llm.loaded_models()}
+
+
+@app.get("/api/baymax")
+def baymax():
+    """«Привет, я Беймакс». Оценка здоровья всех модулей по шкале 1..10 +
+    что делать (лечение). UI показывает это отдельной панелью."""
+    from server import diagnostics as dg
+    modules = []
+
+    # --- LLM ---
+    backends = llm.backend_status()
+    any_llm = any(backends.values())
+    loaded_llm = llm.loaded_models()
+    cur_model = CFG.get("llm.model", "")
+    if any_llm:
+        in_mem = cur_model in loaded_llm
+        modules.append({
+            "group": "Мозг (LLM)", "name": cur_model or "не выбрана",
+            "score": 10 if in_mem else 8,
+            "verdict": ("активна, в памяти" if in_mem
+                        else "бэкенд на связи, модель подгрузится по запросу"),
+            "treatment": "" if in_mem else "нажми ⬇ у модели, чтобы держать её "
+                                           "в памяти и отвечать быстрее"})
+    else:
+        modules.append({
+            "group": "Мозг (LLM)", "name": "нет бэкенда", "score": 2,
+            "verdict": "ни Ollama, ни LM Studio не отвечают",
+            "treatment": "запусти Ollama или LM Studio (в LM Studio: "
+                         "Developer → Start Server)"})
+
+    # --- Слух (STT) ---
+    st = stt.status()
+    for nm in st.get("engines", []):
+        modules.append({
+            "group": "Слух (STT)", "name": nm,
+            **dg.assess("stt." + nm, st["health"].get(nm, "unknown"),
+                        st.get("loaded", {}).get(nm),
+                        nm == st.get("current"),
+                        st.get("diag", {}).get(nm))})
+
+    # --- Голос (TTS) ---
+    tt = tts.status()
+    for nm in tt.get("engines", []):
+        modules.append({
+            "group": "Голос (TTS)", "name": nm,
+            **dg.assess("tts." + nm, tt["health"].get(nm, "unknown"),
+                        tt.get("loaded", {}).get(nm),
+                        nm == tt.get("current"),
+                        tt.get("diag", {}).get(nm))})
+
+    scores = [m["score"] for m in modules]
+    overall = round(sum(scores) / len(scores), 1) if scores else 0
+    ill = [m for m in modules if m["score"] <= 5]
+    return {"overall": overall, "modules": modules,
+            "summary": ("Все системы в норме, лечить нечего."
+                        if not ill else
+                        f"Вижу проблемы в модулях: "
+                        + ", ".join(m["name"] for m in ill) + ".")}
 
 
 @app.get("/api/system")
@@ -215,6 +301,9 @@ async def select(payload: dict):
             tts.set_engine(value)
         elif kind == "tts_enabled":
             CFG.set("tts.enabled", bool(value))
+        elif kind == "attention_always":
+            # «слушать всё» vs умный режим внимания (по имени/окну)
+            CFG.set("attention.always", bool(value))
         else:
             return JSONResponse({"error": "unknown kind"}, status_code=400)
         return {"ok": True}
@@ -280,6 +369,35 @@ def dreampc_install_status():
     return dreampc.install_status()
 
 
+# известные диффузионные модели, совместимые с воркером (LLaDA-семейство,
+# mask-токен воркер подберёт сам по имени). name — repo на HF, note — подсказка.
+DREAMPC_MODELS = [
+    {"name": "GSAI-ML/LLaDA-8B-Instruct",
+     "label": "LLaDA-8B Instruct", "note": "плотная 8B, точнее, но медленнее (~16 ГБ)"},
+    {"name": "inclusionAI/LLaDA-MoE-7B-A1B-Instruct",
+     "label": "LLaDA-MoE 7B (A1B)", "note": "MoE: ~1.4B активны — заметно быстрее (~14 ГБ)"},
+    {"name": "GSAI-ML/LLaDA-8B-Base",
+     "label": "LLaDA-8B Base", "note": "без чат-настройки, для экспериментов"},
+]
+
+
+@app.get("/api/dreampc/models")
+def dreampc_models():
+    return {"models": DREAMPC_MODELS, "current": CFG.get("dreampc.model")}
+
+
+@app.post("/api/dreampc/model")
+def dreampc_set_model(payload: dict):
+    """Сменить диффузионную модель. Гасим текущий воркер — при следующем
+    «Проявить» он поднимется уже с новой (и сам скачает её при первом разе)."""
+    name = payload.get("name")
+    if not name:
+        return JSONResponse({"error": "no model"}, status_code=400)
+    CFG.set("dreampc.model", name)
+    dreampc.kill_stale()  # следующий ensure_running поднимет воркер с новой моделью
+    return {"ok": True, "model": name}
+
+
 @app.post("/api/memory/compress")
 def force_compress():
     """Ручной запуск сжатия памяти (для отладки)."""
@@ -289,8 +407,11 @@ def force_compress():
 
 
 # ---------------------- диалоговый пайплайн ----------------------
-def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event):
-    """Блокирующий пайплайн в отдельном потоке: LLM stream -> TTS stream."""
+def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
+               heard_ts: float | None = None):
+    """Блокирующий пайплайн в отдельном потоке: LLM stream -> TTS stream.
+    heard_ts (time.monotonic) — момент, когда фраза была распознана: по нему
+    считаем задержку до первого токена ответа («думала N сек»)."""
     person_id = CFG.get("owner.id", "owner")
     person_name = CFG.get("owner.name", "Owner")
     memory.add_event(person_id, "user", user_text)
@@ -399,8 +520,12 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event):
     if n_tokens > 1 and t_first is not None:
         dt = time.monotonic() - t_first
         if dt > 0.2:
-            out.put({"type": "stats", "tps": round((n_tokens - 1) / dt, 1),
-                     "tokens": n_tokens})
+            stats = {"type": "stats", "tps": round((n_tokens - 1) / dt, 1),
+                     "tokens": n_tokens}
+            # задержка «услышала -> начала отвечать» (prefill + очередь)
+            if heard_ts is not None:
+                stats["latency_ms"] = round((t_first - heard_ts) * 1000)
+            out.put(stats)
 
     tts_q.put(None)
     tts_thread.join(timeout=600)
@@ -418,6 +543,15 @@ async def ws_endpoint(ws: WebSocket):
     EVENT_CLIENTS.add(out)
     stop_event = threading.Event()
     worker: threading.Thread | None = None
+
+    # первым делом — id запуска: вкладка сравнит со своим и, если сервер
+    # успел перезапуститься, сама перезагрузится (см. UI, тип «hello»)
+    out.put({"type": "hello", "boot": BOOT_ID})
+    # Беймакс здоровается и коротко докладывает, как система себя чувствует
+    try:
+        out.put({"type": "baymax", **baymax.greeting(stt.status(), tts.status())})
+    except Exception:
+        pass
 
     async def sender():
         while True:
@@ -440,11 +574,12 @@ async def ws_endpoint(ws: WebSocket):
 
     send_task = asyncio.create_task(sender())
 
-    def handle_text(user_text):
+    def handle_text(user_text, heard_ts=None):
         nonlocal worker
         stop_event.clear()
-        worker = threading.Thread(target=run_dialog,
-                                  args=(user_text, out, stop_event), daemon=True)
+        worker = threading.Thread(
+            target=run_dialog,
+            args=(user_text, out, stop_event, heard_ts), daemon=True)
         worker.start()
 
     # ---------- внимание: когда фраза адресована Сайке ----------
@@ -456,29 +591,102 @@ async def ws_endpoint(ws: WebSocket):
     def _window():
         return CFG.get("attention.window_s", 30)
 
+    def _edit_distance(a: str, b: str) -> int:
+        if len(a) < len(b):
+            a, b = b, a
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i] + [0] * len(b)
+            for j, cb in enumerate(b, 1):
+                cur[j] = min(prev[j] + 1, cur[j - 1] + 1,
+                            prev[j - 1] + (ca != cb))
+            prev = cur
+        return prev[-1]
+
+    def _fuzzy_hit(word: str, name: str) -> bool:
+        """Слово похоже на имя: точный префикс — как раньше — или максимум
+        1-2 буквы отличаются от него же по длине. Слух регулярно подменяет
+        «Сайка» на созвучное с той же длиной и окончанием («зайка», «сайра»,
+        «майка», «файка», «гайка», «чайка») — точный префикс это не ловит,
+        а именно из-за этого не получается «дозваться»."""
+        if word.startswith(name):
+            return True
+        if len(word) < 5:            # короче — слишком мало сигнала
+            return False
+        dist = _edit_distance(word[:len(name)], name)
+        return dist <= CFG.get("attention.fuzzy_max_edits", 1)
+
+    def _is_stop(text: str) -> bool:
+        """Короткая команда «замолчи». НЕ уходит в LLM — просто глушим
+        генерацию и озвучку (иначе маленькая модель начинает рассуждать, как
+        ей замолчать). Ловим и «стоп», и «зайка остановись» (имя + стоп):
+        сначала выкидываем обращение по имени, потом смотрим — короткая ли
+        фраза, где есть стоп-слово."""
+        stops = set(CFG.get("attention.stop_words",
+                            ["стоп", "стой", "хватит", "замолчи", "молчи",
+                             "помолчи", "тихо", "тише", "заткнись",
+                             "остановись", "стопэ"]))
+        names = tuple(CFG.get("attention.name_prefixes", ["сайк", "saik"]))
+        words = re.findall(r"[а-яa-zё]+", text.lower())
+        if not words:
+            return False
+        # убираем обращение по имени (и его искажения слухом)
+        core = [w for w in words if not any(_fuzzy_hit(w, n) for n in names)]
+        if not core:
+            return False   # это просто имя, не команда
+        # короткая фраза, где есть хотя бы одно стоп-слово = «замолчи»
+        return len(core) <= 4 and any(w in stops for w in core)
+
     def _addressed(text: str) -> bool:
         names = tuple(CFG.get("attention.name_prefixes", ["сайк", "saik"]))
-        return any(t.startswith(names)
-                   for t in re.findall(r"[а-яa-zё]+", text.lower()))
+        words = re.findall(r"[а-яa-zё]+", text.lower())
+        if any(_fuzzy_hit(w, n) for w in words for n in names):
+            return True
+        # склейка соседних слов — слух иногда рвёт «сайка» на «сай ка».
+        # Тут только точный префикс: нечёткость на склейке двух случайных
+        # слов слишком легко даёт ложные срабатывания (например «на сайт»
+        # даёт «насайт», «сайт и» — «сайти», почти неотличимо от «сайка»).
+        pairs = (a + b for a, b in zip(words, words[1:]))
+        return any(p.startswith(n) for p in pairs for n in names)
 
     def voice_phrase(r):
         now = time.time()
-        if (not CFG.get("attention.enabled", True)
+        heard_mono = r.pop("_heard_mono", None)  # внутреннее, не шлём в UI
+        # «стоп/хватит/молчи» — глушим генерацию и озвучку, в LLM не отправляем
+        if _is_stop(r["text"]):
+            stop_event.set()
+            out.put({"type": "stt_stop", **r})
+            return
+        # режим «слушать всё»: отвечает на любую распознанную речь, без имени
+        # и без окна (умный режим внимания остаётся дефолтом — см. UI-тумблер)
+        always = CFG.get("attention.always", False)
+        if (always or not CFG.get("attention.enabled", True)
                 or _addressed(r["text"]) or now < attn["until"]):
             attn["until"] = now + _window()
             out.put({"type": "stt", **r})
-            handle_text(r["text"])
+            handle_text(r["text"], heard_ts=heard_mono)
         else:
             out.put({"type": "stt_ignored", **r})
 
     try:
         while True:
             msg = await ws.receive()
+            # клиент отключился (вкладка закрыта/обновлена): starlette отдаёт
+            # событие disconnect ОДИН раз, повторный receive() кидает
+            # RuntimeError. Ловим тип явно и выходим тихо, без спама трейсом.
+            if msg.get("type") == "websocket.disconnect":
+                break
             if msg.get("bytes") is not None:
                 pcm = np.frombuffer(msg["bytes"], dtype=np.int16)
+                t0 = time.monotonic()
                 results = await asyncio.get_event_loop().run_in_executor(
                     None, stt.process_chunk, pcm)
+                stt_ms = round((time.monotonic() - t0) * 1000)
                 for r in results:
+                    # сколько заняла транскрибация и когда услышала (для UI)
+                    r["stt_ms"] = stt_ms
+                    r["heard_at"] = time.strftime("%H:%M:%S")
+                    r["_heard_mono"] = time.monotonic()
                     voice_phrase(r)
             elif msg.get("text"):
                 data = json.loads(msg["text"])
@@ -487,17 +695,26 @@ async def ws_endpoint(ws: WebSocket):
                     # набранный текст не эхо-каем обратно — UI уже показал
                     # пузырь сам; «услышано: …» остаётся только для голоса
                     attn["until"] = time.time() + _window()
-                    handle_text(data["text"])
+                    handle_text(data["text"], heard_ts=time.monotonic())
                 elif mtype == "mic_on":
                     # включение микрофона = намерение поговорить
                     attn["until"] = time.time() + _window()
                 elif mtype == "mic_stop":
+                    t0 = time.monotonic()
                     results = await asyncio.get_event_loop().run_in_executor(
                         None, stt.flush)
+                    stt_ms = round((time.monotonic() - t0) * 1000)
                     for r in results:
+                        r["stt_ms"] = stt_ms
+                        r["heard_at"] = time.strftime("%H:%M:%S")
+                        r["_heard_mono"] = time.monotonic()
                         voice_phrase(r)
                 elif mtype == "interrupt":
                     stop_event.set()
+                    # перебили её на полуслове (амплитудный барж-ин на
+                    # клиенте) — это само по себе доказывает, что обращаются
+                    # к ней, имя можно не повторять
+                    attn["until"] = time.time() + _window()
     except WebSocketDisconnect:
         pass
     finally:
@@ -532,7 +749,15 @@ def main():
     start_scheduler(memory, llm.chat_once)
     host = CFG.get("server.host", "127.0.0.1")
     port = CFG.get("server.port", 8765)
-    if CFG.get("server.auto_open_browser", True):
+    # Открываем вкладку только на ПЕРВОМ запуске. При крэш-рестарте start.bat
+    # выставляет SAIKA_AUTO_OPEN=0 — новую вкладку не плодим, уже открытая
+    # сама переподключится и обновится по BOOT_ID. Так после серии падений
+    # не остаётся десятка вкладок.
+    auto_open = CFG.get("server.auto_open_browser", True)
+    env_open = os.environ.get("SAIKA_AUTO_OPEN")
+    if env_open is not None:
+        auto_open = env_open == "1"
+    if auto_open:
         threading.Timer(1.5, webbrowser.open,
                         args=(f"http://{host}:{port}",)).start()
     log.info("Сайка запускается на http://%s:%s", host, port)

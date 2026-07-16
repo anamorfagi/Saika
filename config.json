@@ -8,7 +8,7 @@
     "backend": "lmstudio",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "gemma-4-e4b-it",
+    "model": "google/gemma-4-e4b",
     "temperature": 0.8,
     "max_history": 30
   },
@@ -25,10 +25,25 @@
       "сайк",
       "saik"
     ],
-    "window_s": 30
+    "window_s": 30,
+    "fuzzy_max_edits": 1,
+    "always": true,
+    "stop_words": [
+      "стоп",
+      "стой",
+      "хватит",
+      "замолчи",
+      "молчи",
+      "помолчи",
+      "тихо",
+      "тише",
+      "заткнись",
+      "остановись",
+      "стопэ"
+    ]
   },
   "stt": {
-    "engine": "faster_whisper",
+    "engine": "vosk",
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
@@ -72,7 +87,7 @@
     }
   },
   "tts": {
-    "engine": "silero",
+    "engine": "qwen3",
     "enabled": true,
     "voice_ref": "voice/ref.mp3",
     "voice_ref_wav": "voice/ref.wav",
@@ -112,7 +127,7 @@
     "rag_top_k": 5
   },
   "dreampc": {
-    "model": "GSAI-ML/LLaDA-8B-Instruct",
+    "model": "inclusionAI/LLaDA-MoE-7B-A1B-Instruct",
     "venv": ".venv_dreampc",
     "worker": "workers/dreampc_worker.py",
     "setup": "setup/install_dreampc.bat",

@@ -180,7 +180,9 @@ def ensure_running() -> dict:
         # 4) спавним воркер и ждём /health
         worker = resolve(cfg.get("worker", "workers/dreampc_worker.py"))
         model = cfg.get("model", "GSAI-ML/LLaDA-8B-Instruct")
-        cmd = [str(venv_py), str(worker), "--port", str(port), "--model", model]
+        cmd = [str(venv_py), str(worker), "--port", str(port), "--model", model,
+               # 0 = воркер сам подберёт mask-токен по модели (см. MASK_IDS)
+               "--mask-id", str(cfg.get("mask_id", 0))]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         log.info("dreampc: запускаю воркер: %s", " ".join(cmd))
         _proc = subprocess.Popen(cmd, cwd=str(resolve(".")), creationflags=flags)

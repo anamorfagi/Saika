@@ -15,6 +15,7 @@ import numpy as np
 
 from server.config import CFG
 from server.stt.engines import ALL_ENGINES
+from server import diagnostics
 
 log = logging.getLogger("saika.stt")
 
@@ -70,7 +71,8 @@ class STTManager:
     def __init__(self, on_problem=None):
         self.instances = {}
         self.health = {name: "unknown" for name in ALL_ENGINES}
-        self.last_error = {}  # name -> текст последней ошибки (для UI)
+        self.last_error = {}  # name -> человеческая причина последней ошибки (UI)
+        self.last_diag = {}   # name -> полный разбор diagnostics.classify
         self.vad = VadSegmenter()
         self.lock = threading.Lock()
         self.on_problem = on_problem  # callback(component, error, action)
@@ -158,9 +160,14 @@ class STTManager:
             engine.load()
             self.health[name] = "ok"
             self.last_error.pop(name, None)
+            self.last_diag.pop(name, None)
         except Exception as e:
             self.health[name] = "broken"
-            self.last_error[name] = str(e)
+            diag = diagnostics.classify("stt." + name, str(e))
+            self.last_error[name] = diag["human"]
+            self.last_diag[name] = diag
+            if self.on_problem:
+                self.on_problem("stt." + name, diag["human"], diag["action"], diag)
             raise
 
     def unload_engine(self, name):
@@ -174,20 +181,34 @@ class STTManager:
     # ---------- здоровье и самопочинка ----------
     def _mark_broken(self, name, error):
         self.health[name] = "broken"
-        self.last_error[name] = str(error)
-        log.error("STT %s сломался: %s", name, error)
+        diag = diagnostics.classify("stt." + name, str(error))
+        # в UI кладём человеческую причину, а не сырой стек-трейс
+        self.last_error[name] = diag["human"]
+        self.last_diag[name] = diag
+        log.error("STT %s сломался [%s]: %s", name, diag["category"], error)
         if self.on_problem:
-            self.on_problem("stt." + name, str(error),
-                            "переключаюсь на следующий движок, чиню в фоне")
-        threading.Thread(target=self._repair, args=(name,), daemon=True).start()
+            self.on_problem("stt." + name, diag["human"], diag["action"], diag)
+        threading.Thread(target=self._repair, args=(name, diag),
+                         daemon=True).start()
 
     def _notify(self, active):
         if self.on_problem:
             self.on_problem("stt", f"основной движок недоступен",
                             f"работаю на {active}")
 
-    def _repair(self, name):
-        """Фоновая попытка починить: выгрузить и загрузить заново."""
+    def _repair(self, name, diag=None):
+        """Фоновая попытка починить, с учётом категории проблемы:
+        - network/space/offline — перезагрузка не поможет (нет сети/памяти),
+          не долбим впустую: движок остаётся на запасном, ждём условий;
+        - corrupt — сносим битый кэш, движок при следующей загрузке докачает
+          (у gigaam снос встроен в engine.load, тут общий случай);
+        - остальное — обычная попытка выгрузить/загрузить заново."""
+        cat = (diag or {}).get("category", "unknown")
+        if cat in ("network", "space", "offline"):
+            # чинить нечего до восстановления условий — просто фиксируем причину
+            log.info("STT %s: причина '%s' — жду условий, не переустанавливаю",
+                     name, cat)
+            return
         time.sleep(2)
         try:
             engine = self._get(name)
@@ -195,11 +216,13 @@ class STTManager:
             engine.load()
             self.health[name] = "ok"
             self.last_error.pop(name, None)
+            self.last_diag.pop(name, None)
             log.info("STT %s восстановлен", name)
             if self.on_problem:
                 self.on_problem("stt." + name, "", "движок восстановлен")
         except Exception as e:
-            self.last_error[name] = str(e)
+            d = diagnostics.classify("stt." + name, str(e))
+            self.last_error[name] = d["human"]
             log.warning("STT %s: починка не удалась (%s)", name, e)
 
     def status(self):
@@ -212,4 +235,4 @@ class STTManager:
                 loaded[name] = False
         return {"current": self.current_name, "health": self.health,
                 "engines": list(ALL_ENGINES), "loaded": loaded,
-                "errors": self.last_error}
+                "errors": self.last_error, "diag": self.last_diag}

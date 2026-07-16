@@ -44,6 +44,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Windows-консоль обычно в cp1251, где нет юникод-символов вроде «✓».
+# Без этого успешный финальный print падал с UnicodeEncodeError, скрипт
+# выходил с кодом 1, и установка помечалась как ПРОВАЛ — хотя окружение
+# уже полностью встало (CUDA на месте). errors="replace" делает вывод
+# неломающимся, не меняя кодировку лога.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 VENV = ROOT / ".venv_dreampc"
 MAIN_SP = ROOT / ".venv" / "Lib" / "site-packages"
@@ -141,7 +152,7 @@ def main():
     if "--remove" in sys.argv:
         if VENV.exists():
             shutil.rmtree(VENV)
-            print("✓ .venv_dreampc удалён.", flush=True)
+            print("[OK] .venv_dreampc удалён.", flush=True)
         else:
             print("Нечего удалять.", flush=True)
         return
@@ -201,7 +212,7 @@ def main():
         sys.exit(1)
 
     print("""
-✓ Готово, CUDA на месте. В веб-интерфейсе Сайки нажми 🧪 (DreamPC) — сервер
+[OK] Готово, CUDA на месте. В веб-интерфейсе Сайки нажми DreamPC — сервер
   сам запустит воркер. Первая генерация скачает веса модели (~16 ГБ bf16)
   в models/hf и займёт время; прогресс — в logs/dreampc_worker.log. В
   память видеокарты модель ложится уже в 4-битном виде (~6 ГБ).

@@ -12,6 +12,7 @@ import threading
 import numpy as np
 
 from server.config import CFG, resolve
+from server import diagnostics
 
 log = logging.getLogger("saika.tts")
 
@@ -194,7 +195,8 @@ class TTSManager:
         self.engines = {"qwen3": Qwen3Engine(), "silero": SileroEngine(),
                         "edge": EdgeEngine()}
         self.health = {n: "unknown" for n in self.engines}
-        self.last_error = {}  # name -> текст последней ошибки (для UI)
+        self.last_error = {}  # name -> человеческая причина последней ошибки (UI)
+        self.last_diag = {}   # name -> полный разбор diagnostics.classify
         self.on_problem = on_problem
 
     # ---------- ручная загрузка/выгрузка (кнопки в UI) ----------
@@ -205,9 +207,14 @@ class TTSManager:
             self.engines[name].load()
             self.health[name] = "ok"
             self.last_error.pop(name, None)
+            self.last_diag.pop(name, None)
         except Exception as e:
             self.health[name] = "broken"
-            self.last_error[name] = str(e)
+            diag = diagnostics.classify("tts." + name, str(e))
+            self.last_error[name] = diag["human"]
+            self.last_diag[name] = diag
+            if self.on_problem:
+                self.on_problem("tts." + name, diag["human"], diag["action"], diag)
             raise
 
     def unload_engine(self, name):
@@ -249,26 +256,35 @@ class TTSManager:
                     return
             except Exception as e:
                 self.health[name] = "broken"
-                self.last_error[name] = str(e)
-                log.error("TTS %s сломался: %s", name, e)
+                diag = diagnostics.classify("tts." + name, str(e))
+                self.last_error[name] = diag["human"]
+                self.last_diag[name] = diag
+                log.error("TTS %s сломался [%s]: %s", name, diag["category"], e)
                 if self.on_problem:
-                    self.on_problem("tts." + name, str(e),
-                                    "переключаюсь на запасной голос, чиню в фоне")
-                threading.Thread(target=self._repair, args=(name,),
+                    self.on_problem("tts." + name, diag["human"], diag["action"], diag)
+                threading.Thread(target=self._repair, args=(name, diag),
                                  daemon=True).start()
         log.error("Все TTS-движки недоступны")
 
-    def _repair(self, name):
+    def _repair(self, name, diag=None):
+        # сеть/память/офлайн перезагрузкой не лечатся — не долбим впустую
+        cat = (diag or {}).get("category", "unknown")
+        if cat in ("network", "space", "offline"):
+            log.info("TTS %s: причина '%s' — жду условий, не переустанавливаю",
+                     name, cat)
+            return
         try:
             engine = self.engines[name]
             engine.unload()
             engine.load()
             self.health[name] = "ok"
             self.last_error.pop(name, None)
+            self.last_diag.pop(name, None)
             if self.on_problem:
                 self.on_problem("tts." + name, "", "движок восстановлен")
         except Exception as e:
-            self.last_error[name] = str(e)
+            d = diagnostics.classify("tts." + name, str(e))
+            self.last_error[name] = d["human"]
             log.warning("TTS %s: починка не удалась (%s)", name, e)
 
     def status(self):
@@ -281,4 +297,4 @@ class TTSManager:
                 loaded[name] = False
         return {"current": self.current_name, "health": self.health,
                 "engines": list(self.engines), "loaded": loaded,
-                "errors": self.last_error}
+                "errors": self.last_error, "diag": self.last_diag}
