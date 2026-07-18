@@ -84,6 +84,11 @@ def line(component: str, error: str, action: str, diag: dict = None) -> dict:
     d = diag or diagnostics.classify(component, error)
     cat = d.get("category", "unknown")
     n = diagnostics._BROKEN_SCORE.get(cat, 2)
+    # если ошибка уже развёрнутая и человеческая (наш случай: не хватает VRAM
+    # + список что закрыть) — не портим её шаблоном, отдаём как есть
+    if cat == "space" and error and len(error) > 60:
+        return {"text": "Хм, " + error + " Пока говорю запасным голосом.",
+                "score": n, "mood": "bad"}
     templ = _GRUMBLE.get(cat, _GRUMBLE["unknown"])
     return {"text": random.choice(templ).format(name=name, sc=_score(n)),
             "score": n, "mood": "bad"}

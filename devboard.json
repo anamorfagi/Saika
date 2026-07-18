@@ -1,0 +1,502 @@
+{
+  "updated": "2026-07-18T19:51:33",
+  "items": [
+    {
+      "id": "s01",
+      "col": "doing",
+      "text": "DreamPC: качается LLaDA-MoE 7B (~14 ГБ)",
+      "note": "первый прогон, смотреть статус в панели",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "s02",
+      "col": "doing",
+      "text": "Мессенджеры: заполнить secrets.json (токены Telegram/VK)",
+      "note": "тогда боты оживут",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "p01",
+      "col": "planned",
+      "text": "Узнавание владельца по голосу (voiceprint)",
+      "note": "resemblyzer/ECAPA, отличать босса от гостя",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "p02",
+      "col": "planned",
+      "text": "JARVIS: один мозг (GPU-ПК), много тел",
+      "note": "llm.*_url на Tailscale-IP мозга",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "p03",
+      "col": "planned",
+      "text": "Файловые инструменты агента (найти/открыть/создать/закрыть)",
+      "note": "под ✈-рубильником",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "p04",
+      "col": "planned",
+      "text": "Прямой PC↔PC через Tailscale + /api/system/*",
+      "note": "выбор ПК в интерфейсе",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "p05",
+      "col": "planned",
+      "text": "Разнести index.html на модули",
+      "note": "для совместной разработки без конфликтов",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "p06",
+      "col": "planned",
+      "text": "Переименовать консольного доктора в Беймакса",
+      "note": "в чате уже Беймакс",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "i01",
+      "col": "ideas",
+      "text": "Кнопка теста скорости интернета по запросу",
+      "note": "рядом с пингом",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "i02",
+      "col": "ideas",
+      "text": "Твитч-коннектор чата",
+      "note": "категория людей в БД уже есть",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d01",
+      "col": "done",
+      "text": "Узнавание имени: нечёткое (зайка/сайра/майка)",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d02",
+      "col": "done",
+      "text": "Стоп-команды перехватываются до LLM",
+      "note": "стоп/хватит/зайка остановись",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d03",
+      "col": "done",
+      "text": "Режим слуха: обычный (всё) / умный (тест)",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d04",
+      "col": "done",
+      "text": "Индикаторы веса/загрузки на LLM/STT/TTS",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d05",
+      "col": "done",
+      "text": "Выгрузка LM Studio по API + кнопки ⬇/⏏",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d06",
+      "col": "done",
+      "text": "Одна вкладка, F5 при рестарте (BOOT_ID)",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d07",
+      "col": "done",
+      "text": "Вывод голоса на устройство + дубль + громкости",
+      "note": "кабель для OBS + себе в наушники",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d08",
+      "col": "done",
+      "text": "HF-таймаут 10→60с (лечит зависшие загрузки)",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d09",
+      "col": "done",
+      "text": "GigaAM: авто-снос битого чекпоинта",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d10",
+      "col": "done",
+      "text": "T-one: кадры по 2400 сэмплов",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d11",
+      "col": "done",
+      "text": "DreamPC: переключатель моделей + mask-id авто",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-16"
+    },
+    {
+      "id": "d12",
+      "col": "done",
+      "text": "DreamPC: живой статус загрузки в панели",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d13",
+      "col": "done",
+      "text": "Мессенджеры: Telegram+VK, управление ПК",
+      "note": "owner-only, ✈-рубильник, secrets.json",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d14",
+      "col": "done",
+      "text": "Индикатор сети/пинга у имени + полоска загрузки",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d15",
+      "col": "done",
+      "text": "Беймакс: диагностика человеческим языком",
+      "note": "оценки 1–10, реплики в чат",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d16",
+      "col": "done",
+      "text": "Освобождение порта 8765 при старте",
+      "note": "лечит 10048",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d17",
+      "col": "done",
+      "text": "Git: авто --set-upstream + пуш даже без нового коммита",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d18",
+      "col": "done",
+      "text": "Дев-доска 🗺 (эта карта) + авто DEVBOARD.md для другой ИИ",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d19",
+      "col": "done",
+      "text": "Сайка читает свою историю разработки",
+      "note": "сводка доски в промпте + инструменты devboard_read/add",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d20",
+      "col": "done",
+      "text": "Горячие клавиши: V замолчать, M микро, B блокнот",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d21",
+      "col": "done",
+      "text": "Стоп озвучки по клику на эквалайзер (кнопку ⏹ убрали)",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d22",
+      "col": "done",
+      "text": "Градиентная подсветка эквалайзера",
+      "note": "зелёный — голос готов, красный — замолчала",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "d23",
+      "col": "done",
+      "text": "Мягкое затухание голоса при остановке",
+      "note": "ramp 180мс вместо резкого обрыва",
+      "auto": false,
+      "ts": "2026-07-17"
+    },
+    {
+      "id": "aed510a4",
+      "col": "done",
+      "text": "qwen3 tts пррывистая озвучка",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17T21:38"
+    },
+    {
+      "id": "a922c44c",
+      "col": "bugs",
+      "text": "qwen3 прирывистая озвучка появилась",
+      "note": "",
+      "auto": false,
+      "ts": "2026-07-17T21:38"
+    }
+  ],
+  "log": [
+    {
+      "ts": "2026-07-17T17:30:19",
+      "text": "⚠ llm: переключилась на ollama/llama3.2:latest",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:29:28",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:30:35",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:30:47",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:30:55",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:31:25",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:31:36",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:31:49",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T18:32:05",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T19:25:45",
+      "text": "⚠ tts.edge: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T19:25:45",
+      "text": "✓ tts.edge: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-17T20:27:10",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:27:45",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:28:24",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:28:41",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:35:21",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:39:43",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:42:35",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:43:07",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:44:37",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:45:18",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:47:04",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:47:38",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:51:33",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:52:41",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-17T20:55:51",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T14:01:57",
+      "text": "⚠ tts.edge: переключаюсь на рабочий движок; как появится сеть — докачаю модель сама",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T14:50:32",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T14:55:43",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T16:36:24",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T16:36:44",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T16:37:30",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T16:46:39",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T16:57:38",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T19:20:29",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T19:20:59",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T19:40:20",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T19:40:31",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-18T19:51:33",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    }
+  ],
+  "bugs": {
+    "llm": {
+      "text": "основной бэкенд недоступен",
+      "count": 24,
+      "resolved": false,
+      "last": "2026-07-18T19:51"
+    },
+    "tts.qwen3": {
+      "text": "«qwen3» упал с незнакомой мне ошибкой.",
+      "count": 12,
+      "resolved": false,
+      "last": "2026-07-17T20:47"
+    },
+    "tts.edge": {
+      "text": "Похоже, что-то с сетью, брат: «edge» не скачивается — huggingface.co не отвечает. Проверь интернет или VPN.",
+      "count": 2,
+      "resolved": false,
+      "last": "2026-07-18T14:01"
+    }
+  }
+}

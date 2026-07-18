@@ -1,4 +1,4 @@
-"""ИИ-доктор: локальная LLM (Ollama / LM Studio) читает логи и чинит Сайку.
+"""ИИ-Беймакс: локальная LLM (Ollama / LM Studio) читает логи и чинит Сайку.
 
 Как работает:
  1. Собирает контекст: отчёт обычного доктора, хвост logs/saika.log,
@@ -39,7 +39,7 @@ MAX_ACTIONS = 5
 SAFE_PKG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\],<>=!~+\- ]*$")
 ALLOWED_CFG_PREFIX = ("stt.", "tts.", "llm.")
 
-SYSTEM = """Ты — ИИ-доктор локального голосового ассистента «Сайка» (Windows, \
+SYSTEM = """Ты — ИИ-Беймакс локального голосового ассистента «Сайка» (Windows, \
 Python 3.12, venv в .venv, движки STT/TTS, LLM через Ollama/LM Studio, \
 переносимый диск — буква диска может меняться, из-за чего ломаются \
 editable-пакеты в third_party/).
@@ -126,7 +126,7 @@ def has_problems(report):
 def ask_llm(ctx):
     from server.llm import manager as llm
     if not any(llm.backend_status().values()):
-        _log("[X] Ни Ollama, ни LM Studio не отвечают — ИИ-доктору не с кем думать.")
+        _log("[X] Ни Ollama, ни LM Studio не отвечают — ИИ-Беймаксу не с кем думать.")
         return None
     _log("[ai] Спрашиваю локальную модель…")
     raw = llm.chat_once([{"role": "system", "content": SYSTEM},
@@ -195,7 +195,7 @@ def main():
     auto = "--auto" in sys.argv
     report, ctx = collect_context()
     if not has_problems(report):
-        _log("✓ Проблем не вижу — ИИ-доктор не нужен.")
+        _log("✓ Проблем не вижу — ИИ-Беймакс не нужен.")
         return
 
     if not auto:
@@ -204,7 +204,7 @@ def main():
             return
 
     for rnd in range(1, MAX_ROUNDS + 1):
-        _log(f"\n── ИИ-доктор, раунд {rnd}/{MAX_ROUNDS} ──")
+        _log(f"\n── ИИ-Беймакс, раунд {rnd}/{MAX_ROUNDS} ──")
         plan = ask_llm(ctx)
         if plan is None:  # нет LLM
             return
@@ -220,7 +220,7 @@ def main():
         from setup.doctor import run_checks
         report = run_checks(fix=True)
         if finished or not has_problems(report):
-            _log("✓ ИИ-доктор закончил.")
+            _log("✓ ИИ-Беймакс закончил.")
             return
         _, ctx = collect_context()
     _log("[!] Раунды кончились — что осталось, чинить руками (см. logs/ai_doctor.log).")

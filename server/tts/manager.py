@@ -8,6 +8,7 @@ import io
 import logging
 import re
 import threading
+import time
 
 import numpy as np
 
@@ -40,6 +41,18 @@ class Qwen3Engine:
         with self.load_lock:
             if self.model is not None and self.prompt is not None:
                 return
+            # Единственная защита, что осталась: не грузим, если VRAM реально
+            # нет (иначе нативный краш 0xC0000005). Порог ~4 ГБ ≈ сколько
+            # берёт модель; хватает памяти — грузимся как обычно, на плавность
+            # это не влияет. Мало — уходим на silero, а не роняем процесс.
+            try:
+                from server import system_control as _sc
+                advice = _sc.vram_advice(4000)
+            except Exception:
+                advice = ""
+            if advice:
+                raise RuntimeError("Не хватает видеопамяти для клон-голоса: "
+                                   + advice)
             import torch
             from qwen_tts import Qwen3TTSModel
 
@@ -198,11 +211,18 @@ class TTSManager:
         self.last_error = {}  # name -> человеческая причина последней ошибки (UI)
         self.last_diag = {}   # name -> полный разбор diagnostics.classify
         self.on_problem = on_problem
+        self._last_space_report = 0.0  # троттлинг совета «мало памяти»
 
     # ---------- ручная загрузка/выгрузка (кнопки в UI) ----------
     def load_engine(self, name):
         if name not in self.engines:
             raise ValueError(f"Нет такого движка: {name}")
+        # отключённый движок (qwen3, роняющий процесс) руками грузить нельзя —
+        # иначе нативный краш убьёт сервер
+        if name in set(CFG.get("tts.disabled", [])):
+            raise RuntimeError(
+                f"{name} отключён (нативно роняет процесс на этом ПК). "
+                "Убери его из tts.disabled в config.json, если хочешь пробовать.")
         try:
             self.engines[name].load()
             self.health[name] = "ok"
@@ -236,9 +256,13 @@ class TTSManager:
 
     def _chain(self):
         order = CFG.get("tts.fallback_order", list(self.engines))
+        # движки из tts.disabled НЕ трогаем совсем (напр. qwen3, который
+        # нативно роняет процесс на этом ПК) — иначе фоллбэк в него = краш
+        disabled = set(CFG.get("tts.disabled", []))
         current = self.current_name
         chain = [current] + [n for n in order if n != current]
-        return [n for n in chain if self.health.get(n) != "broken"]
+        return [n for n in chain
+                if self.health.get(n) != "broken" and n not in disabled]
 
     def speak(self, text):
         """Генератор (pcm_f32_bytes, sample_rate). Сам падает на фоллбэк."""
@@ -255,11 +279,22 @@ class TTSManager:
                 if yielded:
                     return
             except Exception as e:
-                self.health[name] = "broken"
                 diag = diagnostics.classify("tts." + name, str(e))
                 self.last_error[name] = diag["human"]
                 self.last_diag[name] = diag
                 log.error("TTS %s сломался [%s]: %s", name, diag["category"], e)
+                # Нехватка памяти — это ВРЕМЕННО. НЕ помечаем движок сломанным:
+                # на следующей фразе снова пробуем клон-голос и сами вернёмся к
+                # нему, как только VRAM освободится. Совет «закрой лишнее» шлём
+                # не чаще раза в минуту, чтобы не спамить.
+                if diag["category"] == "space":
+                    now = time.time()
+                    if self.on_problem and now - self._last_space_report > 60:
+                        self._last_space_report = now
+                        self.on_problem("tts." + name, diag["human"],
+                                        diag["action"], diag)
+                    continue  # тихо переходим на запасной голос для этой фразы
+                self.health[name] = "broken"
                 if self.on_problem:
                     self.on_problem("tts." + name, diag["human"], diag["action"], diag)
                 threading.Thread(target=self._repair, args=(name, diag),

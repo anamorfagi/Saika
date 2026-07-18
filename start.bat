@@ -91,9 +91,9 @@ if %RESTARTS% GTR 3 (
     exit /b 1
 )
 echo.
-echo [!] Saika crashed (code %CODE%). Running doctor and restarting... (attempt %RESTARTS%/3)
+echo [!] Saika crashed (code %CODE%). Beymax is looking into it... (attempt %RESTARTS%/3)
 "%VPY%" setup\doctor.py --fix
-:: обычный доктор не справился? зовём ИИ-доктора (локальная LLM читает логи)
+:: обычный осмотр не помог? зовём ИИ-Беймакса (локальная LLM читает логи)
 if %RESTARTS% GEQ 2 "%VPY%" setup\ai_doctor.py --auto
 goto run
 

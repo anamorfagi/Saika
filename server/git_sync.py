@@ -85,27 +85,56 @@ def pull() -> dict:
     return {"ok": True, "message": out or "уже актуально"}
 
 
+def _push() -> tuple[int, str, str]:
+    """git push с авто-привязкой ветки. Если ветка ещё не связана с origin
+    (частая ошибка «The current branch X has no upstream branch» — то самое
+    «неправильная ветка привязки»), повторяем с --set-upstream origin <ветка>,
+    чтобы дальше пуш работал обычным кликом."""
+    code, out, err = _run(["push"], timeout=120)
+    low = (out + err).lower()
+    if code != 0 and ("no upstream" in low or "set-upstream" in low
+                      or "has no upstream" in low):
+        _, branch, _ = _run(["rev-parse", "--abbrev-ref", "HEAD"])
+        log.info("git: ветка %s без upstream — привязываю к origin и пушу",
+                 branch)
+        code, out, err = _run(
+            ["push", "--set-upstream", "origin", branch], timeout=120)
+    return code, out, err
+
+
 def sync(message: str = "") -> dict:
-    """git add -A && commit && push. Возвращает {"ok":bool,...}."""
+    """git add -A && commit && push. Возвращает {"ok":bool,...}.
+    Пуш выполняется ВСЕГДА — даже если коммитить нечего: на прошлом разе
+    push мог упасть (например, ветка без upstream), и локальный коммит
+    «завис» неотправленным. Повторный клик его доотправит."""
     code, out, err = _run(["add", "-A"])
     if code != 0:
         return {"ok": False, "step": "add", "error": err or out}
 
     msg = message.strip() or "Sync from Saika UI"
+    committed = False
     code, out, err = _run(["commit", "-m", msg])
-    if code != 0:
-        if "nothing to commit" in (out + err).lower():
-            return {"ok": True, "committed": False, "pushed": False,
-                    "message": "нечего коммитить — рабочая копия чистая"}
+    if code == 0:
+        committed = True
+    elif "nothing to commit" not in (out + err).lower():
         return {"ok": False, "step": "commit", "error": err or out}
 
-    code, out, err = _run(["push"], timeout=120)
+    # пушим в любом случае (доотправить прежние неотправленные коммиты)
+    code, out, err = _push()
     if code != 0:
+        low = (out + err).lower()
+        if "up-to-date" in low or "up to date" in low:
+            return {"ok": True, "committed": committed, "pushed": False,
+                    "message": "всё уже на GitHub — отправлять нечего"}
         return {"ok": False, "step": "push", "error": err or out,
-                "committed": True,
-                "message": "закоммитила локально, но push не прошёл — "
-                          "смотри ошибку ниже"}
+                "committed": committed,
+                "message": ("закоммитила локально, но push не прошёл — "
+                            "смотри ошибку ниже" if committed
+                            else "push не прошёл — смотри ошибку ниже")}
 
     log.info("git sync: %s", msg)
+    if not committed:
+        return {"ok": True, "committed": False, "pushed": True,
+                "message": "новых изменений не было — доотправила прежние коммиты"}
     return {"ok": True, "committed": True, "pushed": True,
             "message": "запушено: " + msg}

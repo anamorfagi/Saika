@@ -78,6 +78,27 @@ def _configure_hf_endpoint():
         log.info("huggingface.co и hf-mirror.com недоступны — офлайн-режим "
                  "(нужна уже скачанная модель в models/hf)")
 
+    # huggingface_hub/transformers СНИМАЮТ эти env в константы при импорте.
+    # Если первая попытка загрузки прошла в офлайне, то при ретрае в том же
+    # процессе одной смены env недостаточно — библиотеки держат старый
+    # снимок («outgoing traffic has been disabled», лог 2026-07-15 11:18).
+    # Патчим константы уже импортированных модулей (best effort).
+    offline = bool(os.environ.get("HF_HUB_OFFLINE"))
+    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
+    hub = sys.modules.get("huggingface_hub")
+    if hub is not None:
+        try:
+            hub.constants.HF_HUB_OFFLINE = offline
+            hub.constants.ENDPOINT = endpoint
+        except Exception:
+            pass
+    tfh = sys.modules.get("transformers.utils.hub")
+    if tfh is not None and hasattr(tfh, "_is_offline_mode"):
+        try:
+            tfh._is_offline_mode = offline
+        except Exception:
+            pass
+
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402

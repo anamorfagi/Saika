@@ -232,8 +232,38 @@ def _qwen_tts_ok():
         return False, "qwen_tts не установлен -> TTS переключён на silero"
 
 
+def _recover_from_crash(fix):
+    """После нативного краша (0xC0000005) процесс умирает мгновенно — Python
+    это не ловит. Но в saika.log последней строкой остаётся то, на чём он
+    упал. Если это загрузка Qwen3-TTS (частый случай: не хватило VRAM, когда
+    в видеопамяти уже сидит LLM) — переключаем озвучку на silero (CPU,
+    стабильно) и гасим optimize, чтобы Сайка хотя бы поднялась."""
+    if not fix:
+        return
+    try:
+        lines = [l for l in (ROOT / "logs" / "saika.log").read_text(
+            encoding="utf-8", errors="ignore").splitlines() if l.strip()]
+    except Exception:
+        return
+    joined = "\n".join(lines[-6:]).lower()
+    crashed_on_qwen = ("qwen3-tts" in joined and "беру из" in joined
+                       and "модель готова" not in joined
+                       and "загружен (attn" not in joined)
+    if crashed_on_qwen:
+        from server.config import CFG
+        # временно уводим на silero, чтобы разорвать петлю крашей и поднять
+        # сервер. qwen3 НЕ отключаем насовсем (это её родной клон-голос) —
+        # как освободится VRAM, вернётся сама (или выбери его в UI).
+        CFG.set("tts.engine", "silero")
+        print("[fix] Qwen3-TTS уронил процесс при загрузке (нативный крах — "
+              "чаще всего не хватило VRAM, когда её держит LLM). Временно "
+              "перевёл озвучку на silero, чтобы поднять сервер. Освободи "
+              "видеопамять — и клон-голос снова заработает.")
+
+
 def run_checks(fix=False):
-    print("\n── Доктор Сайки ──────────────────────────────")
+    print("\n── Беймакс: осмотр системы ───────────────────")
+    _recover_from_crash(fix)
     report = []
     for mod, pkg in PKG_FIX.items():
         report.append(_check(f"пакет {mod}", mod in ("fastapi", "uvicorn",

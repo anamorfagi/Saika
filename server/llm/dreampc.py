@@ -120,6 +120,34 @@ def _start_install():
         stdout=logf, stderr=subprocess.STDOUT, creationflags=flags)
 
 
+def worker_status() -> dict:
+    """Что сейчас с воркером — для панели DreamPC, чтобы было видно «качаю /
+    гружу / генерирую», а не глухое «проявляю…». Тянет health + хвост лога
+    воркера (там строки скачивания весов с huggingface)."""
+    h = _health()
+    tail = ""
+    p = resolve("logs") / "dreampc_worker.log"
+    if p.exists():
+        try:
+            lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+            # чистим шумные http-строки, оставляем осмысленные
+            keep = [ln for ln in lines[-25:]
+                    if "HTTP Request" not in ln][-8:]
+            tail = "\n".join(keep)
+        except Exception:
+            pass
+    if h is None:
+        state = "воркер запускается…"
+    elif h.get("error"):
+        state = "ошибка: " + str(h["error"])[:200]
+    elif h.get("model_loaded"):
+        state = "модель загружена, генерирую…"
+    else:
+        state = "загружаю модель (первый раз качает веса ~14 ГБ)…"
+    return {"model_loaded": bool(h and h.get("model_loaded")),
+            "error": (h or {}).get("error"), "state": state, "log_tail": tail}
+
+
 def _handle_worker_error(err: str) -> dict:
     global _fail_streak
     if not _looks_like_env_problem(err):

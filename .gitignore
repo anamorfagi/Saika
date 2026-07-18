@@ -22,6 +22,9 @@ data/
 logs/
 .setup_state.json
 
+# секреты (токены ботов мессенджеров — ключ от ПК, в репо им не место)
+secrets.json
+
 # мусор
 __pycache__/
 *.pyc
