@@ -22,8 +22,8 @@ from urllib.parse import urlparse
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from server.config import CFG, ROOT, resolve
 from server import baymax
@@ -690,6 +690,139 @@ def force_compress():
     return {"ok": True}
 
 
+# ---------------------- REST-чат для нативных клиентов (UE5 и т.п.) --------
+class _ServerSpeaker:
+    """Играет PCM (int16 mono) через колонки ЭТОГО ПК — для клиентов без
+    своего аудио (нативный UE-интерфейс). Ленивая инициализация sounddevice:
+    нет пакета — молча без звука (подсказка уйдёт в problems)."""
+
+    def __init__(self):
+        self._stream = None
+        self._sr = 0
+
+    def play(self, pcm: bytes, sr: int):
+        try:
+            import numpy as np
+            import sounddevice as sd
+        except ImportError:
+            report_problem("tts", "нет пакета sounddevice",
+                           "pip install sounddevice — и озвучка REST-чата "
+                           "заиграет через колонки")
+            return
+        # TTS отдаёт PCM как FLOAT32 (браузер играет через Float32Array,
+        # см. ui/index.html:663). 2026-07-20 плеер играл эти байты как
+        # int16 -> адский скрежет на всю громкость. Играем как float32,
+        # с потолком громкости и защитой от кривого семпл-рейта.
+        if not (8000 <= sr <= 48000):
+            report_problem("tts", f"подозрительный sample rate {sr}",
+                           "чанк озвучки пропущен")
+            return
+        if self._stream is None or self._sr != sr:
+            self.close()
+            self._stream = sd.OutputStream(
+                samplerate=sr, channels=1, dtype="float32",
+                device=CFG.get("tts.output_device") or None)
+            self._stream.start()
+            self._sr = sr
+        data = np.frombuffer(pcm, dtype=np.float32)
+        vol = max(0.0, min(1.0, float(CFG.get("tts.server_volume", 0.8))))
+        self._stream.write(np.clip(data * vol, -1.0, 1.0))
+
+    def close(self):
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+
+AUDIO_LEVEL = {"level": 0.0, "ts": 0.0}
+
+
+@app.get("/api/audio_level")
+def audio_level():
+    """Текущая громкость голоса Сайки 0..1 (для волны-эквалайзера в UE).
+    Голос замолк -> быстро затухает до нуля."""
+    age = time.time() - AUDIO_LEVEL["ts"]
+    lvl = AUDIO_LEVEL["level"] * max(0.0, 1.0 - age / 0.4)
+    return PlainTextResponse(f"{lvl:.3f}")
+
+
+@app.get("/api/attention_toggle")
+def attention_toggle():
+    """Тумблер «активный диалог» (слушать всё без имени) — для кнопки в UE."""
+    val = not CFG.get("attention.always", False)
+    CFG.set("attention.always", val)
+    return PlainTextResponse("on" if val else "off")
+
+
+@app.post("/api/chat_text")
+async def api_chat_text(request: Request):
+    """Тот же чат, но максимально простой для клиентов без JSON (UE HTTP
+    Blueprint): тело запроса — просто текст, ответ — просто текст."""
+    text = (await request.body()).decode("utf-8", "ignore").strip()
+    r = api_chat({"text": text})
+    if isinstance(r, JSONResponse):
+        return PlainTextResponse("(ошибка: пустой текст или LLM недоступна)",
+                                 status_code=r.status_code)
+    return PlainTextResponse(r.get("reply", ""))
+
+
+@app.post("/api/chat")
+def api_chat(payload: dict):
+    """Блокирующий чат: текст входит — полный ответ выходит одним JSON.
+    Озвучка (если tts.server_playback, по умолчанию вкл) играет через
+    колонки сервера — клиенту звук не нужен. Для UE5/скриптов/curl."""
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "пустой текст"}, status_code=400)
+    speak_here = bool(payload.get("speak",
+                                  CFG.get("tts.server_playback", True)))
+    out: "queue.Queue" = queue.Queue()
+    stop_event = threading.Event()
+    worker = threading.Thread(
+        target=run_dialog, args=(text, out, stop_event), daemon=True)
+    worker.start()
+
+    reply_parts, stats, spk = [], {}, _ServerSpeaker()
+    sr = 24000
+    deadline = time.time() + float(payload.get("timeout_s", 600))
+    try:
+        while time.time() < deadline:
+            try:
+                item = out.get(timeout=5)
+            except queue.Empty:
+                if not worker.is_alive():
+                    break
+                continue
+            if isinstance(item, bytes):
+                if speak_here:
+                    try:
+                        spk.play(item, sr)
+                    except Exception as e:
+                        report_problem("tts", str(e),
+                                       "REST-чат продолжает без звука")
+                        speak_here = False
+                continue
+            t = item.get("type")
+            if t == "audio_meta":
+                sr = item.get("sr", sr)
+            elif t == "token":
+                reply_parts.append(item.get("text", ""))
+            elif t == "stats":
+                stats = {k: v for k, v in item.items() if k != "type"}
+            elif t == "error":
+                return JSONResponse({"error": item.get("text", "LLM error")},
+                                    status_code=502)
+            elif t == "done":
+                break
+    finally:
+        spk.close()
+    return {"reply": "".join(reply_parts).strip(), **stats}
+
+
 # ---------------------- диалоговый пайплайн ----------------------
 def _is_dev_query(text: str) -> bool:
     """Вопрос явно про разработку Сайки — тогда подкладываем ей всю доску."""
@@ -846,6 +979,15 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 for pcm_bytes, sr in tts.speak(sentence):
                     if stop_event.is_set():
                         break
+                    # уровень голоса для визуализаций (волна-эквалайзер в UE):
+                    # RMS чанка float32 -> AUDIO_LEVEL, отдаётся /api/audio_level
+                    try:
+                        _a = np.frombuffer(pcm_bytes, dtype=np.float32)
+                        AUDIO_LEVEL["level"] = min(
+                            1.0, float(np.sqrt(np.mean(_a * _a))) * 4.0)
+                        AUDIO_LEVEL["ts"] = time.time()
+                    except Exception:
+                        pass
                     out.put({"type": "audio_meta", "sr": sr})
                     out.put(pcm_bytes)
             except Exception as e:
@@ -1169,6 +1311,89 @@ def _close_handspc():
         log.info("HandsPC закрыт вместе с Сайкой")
 
 
+def _unload_llms():
+    """При выходе выгружаем прогретые локальные LLM (2026-07-20): иначе
+    Ollama держит модель в VRAM ещё keep_alive-минуты после закрытия
+    Сайки, а LM Studio — по своему TTL. Быстро (timeout 3с на модель),
+    ошибки глотаем — выходу ничто не должно мешать."""
+    try:
+        for backend, name in llm._loaded_with_backend():
+            try:
+                llm.unload_model(backend, name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _on_exit():
+    _close_handspc()
+    _unload_llms()
+
+
+def _autostart_components():
+    """Автопуск слуха/голоса/мозгов при старте (2026-07-20). Каждый компонент
+    пробуется по списку кандидатов ПО УБЫВАНИЮ приоритета: сломался лучший —
+    молча берём следующий. Слух/голос — конфиг + fallback_order; мозги —
+    рейтинг скорости (data/ratings.json), затем выбор из конфига.
+    Работает фоном, старту сервера не мешает."""
+    time.sleep(2)  # даём uvicorn подняться, потом греем тяжёлое
+
+    def _try_chain(kind, names, loader):
+        for name in names:
+            try:
+                loader(name)
+                log.info("Автопуск: %s (%s) готов", kind, name)
+                return name
+            except Exception as e:
+                report_problem(kind, f"{name}: {e}",
+                               "автопуск пробует следующий по списку")
+        report_problem(kind, "ни один движок не поднялся",
+                       "смотри logs/saika.log")
+        return None
+
+    # слух: выбранный движок, дальше по fallback_order
+    stt_chain = [CFG.get("stt.engine", "gigaam")]
+    for n in CFG.get("stt.fallback_order", []):
+        if n not in stt_chain:
+            stt_chain.append(n)
+    _try_chain("stt", stt_chain, stt.load_engine)
+
+    # голос: аналогично
+    tts_chain = [CFG.get("tts.engine", "qwen3")]
+    for n in CFG.get("tts.fallback_order", []):
+        if n not in tts_chain:
+            tts_chain.append(n)
+    _try_chain("tts", tts_chain, tts.load_engine)
+
+    # мозги: все доступные локальные модели по убыванию рейтинга скорости;
+    # незамеренные — в хвосте; совсем ничего нет — выбор из конфига
+    try:
+        tps = ratings.llm_tps()
+        cands = [(m["backend"], m["name"]) for m in llm.list_models()
+                 if m["backend"] in ("ollama", "lmstudio")
+                 and "embed" not in m["name"].lower()]
+        cands.sort(key=lambda c: -tps.get(c[1], 0))
+        cfg_pick = (CFG.get("llm.backend", "ollama"), CFG.get("llm.model", ""))
+        if cfg_pick[1] and cfg_pick not in cands \
+                and cfg_pick[0] in ("ollama", "lmstudio"):
+            cands.append(cfg_pick)
+        for backend, model in cands:
+            try:
+                if not llm.switch_model(backend, model):
+                    raise RuntimeError("прогрев не удался")
+                CFG.set("llm.backend", backend)
+                CFG.set("llm.model", model)
+                log.info("Автопуск: мозги — %s/%s (%.1f ток/с в рейтинге)",
+                         backend, model, tps.get(model, 0))
+                break
+            except Exception as e:
+                report_problem("llm", f"{model}: {e}",
+                               "автопуск пробует следующую модель")
+    except Exception as e:
+        report_problem("llm", str(e), "автопуск мозгов не удался")
+
+
 def main():
     (ROOT / "logs").mkdir(exist_ok=True)
     dreampc.kill_stale()  # чистим детач-воркер с прошлого запуска (если завис)
@@ -1176,8 +1401,26 @@ def main():
     # закрытие HandsPC при завершении Сайки — и по Ctrl+C/обычному выходу
     # (atexit), и по крестику на окне консоли (Windows CTRL_CLOSE_EVENT,
     # который обычный atexit/signal не ловит — см. proc_utils)
-    atexit.register(_close_handspc)
-    register_console_close_handler(_close_handspc)
+    atexit.register(_on_exit)
+    register_console_close_handler(_on_exit)
+    # автопрогрев (2026-07-20): слух/голос/мозги поднимаются сами при старте,
+    # мозги — лучшая модель по рейтингу скорости (data/ratings.json)
+    if CFG.get("autostart.enabled", True):
+        threading.Thread(target=_autostart_components, daemon=True).start()
+    # голос без браузера: серверный микрофон + озвучка в колонки (для UE-UI)
+    if CFG.get("mic.server_capture", False):
+        from server.voice_local import LocalVoiceLoop
+
+        def _broadcast(item):
+            for q in list(EVENT_CLIENTS):
+                try:
+                    q.put_nowait(item)
+                except Exception:
+                    pass
+
+        LocalVoiceLoop(CFG, stt, run_dialog, _broadcast, report_problem,
+                       _ServerSpeaker,
+                       has_browser=lambda: bool(EVENT_CLIENTS)).start()
     start_scheduler(memory, llm.chat_once)
     # боты мессенджеров (Telegram/VK) — если включены и заполнены токены;
     # иначе тихо ничего не делает. Управление ПК с телефона.
@@ -1203,8 +1446,18 @@ def main():
     if env_open is not None:
         auto_open = env_open == "1"
     if auto_open:
-        threading.Timer(1.5, webbrowser.open,
-                        args=(f"http://{host}:{port}",)).start()
+        # не плодим вкладки (2026-07-20): старая вкладка после рестарта сервера
+        # сама переподключается по WS за ~1-2 сек (логика BOOT_ID в UI).
+        # Ждём 3 сек: если кто-то уже подключился — вкладка жива, новую не
+        # открываем. Подключений нет — значит вкладки правда нет, открываем.
+        def _open_if_no_tab():
+            if EVENT_CLIENTS:
+                log.info("Вкладка уже открыта (переподключилась) — "
+                         "новую не открываю")
+                return
+            webbrowser.open(f"http://{host}:{port}")
+
+        threading.Timer(3.0, _open_if_no_tab).start()
     log.info("Сайка запускается на http://%s:%s", host, port)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 

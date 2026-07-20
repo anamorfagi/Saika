@@ -70,7 +70,13 @@ where ollama >nul 2>&1 && (
 )
 
 :: ---------- start HandsPC (tools: web search etc.) if present ----------
-if exist "%~dp0..\HandsPC\run.bat" start "HandsPC" /min cmd /c "%~dp0..\HandsPC\run.bat"
+:: скрытый запуск (без окна консоли): раньше start /min плодил окно,
+:: которое приходилось закрывать руками. Если порт 8767 уже занят -
+:: HandsPC уже работает, второй не поднимаем. Логи -> logs\handspc.log
+if exist "%~dp0..\HandsPC\run.bat" (
+    netstat -ano | findstr ":8767 " | findstr "LISTENING" >nul 2>&1 || ^
+    powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%~dp0..\HandsPC\run.bat\" > \"%~dp0logs\handspc.log\" 2>&1'"
+)
 
 :: ---------- run with self-restart ----------
 set RESTARTS=0
