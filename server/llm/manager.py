@@ -5,6 +5,8 @@
 """
 import json
 import logging
+import time
+
 import requests
 
 from server.config import CFG, ROOT
@@ -297,6 +299,31 @@ def _attach_image_openai(messages, image):
     return msgs
 
 
+# Маркеры «пользователь просит длинный ответ» — сказка, разбор, текст и т.п.
+# Для таких запросов лимита длины нет вообще. Для коротких бытовых реплик —
+# мягкая рамка (llm.max_tokens_short), чтобы мелкая модель не лила портянки
+# на «привет, как дела». Основной механизм — правила в промпте, лимит — страховка.
+_LONGFORM_MARKERS = (
+    "расскаж", "сказк", "истори", "объясн", "напиши", "опиши", "разбор",
+    "подробн", "развёрнут", "разверни", "план", "стих", "песн", "доклад",
+    "инструкц", "гайд", "шаги", "почему", "как работает", "сочини", "придумай",
+    "перескажи", "переведи", "сравни", "список")
+
+
+def _max_tokens_for(messages) -> int | None:
+    """None = без лимита. Число = мягкая рамка для короткой бытовой реплики."""
+    last_user = next((m["content"] for m in reversed(messages)
+                      if m.get("role") == "user"), "")
+    if isinstance(last_user, list):  # мультимодальное сообщение
+        last_user = " ".join(p.get("text", "") for p in last_user
+                             if isinstance(p, dict))
+    text = last_user.lower()
+    if len(text) > 120 or any(m in text for m in _LONGFORM_MARKERS):
+        return None
+    limit = int(CFG.get("llm.max_tokens_short", 300))
+    return limit if limit > 0 else None
+
+
 def _stream_ollama(messages, model, temperature, tools=None, image=None):
     """Стрим событий: {'type':'token','text':…} и {'type':'tool_call','call':…}."""
     messages = _attach_image_ollama(messages, image)
@@ -309,6 +336,12 @@ def _stream_ollama(messages, model, temperature, tools=None, image=None):
         # через 5 минут простоя и «модель постоянно выключается»
         "keep_alive": CFG.get("llm.keep_alive", "30m"),
     }
+    # Ollama: мягкий лимит безопасен, только если «размышления» выключены
+    # (think=false ниже) — иначе лимит съедается мыслями и ответ пустой
+    if not CFG.get("llm.think", False):
+        mt = _max_tokens_for(messages)
+        if mt:
+            payload["options"]["num_predict"] = mt
     if tools:
         payload["tools"] = tools
     # think=false выключает «размышления» у reasoning-моделей (qwen3 и др.) —
@@ -317,17 +350,49 @@ def _stream_ollama(messages, model, temperature, tools=None, image=None):
     think = CFG.get("llm.think", False)
     if think is not None:
         payload["think"] = bool(think)
+    def _post_chat():
+        rr = requests.post(_ollama_url() + "/api/chat", json=payload,
+                           stream=True, timeout=(5, 600))
+        rr.raise_for_status()
+        return rr
+
     try:
-        r = requests.post(_ollama_url() + "/api/chat", json=payload,
-                          stream=True, timeout=(5, 600))
-        r.raise_for_status()
+        r = _post_chat()
     except requests.exceptions.HTTPError:
-        if "think" not in payload:
+        # 400 бывает по трём причинам — снимаем подозреваемых по одному:
+        # think не поддержан -> без think; картинка на не-vision модели ->
+        # без картинки; tools не поддержаны -> без tools.
+        recovered = False
+        for fix, action in (
+            ("think", lambda: payload.pop("think", None)),
+            ("image", lambda: payload.__setitem__(
+                "messages", [
+                    {k: v for k, v in m.items() if k != "images"}
+                    for m in payload["messages"]])),
+            ("tools", lambda: payload.pop("tools", None)),
+        ):
+            if fix == "think" and "think" not in payload:
+                continue
+            if fix == "image" and not image:
+                continue
+            if fix == "image":
+                try:  # запоминаем ОПЫТ: эта модель без зрения
+                    from server import capabilities as _caps
+                    _caps.note(model, "vision", False)
+                except Exception:
+                    pass
+            if fix == "tools" and not payload.get("tools"):
+                continue
+            action()
+            log.warning("Ollama 400 — пробую без %s", fix)
+            try:
+                r = _post_chat()
+                recovered = True
+                break
+            except requests.exceptions.HTTPError:
+                continue
+        if not recovered:
             raise
-        payload.pop("think", None)
-        r = requests.post(_ollama_url() + "/api/chat", json=payload,
-                          stream=True, timeout=(5, 600))
-        r.raise_for_status()
     for line in r.iter_lines():
         if not line:
             continue
@@ -372,6 +437,16 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         "stream": True,
         "temperature": temperature,
     }
+    # НИКАКОГО max_tokens здесь: gemma-4 и другие думающие модели сначала
+    # тратят токены на размышление и только потом пишут ответ. Лимит 300
+    # съедался мыслями целиком — наружу приходило 0 токенов, «Сайка молчит»
+    # (2026-07-21). Краткость держат правила в промпте, от зацикливания —
+    # LoopGuard с аварийным потолком.
+    if not CFG.get("llm.think", False):
+        # выключенные «размышления» (тумблер 💭 в меню модели): просим шаблон
+        # не включать thinking-фазу. llama.cpp/LM Studio понимают
+        # chat_template_kwargs, остальные молча игнорируют поле.
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     if tools:
         payload["tools"] = tools
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
@@ -433,7 +508,7 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
 
 
 def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
-                on_model=None):
+                on_model=None, use_tools=True, should_stop=None):
     """Стрим токенов. При падении основного бэкенда — автопереход на второй.
 
     Если запущен HandsPC (server/llm/tools.py), модель получает инструменты
@@ -502,7 +577,11 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
             raise LLMError(f"{backend}/{model} прервалась на середине ответа: {last_err}")
         try:
             fn = _fns.get(backend, _stream_lmstudio)
-            tools = handspc.schemas()
+            tools = handspc.schemas() if use_tools else []
+            # модели с нечитаемым форматом tool_calls (ловятся автоматически
+            # ниже и запоминаются в конфиге) — инструменты не даём вообще
+            if model in set(CFG.get("llm.tools_broken", [])):
+                tools = []
             if on_model:
                 try:
                     on_model(backend, model)  # кто реально отвечает (для UI)
@@ -512,7 +591,31 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 on_fallback(backend, model)
 
             msgs = list(messages)
+            seen_calls = set()      # от зацикливания на одном и том же вызове
+            tools_t0 = time.monotonic()
+            tools_budget = CFG.get("tools.max_tool_seconds", 150)
             for _round in range(CFG.get("tools.max_rounds", 3) + 1):
+                if should_stop and should_stop():
+                    log.info("Стоп во время инструментальных раундов — выхожу")
+                    return
+                # общий дедлайн на возню с инструментами: web_research по
+                # 60с × перезапросы = минуты амока. Время вышло — забираем
+                # инструменты и просим ответить по тому, что уже есть
+                if tools and time.monotonic() - tools_t0 > tools_budget:
+                    log.warning("Бюджет времени инструментов исчерпан "
+                                "(%sс) — отвечаем словами", tools_budget)
+                    tools = []
+                    msgs = msgs + [{"role": "system", "content":
+                        "(Служебный лог сторожа: ты застряла в цикле "
+                        f"инструментов — {len(seen_calls)} вызовов за "
+                        f"{int(time.monotonic() - tools_t0)} секунд, система "
+                        "отобрала у тебя инструменты и привела тебя в "
+                        "чувство. Начни ответ с КОРОТКОГО признания сбоя в "
+                        "своём характере, с самоиронией, каждый раз своими "
+                        "словами — в духе «кхм… кажется, меня слегка унесло. "
+                        "Уже пришла в себя» — а потом ответь по уже "
+                        "собранным результатам или честно скажи, что не "
+                        "нашла. Без драмы и длинных извинений.)"}]
                 calls, text_parts = [], []
                 # картинку прикладываем только в первом раунде (это ход юзера)
                 img = image if _round == 0 else None
@@ -523,6 +626,28 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                         yield ev["text"]
                     else:
                         calls.append(ev["call"])
+                if calls and tools:
+                    # САМОЛЕЧЕНИЕ: если ВСЕ вызовы с именами, которых нет в
+                    # наших схемах (модель эмитит собственный формат вроде
+                    # «call:fs_list» — шаблон не дружит с function calling),
+                    # то раунды сгорят впустую и ответ будет пустым. Выключаем
+                    # этой модели инструменты НАВСЕГДА (конфиг) и делаем ещё
+                    # раунд без них — ответит обычными словами. Работает для
+                    # любой модели, отладка под каждую не нужна.
+                    known = {s["function"]["name"] for s in tools}
+                    if all(c["function"].get("name", "") not in known
+                           for c in calls):
+                        log.warning(
+                            "Модель %s выдаёт нечитаемые tool_calls (%r) — "
+                            "выключаю ей инструменты навсегда", model,
+                            str(calls[0]["function"].get("name", ""))[:40])
+                        CFG.set("llm.tools_broken", sorted(
+                            set(CFG.get("llm.tools_broken", []) + [model])))
+                        tools = []
+                        msgs = msgs + [{"role": "system", "content":
+                            "(Служебно: инструменты в этом чате недоступны — "
+                            "отвечай обычными словами, БЕЗ tool_call.)"}]
+                        continue
                 if not calls or not tools:
                     return
                 # выполняем инструменты и продолжаем разговор.
@@ -549,6 +674,31 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                     f = c.get("function", {})
                     name = f.get("name", "")
                     args = f.get("arguments") or {}
+                    if should_stop and should_stop():
+                        log.info("Стоп перед инструментом %s — обрываю", name)
+                        return
+                    # повтор того же вызова с теми же аргументами = амок
+                    # («арфография» по кругу). Не выполняем, вразумляем.
+                    sig = name + "|" + json.dumps(args, sort_keys=True,
+                                                  ensure_ascii=False)[:200]
+                    if sig in seen_calls:
+                        result = ("(Служебный лог сторожа: это ПОВТОР того "
+                                  "же вызова с теми же аргументами — признак "
+                                  "зацикливания, инструмент НЕ выполнен. "
+                                  "Останови поиск. Начни ответ с короткой "
+                                  "самоироничной ремарки, что тебя занесло "
+                                  "в цикл — своими словами, в своём "
+                                  "характере — и ответь по имеющемуся или "
+                                  "честно скажи, что не нашла.)")
+                        if backend == "ollama":
+                            msgs.append({"role": "tool", "tool_name": name,
+                                         "name": name, "content": result})
+                        else:
+                            msgs.append({"role": "tool",
+                                         "tool_call_id": c.get("id", f"call_{i}"),
+                                         "content": result})
+                        continue
+                    seen_calls.add(sig)
                     if on_tool:
                         try:
                             on_tool(name, args)
@@ -574,3 +724,25 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
 def chat_once(messages, max_len=4000) -> str:
     """Нестриминговый вызов — для суммаризации памяти."""
     return "".join(chat_stream(messages))[:max_len]
+
+
+def ask_specific(backend: str, model: str, messages, image=None,
+                 max_len=6000) -> str:
+    """Прямой вопрос КОНКРЕТНОЙ модели, минуя выбор из конфига.
+    Оркестратор одалживает у моделей их способности: например, зрение
+    vision-модели для OCR картинки, когда за рулём слепая болтушка."""
+    fn = _fns.get(backend, _stream_lmstudio)
+    parts = []
+    for ev in fn(messages, model, 0.2, None, image):
+        if ev["type"] == "token":
+            parts.append(ev["text"])
+            if sum(len(p) for p in parts) > max_len:
+                break
+    text = "".join(parts)[:max_len]
+    if image and text.strip():
+        try:  # успешно посмотрела на картинку — опыт: зрение есть
+            from server import capabilities as _caps
+            _caps.note(model, "vision", True)
+        except Exception:
+            pass
+    return text

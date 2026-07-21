@@ -307,6 +307,86 @@
     </div>
     <div class="cols" id="board-cols"></div>
     <div class="blog" id="board-log"></div>
+    <!-- Способности: раскрывающаяся снизу плашка-шпаргалка всего функционала -->
+    <details id="board-skills" style="margin-top:8px;background:var(--panel2);
+      border:1px solid var(--border);border-radius:12px;padding:0">
+      <summary style="cursor:pointer;padding:10px 14px;font-weight:600;
+        list-style:none;user-select:none">
+        🧬 Способности Сайки — что умеет и как пользоваться
+        <span style="font-size:11px;color:var(--dim);font-weight:400">
+          (клик — развернуть/свернуть)</span>
+      </summary>
+      <div style="padding:6px 16px 16px;display:grid;
+        grid-template-columns:repeat(2,1fr);gap:14px 26px;
+        font-size:14.5px;line-height:1.65;
+        max-height:calc(100vh - 190px);overflow-y:auto">
+        <div><b>👂 Слух</b><br>
+          Микрофон: кнопка 🎙 или клавиша <b>M</b>. Движки слуха и выбор
+          микрофона — в меню 🎙. Умное внимание: зови по имени
+          («<i>Сайка, …</i>») или говори в течение 30 сек после её ответа;
+          режим «слушать всё» — тумблер там же.<br>
+          <span style="color:var(--dim)">Пример: «Сайка, как дела?»</span></div>
+        <div><b>⏹ Перебить / заткнуть</b><br>
+          Сказать «<i>стоп / хватит / замолчи</i>», клик по волне-эквалайзеру
+          внизу или клавиша <b>V</b> — глушит голос и генерацию.</div>
+        <div><b>🧠 Мозги (модели)</b><br>
+          Чип модели внизу: единый список Ollama + LM Studio с рейтингом
+          скорости этого ПК, загрузка/выгрузка кнопками ⬇/⏏, быстрый выбор —
+          клавиша <b>X</b>. Тумблер <b>💭 Размышления</b>: выкл = быстрые
+          ответы, вкл = умнее, но медленнее. Упала модель — сама переключится
+          на лучшую по рейтингу.</div>
+        <div><b>🔊 Голос</b><br>
+          Меню 🔈: движки (Qwen3 — клон голоса Сайки, Silero, Edge) с
+          рейтингом скорости, громкость, устройство вывода (по умолчанию —
+          системное), дубль на второе устройство для OBS. Быстрый выбор —
+          клавиша <b>C</b>. Сломался движок — фоллбэк по рейтингу.</div>
+        <div><b>🌐 Поиск в интернете</b><br>
+          Открывает СВОЁ видимое окно браузера, набирает запрос на глазах,
+          читает результаты, открывает ссылки. Окно потом сама предложит
+          закрыть (или «<i>закрой браузер</i>»).<br>
+          <span style="color:var(--dim)">Пример: «Сайка, загугли что нового
+          в Unreal Engine 5»</span></div>
+        <div><b>📁 Файлы (рабочая папка)</b><br>
+          Полные руки внутри рабочей папки (files.roots, по умолчанию
+          F:\AI_load_work): создать/прочитать/переписать файл, папки,
+          переименовать, перенести, убрать в корзину (_trash, восстановимо),
+          открыть в проводнике, закрыть окна проводника. Выйти за пределы
+          папки не может.<br>
+          <span style="color:var(--dim)">Пример: «создай папку заказ_5,
+          внутри блокнот задачи.txt с текстом: собрать референсы, и открой
+          папку»</span></div>
+        <div><b>🧠 Память</b><br>
+          Единый поток с уплотнением: свежее помнит дословно (RAW), старое
+          LLM сжимает в эпизоды с эмоцией (поиск по смыслу), раз в неделю
+          обновляет образы людей (CORE). Владелец/регуляры/случайные — разные
+          уровни памяти.<br>
+          <span style="color:var(--dim)">Пример: «помнишь, что мы решили
+          по озвучке?»</span></div>
+        <div><b>💓 Живость (импульсы)</b><br>
+          Сама вспоминает про открытый браузер; при тишине: ~6 мин — мысль
+          под нос, ~18 мин — «есть кто живой?», ~30 мин без ответа — может
+          попрощаться (тон зависит от последнего разговора) и выключить себя
+          (shutdown_self). «<i>Оставайся, я отойду</i>» — обнулит счётчик.
+          Настройки — config → idle.</div>
+        <div><b>📟 Удалённо</b><br>
+          Telegram/VK-боты (secrets.json): те же диалоги и инструменты с
+          телефона. ✈️ — экспериментальный автономный режим управления ПК.</div>
+        <div><b>🗺 Дев-доска</b><br>
+          Клавиша <b>B</b> или 🗺. Она сама читает доску, когда спрашивают
+          «что нового у тебя», и дописывает пункты по просьбе.<br>
+          <span style="color:var(--dim)">Пример: «запиши в идеи: коннектор
+          твич-чата»</span></div>
+        <div><b>⚡ Статистика и здоровье</b><br>
+          Под каждым ответом: ток/с, токены, «думала N с», кто отвечал.
+          Точки в шапке — здоровье LLM/слуха/голоса. Жёлтая строка — что
+          сломалось и что она сделала сама (переключилась/чинит). Доктор:
+          setup\doctor.py --fix. Новый диалог — 🧹.</div>
+        <div><b>🔌 Самовыключение</b><br>
+          «<i>Сайка, выключайся</i>» — попрощается голосом и погасит сервер
+          (модели выгрузит, браузер закроет). Отключается:
+          idle.allow_self_shutdown=false.</div>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -592,13 +672,15 @@ function handleJson(m){
     if(curSaikaMsg){
       const md=document.createElement('div'); md.className='meta';
       md.style.cssText='display:flex;align-items:center;gap:8px';
-      let t='⚡ '+m.tps+' ток/с · '+m.tokens+' токенов';
+      // tps приходит только когда стрим достаточно длинный для честного
+      // замера — на коротких ответах не рисуем «undefined ток/с»
+      let t='⚡ '+(m.tps!=null? m.tps+' ток/с · ':'')+m.tokens+' токенов';
       if(m.latency_ms!=null) t+=' · думала '+(m.latency_ms/1000).toFixed(1)+'с';
       if(m.model) t+=' · '+m.model;  // кто реально сгенерил этот ответ
       const txt=document.createElement('span'); txt.textContent=t; md.appendChild(txt);
       // та же оценка-эквалайзер в углу ответа (по скорости этого ответа)
       const model = m.model || (status.llm && status.llm.model);
-      if(model){
+      if(model && m.tps!=null){
         const auto=Math.round(Math.min(10,Math.max(1,(m.tps||0)/8)));
         const sb=document.createElement('span'); sb.style.marginLeft='auto';
         sb.innerHTML=scoreBar(model, auto, '~'+m.tps+' ток/с');
@@ -633,8 +715,12 @@ function addMsg(who, text, meta){
   const d=document.createElement('div');
   d.className='msg '+who;
   const t=document.createElement('div'); t.textContent=text; d.appendChild(t);
-  if(meta){const md=document.createElement('div');md.className='meta';
-    md.textContent=meta; d.appendChild(md);}
+  // метка времени под каждым пузырём: когда написал/сказал/ответила —
+  // по ним видно реальные тайминги диалога
+  const ts=new Date().toLocaleTimeString('ru-RU');
+  const md=document.createElement('div'); md.className='meta';
+  md.textContent = meta ? (ts+' · '+meta) : ts;
+  d.appendChild(md);
   $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
   return d;
 }
@@ -855,12 +941,18 @@ async function fillOutputs(){
   try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e){}
   const devs = await navigator.mediaDevices.enumerateDevices();
   const outs = devs.filter(d=>d.kind==='audiooutput');
-  // если пользователь ещё ничего не выбирал — по умолчанию берём кабель
-  if(!outDevice){
-    const cable = outs.find(d=>CABLE_RE.test(d.label||''));
-    if(cable){ outDevice=cable.deviceId; localStorage.outId=outDevice;
-      applyOutputDevice(); }
+  // МИГРАЦИЯ: раньше тут был авто-выбор кабеля — из-за него звук уходил в
+  // VB-Cable вместо наушников. Если устройство выбрал не человек — сброс.
+  if(!localStorage.outChosen && outDevice){
+    outDevice=''; localStorage.outId=''; applyOutputDevice();
   }
+  // сохранённое устройство могло исчезнуть (другой ПК, отключили USB/BT) —
+  // возвращаемся на системное по умолчанию, а не играем в никуда
+  if(outDevice && !outs.some(d=>d.deviceId===outDevice)){
+    outDevice=''; localStorage.outId=''; applyOutputDevice();
+  }
+  // По умолчанию — СИСТЕМНОЕ устройство (что стоит дефолтом в Windows,
+  // наушники так наушники). Кабель для OBS/UE5 — только явным кликом.
   const box=$('#tts-outputs'); if(!box) return; box.innerHTML='';
   outs.forEach((d,i)=>{
     const isCable=CABLE_RE.test(d.label||'');
@@ -870,6 +962,7 @@ async function fillOutputs(){
     el.textContent=(isCable?'🔌 ':'🔈 ')+(d.label||('Устройство '+(i+1)))
       +(isCable?' · кабель':'');
     el.onclick=async()=>{ outDevice=d.deviceId; localStorage.outId=outDevice;
+      localStorage.outChosen='1';   // выбрал человек — уважаем выбор
       await applyOutputDevice(); fillOutputs(); };
     box.appendChild(el);
   });
@@ -1005,6 +1098,20 @@ async function fillModelPop(){
   const loaded = new Set(r.loaded||[]);
   const ratings=r.ratings||{}, tpsMap=r.tps||{};
   const list=$('#model-list'); list.innerHTML='';
+  // тумблер «размышлений» думающих моделей (gemma-4, qwen3, r1…):
+  // мысли = те самые «думала 7-10с» перед ответом. Выкл = отвечает сразу.
+  {
+    const think = !!(status.llm && status.llm.think);
+    const tg=document.createElement('div');
+    tg.className='item';
+    tg.innerHTML='💭 Размышления модели <span class="st" style="color:'+
+      (think?'var(--warn)':'var(--ok)')+'">'+(think?'вкл — медленнее, умнее':'выкл — быстрые ответы')+'</span>';
+    tg.title='Думающие модели тратят секунды на внутренние рассуждения перед ответом';
+    tg.onclick=async(e)=>{ e.stopPropagation();
+      await api('/api/select',{kind:'think',value:!think});
+      await refresh(); fillModelPop(); };
+    list.appendChild(tg);
+  }
   // все модели обоих бэкендов в один список, сортировка по оценке ВВЕРХ:
   // худшие/незамеренные сверху, самая шустрая — внизу, у самого курсора
   // (меню раскрывается вверх => минимум движения мышкой к лучшей)

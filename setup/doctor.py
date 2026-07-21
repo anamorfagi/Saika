@@ -58,6 +58,30 @@ def _import_ok(module):
     return f
 
 
+# Тяжёлые CUDA-модули проверяем в ОТДЕЛЬНОМ ЧИСТОМ процессе. Причины:
+# 1) faster_whisper (ctranslate2) и torch несут РАЗНЫЕ cuDNN (12 и 13) —
+#    импорт обоих в один процесс валит второго («partially initialized
+#    module torch», WinError 1114), и отчёт врёт;
+# 2) флаг -I не подмешивает папку проекта в sys.path — локальные пакеты
+#    (tools/, setup/, training/) не перекрывают зависимости.
+HEAVY_MODS = {"faster_whisper", "torch", "qwen_tts", "gigaam"}
+
+
+def _sub_import(module, timeout=180):
+    r = subprocess.run([sys.executable, "-I", "-c", f"import {module}"],
+                       capture_output=True, text=True, timeout=timeout)
+    if r.returncode == 0:
+        return True, "установлен"
+    lines = (r.stderr or "").strip().splitlines()
+    return False, (lines[-1][:200] if lines else "import failed")
+
+
+def _import_ok_sub(module):
+    def f():
+        return _sub_import(module)
+    return f
+
+
 def _pip_install(pkg):
     def f():
         subprocess.run([sys.executable, "-m", "pip", "install", pkg],
@@ -148,10 +172,19 @@ def _voice_ready():
 
 
 def _cuda_ok():
-    import torch
-    if torch.cuda.is_available():
-        return True, torch.cuda.get_device_name(0)
-    return False, "CUDA недоступна — TTS/STT будут на CPU (медленно)"
+    # в чистом подпроцессе — см. комментарий у HEAVY_MODS
+    code = ("import torch;"
+            "print(torch.cuda.get_device_name(0) "
+            "if torch.cuda.is_available() else 'NOCUDA')")
+    r = subprocess.run([sys.executable, "-I", "-c", code],
+                       capture_output=True, text=True, timeout=180)
+    out = (r.stdout or "").strip()
+    if r.returncode == 0 and out and out != "NOCUDA":
+        return True, out
+    if out == "NOCUDA":
+        return False, "CUDA недоступна — TTS/STT будут на CPU (медленно)"
+    lines = (r.stderr or "").strip().splitlines()
+    return False, (lines[-1][:200] if lines else "torch не импортируется")
 
 
 def _stt_engine_valid():
@@ -192,9 +225,8 @@ def _editable_broken():
     out = []
     for mod, path, extras in EDITABLE_PKGS:
         if (ROOT / path).exists():
-            try:
-                importlib.import_module(mod)
-            except Exception:
+            ok, _ = _sub_import(mod)   # чистый подпроцесс — без cuDNN-каши
+            if not ok:
                 out.append((mod, path, extras))
     return out
 
@@ -211,10 +243,11 @@ def _fix_editable():
     for mod, path, extras in _editable_broken():
         subprocess.run([sys.executable, "-m", "pip", "install", "-e",
                         f"{ROOT / path}{extras}", "--no-deps"], check=False)
-    # если из-за этого TTS раньше переключили на silero — вернём qwen3
+    # если из-за этого TTS раньше переключили на запасной — вернём qwen3
     try:
-        importlib.invalidate_caches()
-        importlib.import_module("qwen_tts")
+        ok, _ = _sub_import("qwen_tts")
+        if not ok:
+            raise ImportError("qwen_tts всё ещё не импортируется")
         from server.config import CFG
         if CFG.get("tts.engine") != "qwen3":
             CFG.set("tts.engine", "qwen3")
@@ -222,14 +255,28 @@ def _fix_editable():
         pass
 
 
-def _qwen_tts_ok():
+def _best_backup_tts():
+    """Запасной голос — лучший ПО РЕЙТИНГУ этого ПК, а не хардкод silero."""
+    from server.config import CFG
+    order = CFG.get("tts.fallback_order", ["silero", "edge"])
     try:
-        importlib.import_module("qwen_tts")
-        return True, "пакет установлен"
+        from server import ratings
+        best = ratings.best_tts(order, exclude=("qwen3",),
+                                favorites=CFG.get("tts.favorites", []))
     except Exception:
-        from server.config import CFG
-        CFG.set("tts.engine", "silero")
-        return False, "qwen_tts не установлен -> TTS переключён на silero"
+        best = None
+    return best or next((n for n in order if n != "qwen3"), "silero")
+
+
+def _qwen_tts_ok():
+    ok, detail = _sub_import("qwen_tts")
+    if ok:
+        return True, "пакет установлен"
+    from server.config import CFG
+    best = _best_backup_tts()
+    CFG.set("tts.engine", best)
+    return False, (f"qwen_tts сломан ({detail}) -> TTS переключён на {best} "
+                   f"(по рейтингу)")
 
 
 def _recover_from_crash(fix):
@@ -251,14 +298,16 @@ def _recover_from_crash(fix):
                        and "загружен (attn" not in joined)
     if crashed_on_qwen:
         from server.config import CFG
-        # временно уводим на silero, чтобы разорвать петлю крашей и поднять
-        # сервер. qwen3 НЕ отключаем насовсем (это её родной клон-голос) —
-        # как освободится VRAM, вернётся сама (или выбери его в UI).
-        CFG.set("tts.engine", "silero")
-        print("[fix] Qwen3-TTS уронил процесс при загрузке (нативный крах — "
-              "чаще всего не хватило VRAM, когда её держит LLM). Временно "
-              "перевёл озвучку на silero, чтобы поднять сервер. Освободи "
-              "видеопамять — и клон-голос снова заработает.")
+        # временно уводим на лучший ПО РЕЙТИНГУ запасной голос, чтобы
+        # разорвать петлю крашей и поднять сервер. qwen3 НЕ отключаем
+        # насовсем (это её родной клон-голос) — как освободится VRAM,
+        # вернётся сама (или выбери его в UI).
+        best = _best_backup_tts()
+        CFG.set("tts.engine", best)
+        print(f"[fix] Qwen3-TTS уронил процесс при загрузке (нативный крах — "
+              f"чаще всего не хватило VRAM, когда её держит LLM). Временно "
+              f"перевёл озвучку на {best} (лучший по рейтингу), чтобы поднять "
+              f"сервер. Освободи видеопамять — и клон-голос снова заработает.")
 
 
 def run_checks(fix=False):
@@ -266,9 +315,10 @@ def run_checks(fix=False):
     _recover_from_crash(fix)
     report = []
     for mod, pkg in PKG_FIX.items():
+        checker = _import_ok_sub(mod) if mod in HEAVY_MODS else _import_ok(mod)
         report.append(_check(f"пакет {mod}", mod in ("fastapi", "uvicorn",
                                                      "numpy", "requests"),
-                             _import_ok(mod), _pip_fix(mod, pkg), fix))
+                             checker, _pip_fix(mod, pkg), fix))
     report.append(_check("PyTorch CUDA", False, _cuda_ok))
     report.append(_check("Editable-пакеты (qwen_tts, gigaam)", False,
                          _editable_ok, _fix_editable, fix))

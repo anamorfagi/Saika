@@ -47,12 +47,30 @@ class Qwen3Engine:
             # это не влияет. Мало — уходим на silero, а не роняем процесс.
             try:
                 from server import system_control as _sc
-                advice = _sc.vram_advice(4000)
+                # 5500, не 4000: сама модель ~3.5-4 ГБ, но пик при загрузке
+                # выше (буферы + KV) — с порогом 4000 проходили проверку и
+                # умирали нативно уже внутри from_pretrained
+                advice = _sc.vram_advice(5500)
             except Exception:
                 advice = ""
             if advice:
                 raise RuntimeError("Не хватает видеопамяти для клон-голоса: "
                                    + advice)
+            # Отдельно — системная память: веса при загрузке проходят через
+            # ОЗУ/коммит Windows. Если коммит забит (LM Studio + виспер +
+            # браузер), процесс убивается БЕЗ трейсбека или падает с
+            # os error 1455 «файл подкачки слишком мал». Ловим заранее.
+            try:
+                import psutil
+                _avail_gb = psutil.virtual_memory().available / 1e9
+            except Exception:
+                _avail_gb = None
+            if _avail_gb is not None and _avail_gb < 8:
+                raise RuntimeError(
+                    f"Мало свободной ОЗУ для загрузки клон-голоса "
+                    f"({_avail_gb:.1f} ГБ, нужно ~8): закрой лишнее или "
+                    f"увеличь файл подкачки Windows. Пока говорю запасным "
+                    f"голосом.")
             import torch
             from qwen_tts import Qwen3TTSModel
 
@@ -260,7 +278,19 @@ class TTSManager:
         # нативно роняет процесс на этом ПК) — иначе фоллбэк в него = краш
         disabled = set(CFG.get("tts.disabled", []))
         current = self.current_name
-        chain = [current] + [n for n in order if n != current]
+        # запасные: сначала ЛЮБИМЫЕ (tts.favorites — вкус владельца важнее
+        # секундомера), внутри — по замеренной скорости на этом ПК
+        backups = [n for n in order if n != current]
+        try:
+            from server import ratings
+            scores = ratings.tts_scores()
+            backups.sort(key=lambda n: -scores.get(n, 0))
+            favs = [f for f in CFG.get("tts.favorites", []) if f in backups]
+            backups.sort(key=lambda n: favs.index(n) if n in favs
+                         else len(favs) + 1)
+        except Exception:
+            pass
+        chain = [current] + backups
         return [n for n in chain
                 if self.health.get(n) != "broken" and n not in disabled]
 
@@ -272,11 +302,26 @@ class TTSManager:
             engine = self.engines[name]
             try:
                 yielded = False
+                t0 = time.time()
+                audio_s = 0.0
                 for item in engine.speak(text):
                     yielded = True
+                    try:  # секунды синтезированного аудио (float32 → /4)
+                        pcm, sr = item
+                        audio_s += (len(pcm) // 4) / float(sr)
+                    except Exception:
+                        pass
                     yield item
                 self.health[name] = "ok"
                 if yielded:
+                    # рейтинг голоса: скорость синтеза на ЭТОМ железе
+                    wall = time.time() - t0
+                    if wall > 0.05 and audio_s > 0.2:
+                        try:
+                            from server import ratings
+                            ratings.record_tts(name, audio_s / wall)
+                        except Exception:
+                            pass
                     return
             except Exception as e:
                 diag = diagnostics.classify("tts." + name, str(e))
@@ -300,6 +345,36 @@ class TTSManager:
                 threading.Thread(target=self._repair, args=(name, diag),
                                  daemon=True).start()
         log.error("Все TTS-движки недоступны")
+
+    def benchmark_missing(self):
+        """Разовый бенч незамеренных запасных голосов: синтезируем короткую
+        фразу, пишем скорость в рейтинг. Без этого у нового движка нет
+        оценки, и выбор «по рейтингу» слеп (edge мог быть лучшим, но с нулём
+        замеров никогда не выигрывал). qwen3 не бенчим — он меряется при
+        реальном использовании, чтобы зря не занимать VRAM."""
+        try:
+            from server import ratings
+            have = ratings.tts_scores()
+        except Exception:
+            return
+        for name in CFG.get("tts.fallback_order", []):
+            if name == "qwen3" or have.get(name):
+                continue
+            engine = self.engines.get(name)
+            if not engine or name in set(CFG.get("tts.disabled", [])):
+                continue
+            try:
+                t0 = time.time()
+                audio_s = 0.0
+                for pcm, sr in engine.speak("Проверка скорости голоса."):
+                    audio_s += (len(pcm) // 4) / float(sr)
+                wall = time.time() - t0
+                if wall > 0 and audio_s > 0:
+                    ratings.record_tts(name, audio_s / wall)
+                    log.info("Бенч голоса %s: %.2fx реального времени",
+                             name, audio_s / wall)
+            except Exception as e:
+                log.info("Бенч голоса %s не удался: %s", name, e)
 
     def _repair(self, name, diag=None):
         # сеть/память/офлайн перезагрузкой не лечатся — не долбим впустую

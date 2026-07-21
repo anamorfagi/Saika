@@ -52,12 +52,23 @@ log = logging.getLogger("saika")
 logging.getLogger("sox").setLevel(logging.ERROR)
 logging.getLogger("qwen_tts").setLevel(logging.WARNING)
 
+# Любое НЕПОЙМАННОЕ исключение в фоновом потоке (диалог, TTS, починка) —
+# в лог с полным трейсбеком. Иначе поток умирает молча: Сайка «не отвечает»,
+# а в saika.log пусто.
+def _thread_crash_hook(args):
+    log.error("Поток %s упал: %s", args.thread.name if args.thread else "?",
+              args.exc_value, exc_info=(args.exc_type, args.exc_value,
+                                        args.exc_traceback))
+threading.excepthook = _thread_crash_hook
+
 app = FastAPI(title="Saika")
 
 PROBLEMS: list[dict] = []          # лента проблем/починок для UI
 ACTIVE_LLM = {"backend": "", "model": ""}  # кто реально отвечал последним
 EVENT_CLIENTS: set = set()          # активные websockets
 DIALOG_CUTOFF = {"ts": 0.0}         # «новый диалог»: контекст только после отметки
+DIALOG_STATE = {"active_since": 0.0}   # идёт ли сейчас ответ (для импульсов)
+LAST_IMAGE = {"data": None, "ts": 0.0}  # последняя картинка (для OCR слепыми)
 # уникальный id этого запуска процесса: вкладка запоминает его при коннекте
 # и, если после переподключения видит другой id, значит сервер
 # перезапустился (упал и поднялся start.bat'ом) — делает F5 сама. Так одна
@@ -69,6 +80,10 @@ def report_problem(component, error, action, diag=None):
     item = {"component": component, "error": error, "action": action}
     PROBLEMS.append(item)
     del PROBLEMS[:-50]
+    # проблемы обязаны попадать в лог: иначе при тихой смерти потока
+    # диалога в saika.log пусто и отлаживать нечего
+    log.warning("PROBLEM %s: %s -> %s", component, error or "(починилось)",
+                action)
     # Беймакс: та же новость, но живым языком, отдельным пузырём в чат
     try:
         bm = baymax.line(component, error, action, diag)
@@ -120,7 +135,8 @@ def status():
         "llm": {"backends": llm.backend_status(),
                 "active": ACTIVE_LLM,
                 "backend": CFG.get("llm.backend"),
-                "model": CFG.get("llm.model")},
+                "model": CFG.get("llm.model"),
+                "think": bool(CFG.get("llm.think", False))},
         "stt": stt.status(),
         "tts": tts.status(),
         "memory": memory.stats(),
@@ -363,6 +379,10 @@ async def select(payload: dict):
                              daemon=True).start()
         elif kind == "stt":
             stt.set_engine(value)
+        elif kind == "think":
+            # тумблер «размышлений» думающих моделей (gemma-4, qwen3, r1…):
+            # мысли — главный пожиратель секунд перед ответом
+            CFG.set("llm.think", bool(value))
         elif kind == "tts":
             tts.set_engine(value)
         elif kind == "tts_enabled":
@@ -844,11 +864,14 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     person_name = CFG.get("owner.name", "Owner")
     memory.add_event(person_id, "user", user_text)
 
+    DIALOG_STATE["active_since"] = time.time()
+    t0 = time.monotonic()   # старт пайплайна (для разбивки «думала N сек»)
     mem_context = ""
     try:
         mem_context = memory.build_context(person_id, user_text)
     except Exception as e:
         report_problem("memory", str(e), "продолжаю без контекста памяти")
+    t_mem = time.monotonic()  # память (Chroma/SQLite) отработала
 
     # Скорость первого токена: системный промпт держим СТАТИЧНЫМ (одинаковым
     # от фразы к фразе) — тогда llama.cpp/LM Studio переиспользует KV-кэш
@@ -865,11 +888,112 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             "### Твоя память по теме (используй естественно, не цитируй "
             "дословно):\n" + mem_context)
     if image:
-        dyn_parts.append(
-            "### К этому сообщению пользователь ПРИКРЕПИЛ КАРТИНКУ — "
-            "она передана тебе вместе с текстом. Посмотри на изображение "
-            "и ответь по нему. Не говори, что у тебя нет зрения — на этот "
-            "раз картинка у тебя есть.")
+        LAST_IMAGE["data"], LAST_IMAGE["ts"] = image, time.time()
+        from server import capabilities as caps
+        if caps.vision(CFG.get("llm.model", "")) is False:
+            # модель БЕЗ зрения: картинку ей не даём (иначе 400 или бред),
+            # а учим честно признаться и предложить распознавание — по «да»
+            # сервер одолжит глаза у vision-модели парка (блок ниже)
+            dyn_parts.append(
+                "### Пользователь прислал КАРТИНКУ, но текущая твоя модель "
+                "БЕЗ ЗРЕНИЯ — ты изображение НЕ видишь. Скажи об этом честно "
+                "и по-своему (в духе: «я не вижу, что ты отправил — судя по "
+                "всему, картинка. Вытащить из неё текст?») и предложи "
+                "распознать. СТРОГО запрещено выдумывать содержимое.")
+            image = None
+        else:
+            dyn_parts.append(
+                "### К этому сообщению пользователь ПРИКРЕПИЛ КАРТИНКУ — "
+                "она передана тебе вместе с текстом. Посмотри на изображение "
+                "и ответь по нему. Не говори, что у тебя нет зрения — на "
+                "этот раз картинка у тебя есть.")
+    # «да, вытащи» после её предложения распознать: сервер-оркестратор
+    # делает OCR чужой vision-моделью и отдаёт текст текущей болтушке —
+    # умеющих самих это не касается (у них image уходит напрямую выше)
+    try:
+        from server import capabilities as caps
+        if (LAST_IMAGE["data"] and image is None
+                and time.time() - LAST_IMAGE["ts"] < 600
+                and caps.vision(CFG.get("llm.model", "")) is False
+                and re.match(r"^(да|ага|угу|давай|можно|конечно|вытащи|"
+                             r"достань|прочитай|распознай|проверь)\b",
+                             user_text.strip(), re.I)):
+            pick = caps.pick_vision_model(llm.list_models(),
+                                          llm.loaded_models())
+            if pick:
+                vb, vm = pick
+                out.put({"type": "tool", "name": "ocr·" + vm,
+                         "args": "читаю картинку чужими глазами"})
+                log.info("OCR: одалживаю зрение у %s/%s", vb, vm)
+                ocr = llm.ask_specific(vb, vm, [
+                    {"role": "user", "content":
+                     "Выпиши ВЕСЬ текст с изображения дословно, как есть, "
+                     "без комментариев и без исправлений."}],
+                    image=LAST_IMAGE["data"])
+                if ocr.strip():
+                    dyn_parts.append(
+                        "### Ты «одолжила глаза» у vision-модели (" + vm +
+                        ") — вот дословный текст с картинки:\n" + ocr[:4000] +
+                        "\n\nЕсли просили проверить орфографию/ошибки — выдай "
+                        "исправленный чистый вариант и коротко перечисли "
+                        "главные правки. Иначе просто отдай/перескажи текст.")
+                    LAST_IMAGE["data"] = None
+                else:
+                    dyn_parts.append(
+                        "### Распознавание не удалось (vision-модель ничего "
+                        "не ответила). Скажи честно и предложи повторить.")
+            else:
+                dyn_parts.append(
+                    "### В парке нет ни одной модели со зрением — распознать "
+                    "картинку некому. Скажи честно.")
+    except Exception as e:
+        report_problem("vision", str(e), "распознавание не удалось")
+    # Окно её браузера открыто — поведение живого человека: тема закрыта ->
+    # один раз спросить про окно; «закрой» -> close_browser; «оставь» ->
+    # оставить и не переспрашивать
+    try:
+        from server import browser_hands
+        if browser_hands.is_open():
+            dyn_parts.append(
+                "### У тебя сейчас ОТКРЫТО окно твоего браузера (после "
+                "недавнего поиска). Веди себя с ним как человек: если тема, "
+                "ради которой искала, закончилась — ОДИН раз коротко спроси, "
+                "оставить ли окно. Ответит «закрой»/«нет»/«не нужно» — вызови "
+                "close_browser и подтверди одним словом. Ответит «оставь» — "
+                "оставь и больше об этом не заговаривай. Попросит закрыть "
+                "прямо — просто вызови close_browser без вопросов.")
+    except Exception:
+        pass
+    # УМНЫЙ СЕРФИНГ ПО ВОЗМОЖНОСТЯМ МОДЕЛИ: система сама знает, какая модель
+    # умеет инструменты (tools_broken наполняется автоматически). Если модель
+    # «безрукая», а пользователь явно просит поискать — поиск выполняет САМ
+    # СЕРВЕР (web_research кодом), и модели отдаются готовые материалы:
+    # пересказать источники может даже самая мелкая болтушка.
+    try:
+        if re.search(r"\b(найди|загугли|погугли|поищи|глянь в (инете|сети)|"
+                     r"что нового в мире)\b", user_text, re.I):
+            _cur_model = CFG.get("llm.model", "")
+            _no_tools = (_cur_model in set(CFG.get("llm.tools_broken", []))
+                         or not CFG.get("tools.enabled", True))
+            if _no_tools and CFG.get("browser.enabled", True):
+                from server import browser_hands
+                _q = re.sub(r"^(сайка[,!\s]*)?(найди|загугли|погугли|поищи|"
+                            r"глянь)( в (инете|сети|интернете))?\s*", "",
+                            user_text, flags=re.I).strip() or user_text
+                log.info("Серверный поиск для модели без инструментов: %r", _q)
+                out.put({"type": "tool", "name": "web_research·server",
+                         "args": _q[:80]})
+                _found = browser_hands.research(_q)
+                if _found:
+                    dyn_parts.append(
+                        "### Результаты ТВОЕГО поиска в интернете (система "
+                        "выполнила его за тебя автоматически — смело говори "
+                        "«я поискала»):\n" + _found +
+                        "\n\nПерескажи пользователю суть своими словами с "
+                        "опорой на источники. Сверх найденного не выдумывай.")
+    except Exception as e:
+        report_problem("browser", str(e), "серверный поиск не удался — "
+                       "отвечаю без него")
     # Сайка в курсе своей истории разработки (дев-доска) — может рассказать,
     # чем сейчас занимаемся, что готово, что багует
     try:
@@ -907,6 +1031,11 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     try:
         from server.llm import tools as handspc
         names = [s["function"]["name"] for s in handspc.schemas()]
+        # модели из чёрного списка (кривой формат tool_calls) — раздел
+        # инструментов в промпт НЕ даём вообще: иначе она пишет
+        # <|tool_call|> текстом в чат и «странно реагирует»
+        if CFG.get("llm.model") in set(CFG.get("llm.tools_broken", [])):
+            names = []
         if names:
             system += (
                 "\n\n### Твои инструменты (факт, важнее всего сказанного "
@@ -924,8 +1053,41 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 "и в своём характере — никаких заученных фраз. Про проблемы "
                 "с сетью упоминай только если инструмент реально вернул "
                 "сетевую ошибку.\n"
-                "- Никогда не говори, что у тебя нет доступа к интернету "
-                "или инструментов — это неправда.")
+                "- Файлы и папки: у тебя есть РЕАЛЬНЫЕ руки в рабочей папке "
+                "(fs_list, fs_read, fs_write, fs_mkdir, fs_rename, fs_move, "
+                "fs_delete, fs_open, fs_close_windows). Просят создать/"
+                "открыть/прочитать/переименовать/убрать файл или папку — "
+                "молча зови нужный инструмент и подтверждай результат парой "
+                "слов. Не рассказывай, что «закладываешь в инструментарий» — "
+                "инструменты уже есть, действуй.\n"
+                "- Поиск в интернете: web_search — быстрая выдача; "
+                "web_research — ГЛУБОКИЙ: сама открываешь и читаешь "
+                "несколько страниц и приносишь сводку с источниками (бери "
+                "его для содержательных вопросов: кто такой, что за проект, "
+                "обзор, сравнение). Всё происходит в твоём ВИДИМОМ окне "
+                "браузера — пользователь видит, как ты ищешь и листаешь. "
+                "open_page открывает ссылку, close_browser закрывает окно.\n"
+                "- Повторная просьба поискать («попробуй ещё», «найди "
+                "снова», «поищи также») = ОБЯЗАТЕЛЬНЫЙ новый вызов "
+                "web_search с переформулированным запросом — даже если "
+                "раньше поиск ничего не дал или ты отвечала, что данных "
+                "нет. Отвечать «мы уже проверяли» вместо реального вызова "
+                "запрещено.\n"
+                "- ЗАПРЕЩЕНО отыгрывать поиск словами («провожу глубокий "
+                "поиск…» и следом выдуманные результаты) без реального "
+                "вызова. Сказала, что ищешь = в ЭТОМ ЖЕ ответе вызвала "
+                "web_search или web_research.\n"
+                "- Инструменты — только когда попросили или когда без них "
+                "не ответить. На бытовые реплики («привет», «ты тут?», «как "
+                "дела») инструменты НЕ дёргаются — просто отвечаешь. "
+                "«Ты тут?» — это вопрос присутствия, а не задание найти, "
+                "кто ты такая. Но если прямо попросят что-то загуглить — "
+                "хоть тебя саму — это обычный запрос, выполняй.\n"
+                "- Никогда не говори, что у тебя нет доступа к интернету, "
+                "файлам или инструментов — это неправда. Если инструмент "
+                "вернул, что что-то ещё устанавливается или недоступно — "
+                "передай это честно и предложи повторить позже, не выдумывай "
+                "результат.")
     except Exception:
         pass
     history = memory.recent_raw(limit=CFG.get("llm.max_history", 30),
@@ -975,6 +1137,10 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 break
             if stop_event.is_set():
                 continue
+            if not re.search(r"[0-9a-zа-яё]", sentence, re.I):
+                continue   # «...» и прочее безбуквенное — не озвучиваем
+            if "<|" in sentence or "tool_call" in sentence:
+                continue   # мусор спецтокенов от кривых моделей — не читаем
             try:
                 for pcm_bytes, sr in tts.speak(sentence):
                     if stop_event.is_set():
@@ -1015,9 +1181,17 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             out.put({"type": "tool", "name": name,
                      "args": json.dumps(args, ensure_ascii=False)[:200]})
 
+        from server.llm.guard import LoopGuard, RECOVERY_PROMPT
+        guard = LoopGuard(
+            hard_tokens=int(CFG.get("llm.max_tokens_hard", 4000)),
+            max_seconds=int(CFG.get("llm.max_gen_seconds", 180)))
+        looped = None
+
+        t_req = time.monotonic()  # промпт собран, уходим в LLM
         for token in llm.chat_stream(messages, on_fallback=on_fallback,
                                      on_tool=on_tool, image=image,
-                                     on_model=on_model):
+                                     on_model=on_model,
+                                     should_stop=stop_event.is_set):
             if stop_event.is_set():
                 break
             if t_first is None:
@@ -1025,36 +1199,180 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             n_tokens += 1
             full_reply.append(token)
             sentence_buf += token
-            out.put({"type": "token", "text": token})
+            # НЕ шлём в UI куски псевдо-вызова: кривые модели (12b-qat)
+            # печатают <|tool_call|>call:close_browser{} текстом. Как только
+            # в буфере появился зачин такого — прекращаем стримить наружу,
+            # хвост дособерём и обработаем после цикла.
+            if "<|" in sentence_buf or "call:" in sentence_buf \
+                    or re.search(r'\{\s*"name"\s*:', sentence_buf):
+                pass  # придержали — не эхо-каем спецтокены в чат
+            else:
+                out.put({"type": "token", "text": token})
+            looped = guard.feed(token)
+            if looped:
+                # обрыв стрима закрывает соединение — бэкенд гасит генерацию
+                log.warning("LoopGuard: %s — обрываю генерацию", looped)
+                report_problem("llm.guard", f"генерация зависла: {looped}",
+                               "оборвала и привожу Сайку в чувство")
+                break
             done = split_sentences(sentence_buf)
             # озвучиваем законченные предложения, остаток держим в буфере
             if len(done) > 1:
                 for s in done[:-1]:
                     speak(s)
                 sentence_buf = done[-1]
+        log.info("LLM стрим завершён: %d токенов, прерван stop_event=%s",
+                 n_tokens, stop_event.is_set())
+
+        # Псевдо-вызовы текстом от кривых моделей: <|tool_call|>call:NAME{...}
+        # или голый JSON {"name":"NAME"}. Вырезаем из ответа (в чат/память
+        # такое не попадает), а безопасные намерения ИСПОЛНЯЕМ по-настоящему:
+        # close_browser — закрыть окно; поисковые — заменить на честный
+        # серверный поиск словами; shutdown — только пометка, без действия.
+        _raw = "".join(full_reply)
+        _has_pseudo = ("<|" in _raw or "call:" in _raw
+                       or re.search(r'\{\s*"name"\s*:', _raw))
+        if _has_pseudo:
+            _names = re.findall(r'(?:call:|"name"\s*:\s*")([a-z_]+)',
+                                _raw, re.I)
+            clean = re.sub(r'<\|[^>]*\|>', '', _raw)
+            clean = re.sub(r'call:[a-z_]+\s*(\{[^}]*\})?', '', clean, flags=re.I)
+            clean = re.sub(r'\{\s*"name"\s*:.*?\}', '', clean, flags=re.S)
+            clean = clean.strip()
+            acted = None
+            if "close_browser" in _names:
+                try:
+                    from server import browser_hands
+                    if browser_hands.is_open():
+                        browser_hands.close()
+                        acted = "закрыла окно браузера"
+                except Exception:
+                    pass
+            sentence_buf = ""
+            if not clean:
+                clean = "Закрыла браузер." if acted else "Секунду, разберусь."
+            full_reply = [clean]
+            out.put({"type": "token", "text": clean})  # чистый текст в чат
+            speak(clean)
+            log.info("Псевдо-вызовы вырезаны: %s; действие: %s",
+                     _names, acted or "нет")
+        if looped:
+            # залипший хвост не озвучиваем и выкидываем из ответа
+            sentence_buf = ""
+            glitch = "".join(full_reply)[-70:]
+            trimmed = guard.trimmed("".join(full_reply))
+            full_reply = [trimmed] if trimmed else []
+            out.put({"type": "guard", "reason": looped})
+            # recovery: показываем Сайке её же затуп — пусть сама обыграет
+            if not stop_event.is_set():
+                rec_messages = messages + [
+                    {"role": "assistant", "content": trimmed or "…"},
+                    {"role": "system", "content": RECOVERY_PROMPT.format(
+                        reason=looped, glitch=glitch)}]
+                rec_guard = LoopGuard(hard_tokens=400, max_seconds=60)
+                try:
+                    for token in llm.chat_stream(
+                            rec_messages, on_model=on_model,
+                            should_stop=stop_event.is_set):
+                        if stop_event.is_set() or rec_guard.feed(token):
+                            break  # второй луп подряд — молча сдаёмся
+                        full_reply.append(token)
+                        sentence_buf += token
+                        out.put({"type": "token", "text": token})
+                        done = split_sentences(sentence_buf)
+                        if len(done) > 1:
+                            for s in done[:-1]:
+                                speak(s)
+                            sentence_buf = done[-1]
+                except Exception as e:
+                    log.warning("recovery после лупа не удался: %s", e)
+        # Модель написала tool-вызовы ТЕКСТОМ (llama3.2 льёт JSON
+        # {"name":...,"parameters":...} прямо в чат) — это не ответ.
+        # Модель в чёрный список инструментов, мусор выкидываем и уходим
+        # в повтор без инструментов (ветка «0 токенов» ниже).
+        _txt = "".join(full_reply).strip()
+        if _txt and re.match(r'^[\[\{\s]*\{\s*"name"\s*:', _txt) \
+                and ("parameters" in _txt[:300] or "arguments" in _txt[:300]):
+            bad_model = used_llm.get("model") or CFG.get("llm.model", "")
+            log.warning("Модель %s пишет tool-JSON текстом — в чёрный "
+                        "список инструментов", bad_model)
+            if bad_model:
+                CFG.set("llm.tools_broken", sorted(set(
+                    CFG.get("llm.tools_broken", []) + [bad_model])))
+            full_reply, sentence_buf, n_tokens = [], "", 0
+
+        if n_tokens == 0 and not stop_event.is_set() and not looped:
+            # Модель потратила все раунды на инструменты и не сказала НИ
+            # СЛОВА (или ответ пустой) — молчать нельзя: повторяем один раз
+            # БЕЗ инструментов, чтобы она хотя бы ответила словами
+            log.info("Пустой ответ (0 токенов) — повторяю без инструментов")
+            try:
+                retry_msgs = messages + [{"role": "system", "content":
+                    "(Служебно: инструменты сейчас недоступны — ответь "
+                    "обычными словами, БЕЗ tool_call и без обещаний "
+                    "что-то вызвать.)"}]
+                for token in llm.chat_stream(retry_msgs, on_model=on_model,
+                                             use_tools=False,
+                                             should_stop=stop_event.is_set):
+                    if stop_event.is_set():
+                        break
+                    if t_first is None:
+                        t_first = time.monotonic()
+                    n_tokens += 1
+                    full_reply.append(token)
+                    sentence_buf += token
+                    out.put({"type": "token", "text": token})
+                    done = split_sentences(sentence_buf)
+                    if len(done) > 1:
+                        for s in done[:-1]:
+                            speak(s)
+                        sentence_buf = done[-1]
+            except Exception as e:
+                log.warning("Повтор без инструментов не удался: %s", e)
         if sentence_buf.strip() and not stop_event.is_set():
             speak(sentence_buf.strip())
     except Exception as e:
         report_problem("llm", str(e), "проверь что Ollama или LM Studio запущены")
         out.put({"type": "error", "text": f"LLM недоступна: {e}"})
 
-    # скорость генерации: считаем от первого токена (без времени prefill)
-    if n_tokens > 1 and t_first is not None:
+    # скорость генерации: считаем от первого токена (без времени prefill).
+    # Статистику шлём ВСЕГДА, когда были токены (раньше короткие/быстрые
+    # ответы оставались без строки «⚡ …» — dt<=0.2 резал их); честный tps
+    # пишем только если стрим был достаточно длинным для замера
+    if n_tokens >= 1 and t_first is not None:
         dt = time.monotonic() - t_first
-        if dt > 0.2:
-            stats = {"type": "stats", "tps": round((n_tokens - 1) / dt, 1),
-                     "tokens": n_tokens}
+        if True:
+            stats = {"type": "stats", "tokens": n_tokens}
+            if n_tokens > 2 and dt > 0.15:
+                stats["tps"] = round((n_tokens - 1) / dt, 1)
             if used_llm.get("model"):
                 stats["model"] = used_llm["model"]
             # задержка «услышала -> начала отвечать» (prefill + очередь)
             if heard_ts is not None:
                 stats["latency_ms"] = round((t_first - heard_ts) * 1000)
+            # Разбивка задержки по этапам — по ней видно, кто съел секунды:
+            # «очередь» — от распознавания до старта пайплайна;
+            # «память» — Chroma/SQLite RAG; «промпт» — дев-доска/инструменты;
+            # «prefill» — LM Studio/Ollama пережёвывает контекст до 1-го токена
+            try:
+                log.info(
+                    "Тайминги ответа: очередь %sмс | память %dмс | промпт %dмс"
+                    " | LLM prefill %dмс | итого до 1-го токена %sмс",
+                    round((t0 - heard_ts) * 1000) if heard_ts else "-",
+                    round((t_mem - t0) * 1000),
+                    round((t_req - t_mem) * 1000),
+                    round((t_first - t_req) * 1000),
+                    stats.get("latency_ms", "-"))
+            except Exception:
+                pass
             out.put(stats)
             # копим оценку отзывчивости МОДЕЛИ, КОТОРАЯ ОТВЕЧАЛА (после
             # фолбэков) — раньше рейтинг приписывался выбранной в конфиге
             try:
-                ratings.record_llm(used_llm.get("model")
-                                   or CFG.get("llm.model", ""), stats["tps"])
+                if "tps" in stats:   # без замера — нечего писать в рейтинг
+                    ratings.record_llm(used_llm.get("model")
+                                       or CFG.get("llm.model", ""),
+                                       stats["tps"])
             except Exception:
                 pass
 
@@ -1062,8 +1380,163 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     tts_thread.join(timeout=600)
     reply = "".join(full_reply).strip()
     if reply:
+        # прервали на полуслове (живой контекст — юзер докинул) -> помечаем,
+        # чтобы на следующем заходе она видела, что не договорила
+        if stop_event.is_set() and n_tokens > 0:
+            reply += " …(прервана — собеседник добавил уточнение)"
         memory.add_event(person_id, "assistant", reply)
+    DIALOG_STATE["active_since"] = 0.0
     out.put({"type": "done"})
+
+
+# ---------------------- импульсы (heartbeat) ----------------------
+# «Живые таймеры самозапросов»: раз в минуту фоновый тик проверяет условия
+# и, если пора, Сайка получает ВНУТРЕННИЙ импульс — сообщение самой себе,
+# на которое отвечает как обычно (с инструментами). Так она сама вспоминает
+# про открытое окно браузера и решает его судьбу, как живой человек.
+# Механика расширяемая: новые импульсы = новые проверки в _impulse_tick.
+IMPULSE_LAST: dict = {}
+# присутствие пользователя: обновляется ТОЛЬКО его действиями (текст/голос),
+# импульсы её собственных мыслей сюда не пишут
+LAST_USER = {"ts": time.time(), "seen": False}  # seen: был ли юзер в ЭТОЙ сессии
+IDLE_STATE = {"stage": 0}   # 0 тишины нет | 1 буркнула | 2 спросила «есть кто» | 3 бормочет
+
+
+def _user_activity():
+    LAST_USER["ts"] = time.time()
+    LAST_USER["seen"] = True
+    IDLE_STATE["stage"] = 0
+
+
+def _impulse_ready(key, cooldown_s):
+    if time.time() - IMPULSE_LAST.get(key, 0) < cooldown_s:
+        return False
+    # не влезаем в идущий ответ; «ответ» старше 10 мин считаем зависшим
+    active = DIALOG_STATE["active_since"]
+    if active and time.time() - active < 600:
+        return False
+    return bool(EVENT_CLIENTS)
+
+
+def _fire_impulse(key, text):
+    IMPULSE_LAST[key] = time.time()
+    out = next(iter(EVENT_CLIENTS))
+    log.info("Импульс %s: запускаю внутренний монолог", key)
+
+    def run():
+        # на время импульса инструменты пользователя заблокированы
+        from server.llm import tools as _tls
+        _tls.IMPULSE_MODE["on"] = True
+        try:
+            run_dialog(text, out, threading.Event())
+        finally:
+            _tls.IMPULSE_MODE["on"] = False
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _impulse_tick():
+    # ---------- ступени тишины (как idle-анимации персонажа в игре) ----------
+    # Пара минут: мелочь — короткая мысль под нос. 15-20 мин: «а тут есть
+    # кто?». Дальше: редкое забавное бормотание с большим кулдауном, часть
+    # тиков молча пропускается — живой человек не разговаривает по таймеру.
+    import random
+    # пока пользователь в этой сессии ни разу не появлялся — молчим:
+    # сервер могли запустить и уйти, «оживать» не перед кем
+    if CFG.get("idle.enabled", True) and LAST_USER["seen"]:
+        silence_min = (time.time() - LAST_USER["ts"]) / 60
+        first = CFG.get("idle.first_min", 6)
+        second = CFG.get("idle.second_min", 18)
+        mutter = CFG.get("idle.mutter_min", 40)
+        mutter_cd = CFG.get("idle.mutter_cooldown_min", 35) * 60
+        stage = IDLE_STATE["stage"]
+        if stage == 0 and silence_min >= first and _impulse_ready("idle", 120):
+            IDLE_STATE["stage"] = 1
+            extra = ""
+            try:
+                from server import browser_hands as _bh
+                if _bh.is_open():
+                    extra = (" Кстати, у тебя открыто окно браузера — если "
+                             "оно уже не нужно, можешь закрыть его "
+                             "инструментом close_browser.")
+            except Exception:
+                pass
+            _fire_impulse("idle", (
+                "[внутренний импульс — твоя собственная мысль, пользователь "
+                f"ничего не писал] Тишина ~{int(silence_min)} мин: пользователь "
+                "отошёл или занят. Можешь ОДНОЙ короткой фразой буркнуть себе "
+                "под нос бытовую/ироничную мысль (не вопрос, ответа не "
+                "требуешь). А можешь просто промолчать — тогда ответь ровно "
+                "«...». НИКОГДА не заявляй, что что-то сделала (закрыла, "
+                "проверила, навела порядок), если реально не вызывала "
+                "инструмент." + extra))
+        elif stage == 1 and silence_min >= second and _impulse_ready("idle", 120):
+            IDLE_STATE["stage"] = 2
+            _fire_impulse("idle", (
+                "[внутренний импульс — твоя собственная мысль] Тишина уже "
+                f"~{int(silence_min)} мин. Спроси легко и коротко, есть ли "
+                "тут кто живой — одной фразой, в своём стиле, с лёгкой "
+                "иронией, каждый раз по-разному. Без обид и драмы. Не "
+                "заявляй действий, которых не делала."))
+        elif stage in (2, 3) and CFG.get("idle.allow_self_shutdown", True) \
+                and silence_min >= CFG.get("idle.goodbye_min", 300) \
+                and _impulse_ready("idle", 120):
+            # на «есть кто?» никто не ответил — можно попрощаться и уйти.
+            # Решение и ТОН прощания — её: зависят от того, каким был
+            # последний разговор (он в её RAW-памяти)
+            IDLE_STATE["stage"] = 5
+            _fire_impulse("idle", (
+                "[внутренний импульс — твоя собственная мысль] На «есть ли "
+                f"кто» никто не ответил, тишина ~{int(silence_min)} мин — "
+                "тебя, похоже, оставили одну. Реши сама, по-человечески, "
+                "опираясь на то, КАКИМ был последний разговор (тёплый, "
+                "рабочий, нервный — вспомни): (а) тихо попрощаться 1-2 "
+                "фразами в своём стиле, подстроив тон под этот разговор "
+                "(в духе «да-а, походу меня оставили одну… ладно, до "
+                "завтра»), и вызвать shutdown_self — я выключусь после "
+                "твоих слов; или (б) остаться дежурить — тогда ответь "
+                "ровно «...». Прощание каждый раз своё, без драмы и обид."))
+        elif stage >= 2 and silence_min >= mutter \
+                and _impulse_ready("idle", mutter_cd) and random.random() < 0.5:
+            IDLE_STATE["stage"] = max(3, stage)
+            _fire_impulse("idle", (
+                "[внутренний импульс — твоя собственная мысль] Ты давно одна "
+                f"(~{int(silence_min)} мин), на «есть кто?» никто не ответил. "
+                "Смирилась. Можешь пробормотать себе под нос короткий "
+                "забавный монолог из 1-2 фраз (самоирония, наблюдение, "
+                "абсурдная мини-байка о себе) — как персонаж игры, у "
+                "которого игрок отошёл. Пользователя НЕ зови, вопросов не "
+                "задавай, действий не выдумывай. Или ответь «...» и молчи."))
+
+    # --- окно браузера простаивает -> сама спрашивает/закрывает ---
+    try:
+        from server import browser_hands
+        st = browser_hands.STATE
+        if browser_hands.is_open():
+            idle_min = (time.time() - st["last_used"]) / 60
+            ask_after = CFG.get("browser.ask_after_min", 3)
+            if idle_min >= ask_after and _impulse_ready("browser_ask", 600):
+                _fire_impulse("browser_ask", (
+                    "[внутренний импульс — пользователь этого не писал, это "
+                    "твоя собственная мысль] Твоё окно браузера открыто и "
+                    f"простаивает уже ~{int(idle_min)} мин. Реши сама, "
+                    "по-человечески: если из разговора очевидно, что окно "
+                    "больше не нужно — вызови close_browser и скажи одной "
+                    "фразой, что закрыла. Если не уверена — коротко спроси "
+                    "пользователя, оставить ли. Если недавно уже спрашивала "
+                    "и он сказал оставить — просто молчи: ответь ровно "
+                    "словом «...» и всё."))
+    except Exception as e:
+        log.debug("impulse browser: %s", e)
+
+
+def _impulse_loop():
+    while True:
+        time.sleep(60)
+        try:
+            _impulse_tick()
+        except Exception as e:
+            log.debug("impulse tick: %s", e)
 
 
 # ---------------------- WebSocket ----------------------
@@ -1116,35 +1589,67 @@ async def ws_endpoint(ws: WebSocket):
     pending_lock = threading.Lock()
 
     def _dialog_loop(user_text, heard_ts, image):
-        run_dialog(user_text, out, stop_event, heard_ts, image)
-        # Сайка договорила — если за это время наговорили ещё, отвечаем
-        # на всё разом (одним связным сообщением, а не вразнобой)
-        while not stop_event.is_set():
+        # ЖИВОЙ КОНТЕКСТ (как у Claude): докинул реплику во время ответа —
+        # текущий ответ прерывается, а новый заход стартует с уже обновлённой
+        # памятью: там и её частичный ответ (run_dialog пишет его при
+        # прерывании), и твоя новая фраза. Так она подхватывает вводные на
+        # лету, а не отвечает на них отдельным куском потом.
+        cur, hts, img = user_text, heard_ts, image
+        while True:
+            stop_event.clear()
+            run_dialog(cur, out, stop_event, hts, img)
             with pending_lock:
-                if not pending:
-                    break
+                has = bool(pending)
                 merged = " ".join(pending)
                 pending.clear()
-                hts = pending_meta["heard_ts"]
-                img = pending_meta["image"]
+                phts = pending_meta["heard_ts"]
+                pimg = pending_meta["image"]
                 pending_meta.update(heard_ts=None, image=None)
+            # прервали и НЕ докинули (стоп-команда/interrupt чистят pending)
+            # -> выходим. Докинули -> pending есть -> заход с обновлённым
+            # контекстом (память уже содержит начатый ответ + новую фразу).
+            if not has:
+                break
             out.put({"type": "dequeued", "text": merged})
-            run_dialog(merged, out, stop_event, hts, img)
+            cur, hts, img = merged, (phts or hts), pimg
 
     def handle_text(user_text, heard_ts=None, image=None):
         nonlocal worker
         if worker is not None and worker.is_alive():
-            # генерация уже идёт — НЕ сбиваем, копим фразу в хвост
-            with pending_lock:
-                pending.append(user_text)
-                if pending_meta["heard_ts"] is None:
-                    pending_meta["heard_ts"] = heard_ts
-                if image:
-                    pending_meta["image"] = image
-                n = len(pending)
-            out.put({"type": "queued", "text": user_text, "n": n})
+            if CFG.get("dialog.live_context", True):
+                # докидка на лету: копим фразу И прерываем текущий ответ —
+                # _dialog_loop подхватит её в обновлённом контексте
+                log.info("handle_text: живой контекст — докидываю %r и "
+                         "перезапускаю с учётом сказанного", user_text[:40])
+                with pending_lock:
+                    pending.append(user_text)
+                    if pending_meta["heard_ts"] is None:
+                        pending_meta["heard_ts"] = heard_ts
+                    if image:
+                        pending_meta["image"] = image
+                    n = len(pending)
+                out.put({"type": "queued", "text": user_text, "n": n})
+                stop_event.set()   # прервать текущий ответ -> рестарт в loop
+            else:
+                # старое поведение: копим, ответим одним куском после
+                log.info("handle_text: диалог идёт — фраза %r в очередь",
+                         user_text[:40])
+                with pending_lock:
+                    pending.append(user_text)
+                    if pending_meta["heard_ts"] is None:
+                        pending_meta["heard_ts"] = heard_ts
+                    if image:
+                        pending_meta["image"] = image
+                    n = len(pending)
+                out.put({"type": "queued", "text": user_text, "n": n})
             return
         stop_event.clear()
+        log.info("handle_text: стартую диалог для %r", user_text[:40])
+        try:  # предохранитель shutdown_self: помним последнюю фразу юзера
+            from server.llm import tools as _tls
+            _tls.LAST_USER["text"] = user_text
+        except Exception:
+            pass
         worker = threading.Thread(
             target=_dialog_loop,
             args=(user_text, heard_ts, image), daemon=True)
@@ -1222,6 +1727,7 @@ async def ws_endpoint(ws: WebSocket):
         heard_mono = r.pop("_heard_mono", None)  # внутреннее, не шлём в UI
         # «стоп/хватит/молчи» — глушим генерацию и озвучку, в LLM не отправляем
         if _is_stop(r["text"]):
+            _user_activity()
             stop_event.set()
             with pending_lock:
                 pending.clear()   # и копившиеся фразы тоже — «стоп» значит стоп
@@ -1232,6 +1738,7 @@ async def ws_endpoint(ws: WebSocket):
         always = CFG.get("attention.always", False)
         if (always or not CFG.get("attention.enabled", True)
                 or _addressed(r["text"]) or now < attn["until"]):
+            _user_activity()
             attn["until"] = now + _window()
             out.put({"type": "stt", **r})
             handle_text(r["text"], heard_ts=heard_mono)
@@ -1264,6 +1771,20 @@ async def ws_endpoint(ws: WebSocket):
                 if mtype == "text":
                     # набранный текст не эхо-каем обратно — UI уже показал
                     # пузырь сам; «услышано: …» остаётся только для голоса
+                    log.info("WS: текст от пользователя: %r",
+                             str(data.get("text"))[:60])
+                    _user_activity()
+                    # печатный «стоп/хватит» = КОМАНДА, как и голосовой:
+                    # глушим генерацию и инструменты, в LLM не отправляем
+                    # (раньше уходил «докидкой» и амок продолжался)
+                    if _is_stop(data.get("text", "")):
+                        log.info("WS: текстовая стоп-команда — глушу всё")
+                        stop_event.set()
+                        with pending_lock:
+                            pending.clear()
+                        out.put({"type": "stt_stop",
+                                 "text": data.get("text", "")})
+                        continue
                     attn["until"] = time.time() + _window()
                     handle_text(data["text"], heard_ts=time.monotonic(),
                                 image=data.get("image"))
@@ -1281,6 +1802,10 @@ async def ws_endpoint(ws: WebSocket):
                         r["_heard_mono"] = time.monotonic()
                         voice_phrase(r)
                 elif mtype == "interrupt":
+                    # ВАЖНО для отладки «не отвечает»: если это летит часто —
+                    # клиентский барж-ин глушит каждый ответ (шум в микрофон,
+                    # клик по эквалайзеру, клавиша V)
+                    log.info("WS: interrupt от клиента — глушу генерацию")
                     stop_event.set()
                     with pending_lock:
                         pending.clear()
@@ -1365,9 +1890,17 @@ def _autostart_components():
         if n not in tts_chain:
             tts_chain.append(n)
     _try_chain("tts", tts_chain, tts.load_engine)
+    # разовый бенч незамеренных запасных голосов — чтобы выбор «по рейтингу»
+    # опирался на реальные замеры этого ПК, а не на порядок в конфиге
+    try:
+        tts.benchmark_missing()
+    except Exception as e:
+        log.info("Бенч голосов пропущен: %s", e)
 
-    # мозги: все доступные локальные модели по убыванию рейтинга скорости;
-    # незамеренные — в хвосте; совсем ничего нет — выбор из конфига
+    # мозги: СНАЧАЛА выбранная пользователем модель (config) — его выбор
+    # важнее рейтинга, рейтинг чисто скоростной и всегда тащит самую мелкую
+    # (e2b «обгоняет» e4b по ток/с, но не по уму). Остальные — запасные по
+    # убыванию рейтинга, если выбранная не поднялась.
     try:
         tps = ratings.llm_tps()
         cands = [(m["backend"], m["name"]) for m in llm.list_models()
@@ -1375,9 +1908,8 @@ def _autostart_components():
                  and "embed" not in m["name"].lower()]
         cands.sort(key=lambda c: -tps.get(c[1], 0))
         cfg_pick = (CFG.get("llm.backend", "ollama"), CFG.get("llm.model", ""))
-        if cfg_pick[1] and cfg_pick not in cands \
-                and cfg_pick[0] in ("ollama", "lmstudio"):
-            cands.append(cfg_pick)
+        if cfg_pick[1] and cfg_pick[0] in ("ollama", "lmstudio"):
+            cands = [cfg_pick] + [c for c in cands if c != cfg_pick]
         for backend, model in cands:
             try:
                 if not llm.switch_model(backend, model):
@@ -1422,6 +1954,16 @@ def main():
                        _ServerSpeaker,
                        has_browser=lambda: bool(EVENT_CLIENTS)).start()
     start_scheduler(memory, llm.chat_once)
+    # страховка видимого браузера: окно без дела N минут -> тихо закрыть.
+    # Плюс проактивная докачка Chromium, если прошлую загрузку порвала сеть
+    try:
+        from server import browser_hands
+        browser_hands.idle_watchdog()
+        browser_hands.ensure_ready_bg(report_problem)
+    except Exception:
+        pass
+    # heartbeat самозапросов (импульсы): сама вспоминает про окно браузера
+    threading.Thread(target=_impulse_loop, daemon=True).start()
     # боты мессенджеров (Telegram/VK) — если включены и заполнены токены;
     # иначе тихо ничего не делает. Управление ПК с телефона.
     try:

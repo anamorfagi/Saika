@@ -56,7 +56,53 @@ def _score(tps: float) -> int:
 
 def llm_scores() -> dict:
     """{model: оценка 1..10}. Незамеренные — 0 (UI покажет «—», уедут наверх)."""
-    return {m: _score(e.get("tps", 0)) for m, e in _load().items()}
+    return {m: _score(e.get("tps", 0)) for m, e in _load().items()
+            if not m.startswith("tts:")}
+
+
+# ---------------- рейтинг голосов (TTS) ----------------
+# Метрика — скорость синтеза: секунд аудио за секунду работы движка
+# (2.0 = синтезирует вдвое быстрее реального времени). Хранится в том же
+# ratings.json под ключами "tts:<engine>", чтобы не путаться с LLM.
+
+def record_tts(engine: str, speed: float):
+    if not engine or not speed or speed <= 0:
+        return
+    key = "tts:" + engine
+    with _lock:
+        d = _load()
+        e = d.get(key)
+        if e:
+            e["speed"] = round(e["speed"] * 0.7 + speed * 0.3, 2)
+            e["n"] = e.get("n", 0) + 1
+        else:
+            e = {"speed": round(speed, 2), "n": 1}
+        d[key] = e
+        _save(d)
+
+
+def tts_scores() -> dict:
+    """{engine: 1..10 по скорости синтеза}. 1x реального времени ≈ 5."""
+    out = {}
+    for k, e in _load().items():
+        if k.startswith("tts:"):
+            spd = e.get("speed", 0)
+            out[k[4:]] = int(round(min(10, max(1, spd * 5)))) if spd else 0
+    return out
+
+
+def best_tts(order, exclude=(), favorites=()):
+    """Лучший запасной голос. Приоритет: «нравится» (favorites, в порядке
+    списка) > скорость по замерам > порядок в конфиге. Дело ведь не только
+    в скорости — любимый голос важнее шустрого."""
+    pool = [n for n in order if n not in exclude]
+    if not pool:
+        return None
+    scores = tts_scores()
+    pool.sort(key=lambda n: -scores.get(n, 0))
+    favs = [f for f in favorites if f in pool]
+    pool.sort(key=lambda n: favs.index(n) if n in favs else len(favs) + 1)
+    return pool[0]
 
 
 def llm_tps() -> dict:

@@ -1,5 +1,5 @@
 {
-  "updated": "2026-07-18T19:51:33",
+  "updated": "2026-07-21T21:02:23",
   "items": [
     {
       "id": "s01",
@@ -477,26 +477,203 @@
       "ts": "2026-07-18T19:51:33",
       "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-07-20T19:06:30",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-20T19:34:54",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-20T19:51:52",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T13:25:38",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T13:26:55",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T13:32:52",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T13:55:32",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:11:36",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:15:20",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:15:20",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:21:48",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:22:30",
+      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:22:33",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:23:09",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:23:39",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T14:59:29",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T15:39:17",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T15:53:52",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T16:06:34",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T16:09:00",
+      "text": "✓ browser: видимый браузер установлен и готов",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-21T16:37:25",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T17:33:31",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T18:08:20",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T19:00:00",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T19:28:34",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T19:29:50",
+      "text": "⚠ llm: проверь что Ollama или LM Studio запущены",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T19:30:01",
+      "text": "⚠ llm: автопуск пробует следующую модель",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T20:05:01",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T20:37:25",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T20:40:13",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T20:44:35",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T20:48:12",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-21T21:02:23",
+      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "основной бэкенд недоступен",
-      "count": 24,
+      "text": "google/gemma-4-12b-qat: прогрев не удался",
+      "count": 26,
       "resolved": false,
-      "last": "2026-07-18T19:51"
+      "last": "2026-07-21T19:30"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
-      "count": 12,
+      "count": 18,
       "resolved": false,
-      "last": "2026-07-17T20:47"
+      "last": "2026-07-21T20:48"
     },
     "tts.edge": {
       "text": "Похоже, что-то с сетью, брат: «edge» не скачивается — huggingface.co не отвечает. Проверь интернет или VPN.",
       "count": 2,
       "resolved": false,
       "last": "2026-07-18T14:01"
+    },
+    "stt": {
+      "text": "нет пакета sounddevice",
+      "count": 24,
+      "resolved": false,
+      "last": "2026-07-21T21:02"
+    },
+    "browser": {
+      "text": "browser",
+      "count": 0,
+      "resolved": true,
+      "last": "2026-07-21T16:09"
     }
   }
 }

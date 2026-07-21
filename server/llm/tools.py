@@ -16,6 +16,15 @@ from server.config import CFG
 log = logging.getLogger("saika.tools")
 _cache = {"t": 0.0, "schemas": []}
 
+# Режим внутреннего импульса (мысль самой себе, пользователь не писал).
+# В нём Сайке можно трогать ТОЛЬКО СВОЁ: закрыть свой браузер, выключить
+# себя, глянуть дев-доску. Окна/файлы пользователя — под жёстким запретом
+# на уровне кода (однажды в idle она «прибралась» и закрыла проводник
+# пользователя — смешно, но нельзя).
+IMPULSE_MODE = {"on": False}
+_IMPULSE_SAFE = {"close_browser", "shutdown_self",
+                 "devboard_read", "devboard_add"}
+
 # ЛОКАЛЬНЫЕ инструменты Сайки (не через HandsPC): дев-доска — чтобы она могла
 # свериться со своей историей разработки и дописывать в блокнот сама.
 _LOCAL_SCHEMAS = [
@@ -40,6 +49,101 @@ _LOCAL_SCHEMAS = [
             "required": ["col", "text"]}}},
 ]
 _LOCAL_NAMES = {"devboard_read", "devboard_add"}
+
+# Встроенный видимый браузер (server/browser_hands.py). Подключается, только
+# если внешний HandsPC НЕ запущен — дома он главнее, конфликтов нет.
+_BROWSER_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "web_search",
+        "description": ("Поиск в интернете в твоём ВИДИМОМ окне браузера — "
+                        "пользователь видит, как ты ищешь. Используй для "
+                        "всего, чего не знаешь или что могло измениться: "
+                        "события, люди, цены, погода, термины."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "поисковый запрос"}},
+            "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "open_page",
+        "description": ("Открыть страницу по URL в том же видимом окне и "
+                        "прочитать её текст (после web_search — чтобы изучить "
+                        "результат подробнее)."),
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string"}}, "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "web_research",
+        "description": ("ГЛУБОКИЙ поиск: сама ищет, открывает и читает "
+                        "несколько лучших страниц в видимом окне и приносит "
+                        "готовую сводку с источниками. Используй, когда "
+                        "нужен содержательный ответ (кто такой X, что за "
+                        "проект Y, сравнение, обзор). Для быстрых фактов "
+                        "(дата, курс, погода) хватает web_search."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "вопрос/запрос"}},
+            "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "close_browser",
+        "description": ("Закрыть своё окно браузера. Зови, когда пользователь "
+                        "сказал закрыть/что окно больше не нужно."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+]
+_BROWSER_NAMES = {"web_search", "web_research", "open_page", "fetch_page",
+                  "close_browser"}
+
+# Самовыключение: Сайка может выключить себя сама — попрощаться и уйти
+# (напр. по прощальному импульсу, когда её надолго оставили одну, или по
+# прямой просьбе «выключайся»). Сервер гаснет ПОСЛЕ того, как она
+# договорит прощание. start.bat код 0 не перезапускает — чистый выход.
+_SHUTDOWN_SCHEMA = {"type": "function", "function": {
+    "name": "shutdown_self",
+    "description": ("Выключить себя (сервер Сайки) после прощания. Зови "
+                    "ТОЛЬКО если пользователь прямо попросил выключиться, "
+                    "или по внутреннему прощальному импульсу, когда тебя "
+                    "надолго оставили одну. Сначала скажи прощание, вызов "
+                    "делай в том же ответе — выключение произойдёт после "
+                    "твоих слов."),
+    "parameters": {"type": "object", "properties": {}, "required": []}}}
+
+
+# последняя фраза пользователя — предохранитель для shutdown_self
+LAST_USER = {"text": ""}
+
+
+def _shutdown_call() -> str:
+    import os
+    import re as _re
+    import threading
+    import time as _t
+
+    # ПРЕДОХРАНИТЕЛЬ: мелкие модели зовут shutdown_self наугад (llama3.2
+    # дёрнула его на «ты тут» — чуть не выключила себя). Выключение только
+    # если пользователь явно попросил ИЛИ это прощальный импульс.
+    asked = bool(_re.search(r"выключ|отключ|гаси|спать|заверша",
+                            LAST_USER.get("text", ""), _re.I))
+    if not asked and not IMPULSE_MODE.get("on"):
+        return ("отказ: пользователь не просил выключаться — команда "
+                "игнорирована. Продолжай обычный разговор.")
+
+    delay = CFG.get("idle.shutdown_delay_s", 25)
+
+    def bye():
+        _t.sleep(delay)   # дать договорить прощание голосом
+        try:
+            from server import browser_hands
+            if browser_hands.is_open():
+                browser_hands.close()
+        except Exception:
+            pass
+        try:
+            from server import main as _m
+            _m.log.info("Сайка выключила себя сама (shutdown_self)")
+            _m._unload_llms()
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Thread(target=bye, daemon=True).start()
+    return (f"принято: выключусь через ~{delay} секунд — договори "
+            f"прощание, оно успеет прозвучать")
 
 
 def _url():
@@ -69,7 +173,24 @@ def schemas() -> list:
     вопросы про разработку). Хочешь дать инструменты модели (для крупной с
     хорошим function-calling) — включи tools.devboard_tools в config."""
     local = list(_LOCAL_SCHEMAS) if CFG.get("tools.devboard_tools", False) else []
-    return local + _hands_schemas()
+    hands = _hands_schemas()
+    if not hands and CFG.get("browser.enabled", True):
+        # HandsPC нет — даём встроенный видимый браузер (те же имена
+        # инструментов, промпты Сайки про web_search работают как есть)
+        local = local + _BROWSER_SCHEMAS
+    if CFG.get("idle.allow_self_shutdown", True):
+        local = local + [_SHUTDOWN_SCHEMA]
+    # файловые руки (рабочая папка files.roots) — всегда локальные;
+    # если у HandsPC вдруг есть инструменты с теми же именами, он главнее
+    if CFG.get("files.enabled", True):
+        try:
+            from server import file_hands
+            hands_names = {s["function"]["name"] for s in hands}
+            local += [s for s in file_hands.SCHEMAS
+                      if s["function"]["name"] not in hands_names]
+        except Exception as e:
+            log.debug("file_hands недоступен: %s", e)
+    return local + hands
 
 
 def _local_call(name: str, arguments) -> str:
@@ -94,9 +215,66 @@ def _local_call(name: str, arguments) -> str:
     return "неизвестный локальный инструмент"
 
 
+def _browser_call(name: str, arguments) -> str:
+    import json as _json
+    from server import browser_hands
+    if isinstance(arguments, str):
+        try:
+            arguments = _json.loads(arguments)
+        except Exception:
+            arguments = {}
+    arguments = arguments or {}
+    try:
+        if name == "web_search":
+            return browser_hands.search(str(arguments.get("query", ""))[:300])
+        if name == "web_research":
+            return browser_hands.research(
+                str(arguments.get("query", ""))[:300])
+        if name in ("open_page", "fetch_page"):
+            return browser_hands.open_url(str(arguments.get("url", ""))[:2000])
+        if name == "close_browser":
+            return browser_hands.close()
+    except Exception as e:
+        log.exception("browser tool %s", name)
+        return f"браузер споткнулся: {e}"
+    return "неизвестный браузерный инструмент"
+
+
 def call(name: str, arguments) -> str:
+    if IMPULSE_MODE.get("on") and name not in _IMPULSE_SAFE:
+        return ("нельзя: это твой внутренний импульс, а не просьба "
+                "пользователя — его окна, файлы и интернет не трогаем. "
+                "Сейчас доступны только close_browser (своё окно), "
+                "shutdown_self и дев-доска.")
     if name in _LOCAL_NAMES:
         return _local_call(name, arguments)
+    if name == "shutdown_self":
+        if not CFG.get("idle.allow_self_shutdown", True):
+            return "самовыключение отключено в настройках"
+        return _shutdown_call()
+    if name in _BROWSER_NAMES and not _hands_schemas():
+        return _browser_call(name, arguments)
+    # файловые руки: локальные, если HandsPC не заявил такое же имя
+    try:
+        from server import file_hands
+        if name in file_hands.NAMES and not any(
+                s["function"]["name"] == name for s in _hands_schemas()):
+            import json as _json
+            args = arguments
+            if isinstance(args, str):
+                try:
+                    args = _json.loads(args)
+                except Exception:
+                    args = {}
+            try:
+                return str(file_hands.CALLS[name](args or {}))
+            except PermissionError as e:
+                return f"нельзя: {e}"
+            except Exception as e:
+                log.exception("file tool %s", name)
+                return f"файловая операция не удалась: {e}"
+    except ImportError:
+        pass
     # браузерные задачи многошаговые — им нужен большой таймаут
     timeout = CFG.get("tools.timeout_s", 60)
     if name == "browser_task":
