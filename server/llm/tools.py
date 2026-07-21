@@ -89,6 +89,41 @@ _BROWSER_SCHEMAS = [
 _BROWSER_NAMES = {"web_search", "web_research", "open_page", "fetch_page",
                   "close_browser"}
 
+# Хоткеи: Сайка заводит быстрые действия по просьбе в диалоге
+def _hotkey_schemas():
+    try:
+        from server import hotkeys
+        acts = ", ".join(f"{k} ({v})" for k, v in hotkeys.ACTION_DESC.items())
+    except Exception:
+        acts = ""
+    return [
+        {"type": "function", "function": {
+            "name": "bind_create",
+            "description": ("Завести быстрый хоткей по просьбе пользователя "
+                            "(«забинди на слово капуста открытие ютуба», "
+                            "«повесь на F8 закрытие окна»). trigger — слово "
+                            "или клавиша; kind — voice (слово-триггер) или "
+                            "key (клавиша). Действия: " + acts),
+            "parameters": {"type": "object", "properties": {
+                "trigger": {"type": "string", "description": "слово или клавиша (напр. capslock, f8)"},
+                "action": {"type": "string", "description": "имя действия из списка"},
+                "params": {"type": "string", "description": "для open — URL/приложение"},
+                "kind": {"type": "string", "enum": ["voice", "key"]}},
+                "required": ["trigger", "action"]}}},
+        {"type": "function", "function": {
+            "name": "bind_list",
+            "description": "Показать заведённые хоткеи.",
+            "parameters": {"type": "object", "properties": {}, "required": []}}},
+        {"type": "function", "function": {
+            "name": "bind_delete",
+            "description": "Убрать хоткей по его триггеру.",
+            "parameters": {"type": "object", "properties": {
+                "trigger": {"type": "string"}}, "required": ["trigger"]}}},
+    ]
+
+
+_HOTKEY_NAMES = {"bind_create", "bind_list", "bind_delete"}
+
 # Самовыключение: Сайка может выключить себя сама — попрощаться и уйти
 # (напр. по прощальному импульсу, когда её надолго оставили одну, или по
 # прямой просьбе «выключайся»). Сервер гаснет ПОСЛЕ того, как она
@@ -180,6 +215,8 @@ def schemas() -> list:
         local = local + _BROWSER_SCHEMAS
     if CFG.get("idle.allow_self_shutdown", True):
         local = local + [_SHUTDOWN_SCHEMA]
+    if CFG.get("hotkeys.enabled", True):
+        local = local + _hotkey_schemas()
     # файловые руки (рабочая папка files.roots) — всегда локальные;
     # если у HandsPC вдруг есть инструменты с теми же именами, он главнее
     if CFG.get("files.enabled", True):
@@ -252,6 +289,22 @@ def call(name: str, arguments) -> str:
         if not CFG.get("idle.allow_self_shutdown", True):
             return "самовыключение отключено в настройках"
         return _shutdown_call()
+    if name in _HOTKEY_NAMES:
+        import json as _json
+        from server import hotkeys
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        if name == "bind_create":
+            return hotkeys.add_bind(a.get("trigger", ""), a.get("action", ""),
+                                    a.get("params", ""), a.get("kind", "voice"))
+        if name == "bind_list":
+            binds = hotkeys.list_binds()
+            if not binds:
+                return "хоткеев пока нет"
+            return "; ".join(f"{b['trigger']}({b['kind']})->{b['action']}"
+                             for b in binds)
+        if name == "bind_delete":
+            return hotkeys.del_bind(a.get("trigger", ""))
     if name in _BROWSER_NAMES and not _hands_schemas():
         return _browser_call(name, arguments)
     # файловые руки: локальные, если HandsPC не заявил такое же имя

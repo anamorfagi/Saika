@@ -9,13 +9,14 @@ files.roots из config.json (по умолчанию F:/AI_load_work). Путь
   fs_list, fs_read, fs_write, fs_mkdir, fs_rename, fs_move, fs_delete,
   fs_open (открыть папку/файл в проводнике — видимо для пользователя).
 """
+import json
 import logging
 import os
 import shutil
 import time
 from pathlib import Path
 
-from server.config import CFG
+from server.config import CFG, ROOT
 
 log = logging.getLogger("saika.files")
 
@@ -155,8 +156,86 @@ def fs_close_windows() -> str:
         return f"не вышло закрыть окна: {e}"
 
 
+# ---------------- именованные места («это — рабочая папка») ----------------
+# Пользователь один раз называет папку по-человечески, Сайка запоминает имя
+# -> путь. Дальше «открой рабочую папку» знает, где это. Живёт в
+# data/places.json. НЕ ограничено files.roots (это закладки, а не операции).
+_PLACES = ROOT / "data" / "places.json"
+
+
+def _places_load() -> dict:
+    try:
+        return json.loads(_PLACES.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def place_save(name: str, path: str) -> str:
+    name = (name or "").strip().lower()
+    path = (path or "").strip().strip('"')
+    if not name or not path:
+        return "нужны имя и путь"
+    d = _places_load()
+    d[name] = path
+    _PLACES.parent.mkdir(exist_ok=True)
+    _PLACES.write_text(json.dumps(d, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+    return f"запомнила: «{name}» = {path}"
+
+
+def _stems(s: str) -> set:
+    # грубая нормализация под русские склонения: слова по 5 первых букв,
+    # мусорные слова-команды выкидываем («открой рабочую папку» -> {рабоч, папк})
+    stop = {"открой", "открыть", "покажи", "зайди", "перейди", "папку",
+            "папка", "папке", "в", "на", "мою", "мой", "это"}
+    out = set()
+    for w in "".join(c if c.isalnum() or c == " " else " "
+                     for c in s.lower()).split():
+        if w in stop or len(w) < 3:
+            continue
+        out.add(w[:5])
+    return out
+
+
+def place_resolve(name: str):
+    name = (name or "").strip().lower()
+    d = _places_load()
+    if name in d:
+        return d[name]
+    q = _stems(name)
+    if not q:
+        return None
+    best, best_score = None, 0
+    for k, v in d.items():
+        score = len(q & _stems(k))
+        if score > best_score:
+            best, best_score = v, score
+    return best
+
+
+def place_open(name: str) -> str:
+    p = place_resolve(name)
+    if not p:
+        known = ", ".join(_places_load()) or "пусто"
+        return f"не знаю места «{name}». Знаю: {known}"
+    path = Path(p)
+    if not path.exists():
+        return f"место «{name}» ({p}) больше не существует"
+    os.startfile(str(path))  # noqa: S606
+    return f"открыла «{name}»: {p}"
+
+
+def place_list() -> str:
+    d = _places_load()
+    return ("; ".join(f"{k} -> {v}" for k, v in d.items())
+            if d else "запомненных мест пока нет")
+
+
 CALLS = {
     "fs_list": lambda a: fs_list(a.get("path", "")),
+    "place_save": lambda a: place_save(a.get("name", ""), a.get("path", "")),
+    "place_open": lambda a: place_open(a.get("name", "")),
+    "place_list": lambda a: place_list(),
     "fs_read": lambda a: fs_read(a.get("path", "")),
     "fs_write": lambda a: fs_write(a.get("path", ""), a.get("text", "")),
     "fs_mkdir": lambda a: fs_mkdir(a.get("path", "")),
@@ -201,5 +280,15 @@ SCHEMAS = [
         dict(_P), []),
     _fn("fs_close_windows", "Закрыть все окна проводника — когда просят "
         "«закрой папки».", {}, []),
+    _fn("place_save", "Запомнить именованное место: пользователь называет "
+        "папку по-человечески и даёт путь («это рабочая папка, "
+        "F:\\AI_load_work»). Дальше открывать по имени.",
+        {"name": {"type": "string", "description": "человеческое имя, напр. «рабочая папка»"},
+         "path": {"type": "string", "description": "полный путь"}},
+        ["name", "path"]),
+    _fn("place_open", "Открыть ранее запомненное место по имени («открой "
+        "рабочую папку»).",
+        {"name": {"type": "string"}}, ["name"]),
+    _fn("place_list", "Показать все запомненные места.", {}, []),
 ]
 NAMES = set(CALLS)

@@ -883,6 +883,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # фразой пользователя.
     system = build_system_prompt(None, person_name)
     dyn_parts = []
+    # МЕТКА ТОНА (оболочка даёт ярлык поведения, остроумие — на модели):
+    # хамство/провокация/пошлость/флирт/похвала -> разрешение вести себя
+    # соответующе, коротко и в характере, без нотаций
+    try:
+        from server import tone as _tone
+        _hint = _tone.behavior_hint(user_text)
+        if _hint:
+            dyn_parts.append(_hint)
+    except Exception:
+        pass
     if mem_context:
         dyn_parts.append(
             "### Твоя память по теме (используй естественно, не цитируй "
@@ -1722,6 +1732,20 @@ async def ws_endpoint(ws: WebSocket):
         pairs = (a + b for a, b in zip(words, words[1:]))
         return any(p.startswith(n) for p in pairs for n in names)
 
+    def _fire_voice_hotkey(text):
+        try:
+            from server import hotkeys
+            b = hotkeys.match_voice(text)
+            if b and hotkeys.fire(b["action"], b.get("params", "")):
+                log.info("Голосовой хоткей «%s» -> %s", b["trigger"],
+                         b["action"])
+                out.put({"type": "hotkey", "trigger": b["trigger"],
+                         "action": b["action"]})
+                return True
+        except Exception as e:
+            log.debug("voice hotkey: %s", e)
+        return False
+
     def voice_phrase(r):
         now = time.time()
         heard_mono = r.pop("_heard_mono", None)  # внутреннее, не шлём в UI
@@ -1732,6 +1756,10 @@ async def ws_endpoint(ws: WebSocket):
             with pending_lock:
                 pending.clear()   # и копившиеся фразы тоже — «стоп» значит стоп
             out.put({"type": "stt_stop", **r})
+            return
+        # ГОЛОСОВОЙ ХОТКЕЙ: слово-триггер срабатывает МГНОВЕННО, мимо LLM
+        if _fire_voice_hotkey(r["text"]):
+            _user_activity()
             return
         # режим «слушать всё»: отвечает на любую распознанную речь, без имени
         # и без окна (умный режим внимания остаётся дефолтом — см. UI-тумблер)
@@ -1784,6 +1812,9 @@ async def ws_endpoint(ws: WebSocket):
                             pending.clear()
                         out.put({"type": "stt_stop",
                                  "text": data.get("text", "")})
+                        continue
+                    # печатный хоткей-триггер — тоже мгновенно, мимо LLM
+                    if _fire_voice_hotkey(data.get("text", "")):
                         continue
                     attn["until"] = time.time() + _window()
                     handle_text(data["text"], heard_ts=time.monotonic(),
@@ -1964,6 +1995,19 @@ def main():
         pass
     # heartbeat самозапросов (импульсы): сама вспоминает про окно браузера
     threading.Thread(target=_impulse_loop, daemon=True).start()
+    # поднять сохранённые клавиатурные хоткеи (если пакет keyboard стоит)
+    try:
+        from server import hotkeys
+        hotkeys.register_all_keys()
+    except Exception as e:
+        log.debug("hotkeys register: %s", e)
+    # живой самолечащий сторож: следит в реальном времени, Беймакс говорит
+    # о проблеме и тут же чинит (report_problem внутри зовёт Беймакса)
+    try:
+        from server import self_heal
+        self_heal.start(report_problem)
+    except Exception as e:
+        log.debug("self_heal: %s", e)
     # боты мессенджеров (Telegram/VK) — если включены и заполнены токены;
     # иначе тихо ничего не делает. Управление ПК с телефона.
     try:
