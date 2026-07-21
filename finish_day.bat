@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 title Saika - finish day
@@ -32,4 +33,5 @@ if errorlevel 1 (
 
 echo.
 echo [OK] День сохранён в git.
-timeout /t 3 >nul
+echo.
+pause
