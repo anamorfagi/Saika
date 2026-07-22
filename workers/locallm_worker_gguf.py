@@ -328,9 +328,15 @@ def _swallow_thinking(chunks):
     """Для ВКЛЮЧЁННЫХ размышлений: промпт кончается '<think>\n', так что всё
     до '</think>' — мысли. Глотаем их (в чат не идут — ровно как LM Studio,
     который отдаёт их отдельным полем, а Сайка его игнорирует), наружу — только
-    ответ. Страховка: если закрывающий тег так и не пришёл (модель ответила
-    без раздумий) — в конце отдаём всё скопленное, лучше поздно, чем молчание."""
-    buf, passed = "", False
+    ответ. На каждый проглоченный кусок отдаём None-сентинел: _stream
+    превращает его в SSE-комментарий (keep-alive). Без этого во время долгого
+    думания в сокет не пишется НИЧЕГО — и если Сайка бросила запрос (юзер
+    сказал новое, «перезапускаю с учётом»), воркер не замечает обрыва и жуёт
+    GPU до конца лимита, блокируя следующий запрос (инцидент 2026-07-23:
+    «модель не отвечает» — вечный цикл перезапусков поверх зомби-генерации).
+    Если мысли съели ВЕСЬ лимит и '</think>' так и не пришёл — честное
+    короткое сообщение вместо тишины (и вместо вывала сырых мыслей)."""
+    buf, passed, emitted = "", False, False
     proto = None
     for chunk in chunks:
         delta = chunk.get("choices", [{}])[0].get("delta", {})
@@ -339,6 +345,14 @@ def _swallow_thinking(chunks):
             yield chunk
             continue
         if passed:
+            if not emitted:  # ведущие \n после </think> — в мусор
+                tok = tok.lstrip("\n")
+                if not tok:
+                    continue
+                emitted = True
+                chunk = {**chunk,
+                         "choices": [{**chunk["choices"][0],
+                                      "delta": {**delta, "content": tok}}]}
             yield chunk
             continue
         proto = chunk
@@ -348,14 +362,22 @@ def _swallow_thinking(chunks):
             passed = True
             rest = buf[i + len("</think>"):].lstrip("\n")
             if rest:
+                emitted = True
                 yield {**chunk,
                        "choices": [{**chunk["choices"][0],
                                     "delta": {**delta, "content": rest}}]}
+        else:
+            yield None  # keep-alive: думаем, но сокет живой
     if not passed and buf.strip() and proto is not None:
+        log.warning("Мысли заняли весь лимит (%d символов), до ответа не "
+                    "дошло — вернула заглушку. Выключи 💭 или подними "
+                    "locallm.max_new_tokens.", len(buf))
         d0 = proto["choices"][0]
-        yield {**proto, "choices": [{**d0,
-                                     "delta": {**d0.get("delta", {}),
-                                               "content": buf}}]}
+        yield {**proto, "choices": [{**d0, "delta": {
+            **d0.get("delta", {}),
+            "content": "[мысли не уложились в лимит токенов — ответа не "
+                       "осталось. Выключи 💭 в меню модели или подними "
+                       "locallm.max_new_tokens]"}}]}
 
 
 def _stream(messages, temperature, max_tokens, enable_thinking=True):
@@ -393,6 +415,10 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True):
             log.exception("Рендер шаблона не удался — откат на "
                           "create_chat_completion")
         if prompt is not None:
+            if enable_thinking:
+                # мысли легко съедают 2048 целиком, а Сайка max_tokens не
+                # шлёт — даём запас, чтобы после думания остался сам ответ
+                max_tokens = max(max_tokens, 6144)
             raw = _model.create_completion(
                 prompt=prompt, stream=True, temperature=temperature,
                 max_tokens=max_tokens, stop=["<|im_end|>"])
@@ -408,6 +434,9 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True):
             if not enable_thinking:
                 stream = _filter_think(stream)
         for chunk in stream:
+            if chunk is None:  # проглоченный think-токен -> keep-alive
+                yield ": think\n\n"   # SSE-комментарий, парсеры игнорируют
+                continue
             delta = chunk.get("choices", [{}])[0].get("delta", {})
             n_chars += len(delta.get("content") or "")
             yield "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
