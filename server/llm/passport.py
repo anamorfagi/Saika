@@ -177,6 +177,15 @@ def ensure_async(backend: str, model: str):
     def run():
         _probing.add(model)
         try:
+            # НЕ лезем в горячие минуты старта: сразу после прогрева на GPU
+            # толкучка (torch.compile TTS, холодные кэши), а пробы ещё и
+            # сбрасывают KV-кэш модели — первые ответы пользователю тормозят
+            # (инцидент 2026-07-23 02:11-02:14: prefill по 15-18с, пока TTS
+            # компилировалась; к 02:16 — ответы за 1-2с). Паспорт — дело
+            # не срочное: ждём тишины.
+            time.sleep(180)
+            if get(model) is not None:  # пока ждали — кто-то уже прощупал
+                return
             if log:
                 log.info("Паспорт: прощупываю %s/%s…", backend, model)
             p = _probe(backend, model)
