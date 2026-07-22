@@ -2,6 +2,9 @@
 .venv/
 .venv_voxtral/
 .venv_dreampc/
+.venv_locallm/
+.venv_locallm_gguf/
+.venv_train/
 
 # модели и кэши — качаются сами (гигабайты)
 models/
