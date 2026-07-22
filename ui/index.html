@@ -216,7 +216,16 @@
   .qbars i{display:block;width:2px;border-radius:1px;transition:background .15s}
   .qbars:hover i{opacity:.85}
   /* значки возможностей моделей — боксы в ряд (как в LM Studio) */
-  .caps{display:inline-flex;gap:3px;margin-left:6px;vertical-align:middle}
+  .caps{display:inline-flex;gap:3px;margin-left:6px;vertical-align:middle;flex:none}
+  /* имя модели в списке — ОДНА строка с обрезкой, а не перенос на вторую
+     (длинные repo-имена вида huihui-ai/Huihui-Qwen3.5-9B-abliterated
+     раньше переносились прямо внутри строки и визуально ломали список на
+     подстроки — читалось как "список в списке"). Остальные элементы строки
+     (бары оценки/бэкенд/вес/статус/кнопка) — flex:none, чтобы ужималось
+     только имя, а не вся строка вразнобой. */
+  .pop .item .mname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .pop .item .qbars,.pop .item>.tag{flex:none}
   .caps .capb{display:inline-flex;align-items:center;justify-content:center;
     width:19px;height:19px;border:1px solid var(--border);border-radius:5px;
     background:var(--panel2);font-size:11px;line-height:1}
@@ -1132,10 +1141,15 @@ async function fillModelPop(){
                : isLoaded ? ' <span class="st" style="color:var(--dim)">в памяти</span>' : '';
     const btn = `<button class="mini" title="${isLoaded?'Выгрузить из памяти'
         :'Загрузить в память'}">${isLoaded?'⏏':'⬇'}</button>`;
-    const tag='<span style="color:var(--dim);font-size:10px" title="бэкенд">'+
-      (m.backend==='ollama'?'ol':m.backend==='lmstudio'?'lm':'☁')+'</span> ';
+    const backendLabel=m.backend==='ollama'?'ol':m.backend==='lmstudio'?'lm'
+      :m.backend==='locallm'?'lo':m.backend==='cloud'?'☁':m.backend;
+    const tag='<span class="tag" style="color:var(--dim);font-size:10px;flex:none" title="бэкенд">'+
+      backendLabel+'</span> ';
+    const nameEsc=m.name.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
     el.innerHTML=scoreBar(m.name, score, tps?('~'+tps+' ток/с'):'ещё не замеряла')+
-      tag+weightDot(m)+'🧠 '+m.name+capsBadges(m)+dot+btn;
+      tag+weightDot(m)+
+      '<span class="mname" title="'+nameEsc+'">🧠 '+m.name+'</span>'+
+      capsBadges(m)+dot+btn;
     const mb=el.querySelector('.mini');
     if(mb) mb.onclick=async(e)=>{
       e.stopPropagation();
