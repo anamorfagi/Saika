@@ -821,6 +821,16 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                         except Exception:
                             pass
                     result = handspc.call(name, args)
+                    # ОБРЕЗКА результата (2026-07-23): web_search/fetch_page
+                    # возвращают целые страницы (десятки КБ) — и это дважды
+                    # душило Сайку: раздувало промпт за окно модели
+                    # («exceed context window») и оставалось в истории на
+                    # следующие ходы. Модели хватает выжимки; лимит в
+                    # config (tools.max_result_chars).
+                    _lim = int(CFG.get("tools.max_result_chars", 2500))
+                    if result and len(result) > _lim:
+                        result = (result[:_lim]
+                                  + f"\n…[обрезано, всего {len(result)} симв.]")
                     log.info("tool %s(%s) -> %s символов",
                              name, args, len(result))
                     if backend == "ollama":
