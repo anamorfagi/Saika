@@ -58,6 +58,7 @@ app.add_middleware(
 MODEL_REPO = "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF"
 QUANT = "Q4_K_M"
 N_CTX_DEFAULT = 8192
+MAX_TOKENS_CAP = 2048  # locallm.max_new_tokens из config.json (см. спавнер)
 
 _model = None
 _model_path = None
@@ -460,7 +461,9 @@ def chat_completions(payload: dict):
     messages = payload.get("messages") or []
     temperature = float(payload.get("temperature", 0.8))
     max_tokens = int(payload.get("max_tokens")
-                     or payload.get("max_completion_tokens") or 2048)
+                     or payload.get("max_completion_tokens")
+                     or MAX_TOKENS_CAP)
+    max_tokens = min(max_tokens, MAX_TOKENS_CAP)
     think = bool((payload.get("chat_template_kwargs") or {})
                  .get("enable_thinking", True))
     if payload.get("stream", False):
@@ -489,10 +492,12 @@ if __name__ == "__main__":
     ap.add_argument("--repo", default=MODEL_REPO)
     ap.add_argument("--quant", default=QUANT)
     ap.add_argument("--n-ctx", type=int, default=N_CTX_DEFAULT)
+    ap.add_argument("--max-tokens", type=int, default=MAX_TOKENS_CAP)
     args = ap.parse_args()
     MODEL_REPO = args.repo
     QUANT = args.quant
     N_CTX_DEFAULT = args.n_ctx
+    MAX_TOKENS_CAP = args.max_tokens
     (ROOT / "logs").mkdir(exist_ok=True)
     log.info("LocalLM (llama.cpp) воркер: %s / %s, порт=%s, n_ctx=%s",
              MODEL_REPO, QUANT, args.port, N_CTX_DEFAULT)

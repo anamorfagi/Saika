@@ -245,7 +245,11 @@ def ensure_running() -> dict:
             cmd = [str(venv_py), str(worker), "--port", str(prt),
                    "--repo", g.get("repo", "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF"),
                    "--quant", g.get("quant", "Q4_K_M"),
-                   "--n-ctx", str(g.get("n_ctx", 8192))]
+                   "--n-ctx", str(g.get("n_ctx", 8192)),
+                   # потолок длины ответа (кран для голосового режима:
+                   # 58 ток/с * 2048 токенов = полминуты монолога; для
+                   # «ответ за 3 сек» ставь в конфиге ~300)
+                   "--max-tokens", str(_cfg().get("max_new_tokens", 2048))]
         else:
             cmd = [str(venv_py), str(worker), "--port", str(prt),
                    "--model", model_name(),
