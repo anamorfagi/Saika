@@ -1961,6 +1961,8 @@ def main():
     (ROOT / "logs").mkdir(exist_ok=True)
     dreampc.kill_stale()  # чистим детач-воркер с прошлого запуска (если завис)
     train_manager.kill_stale()  # то же для воркера дообучения
+    from server.llm import locallm as _locallm
+    _locallm.kill_stale()  # то же для воркера LocalLM
     # закрытие HandsPC при завершении Сайки — и по Ctrl+C/обычному выходу
     # (atexit), и по крестику на окне консоли (Windows CTRL_CLOSE_EVENT,
     # который обычный atexit/signal не ловит — см. proc_utils)

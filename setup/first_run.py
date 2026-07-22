@@ -51,6 +51,7 @@ FLASH_ATTN_WHEEL = ("https://github.com/mjun0812/flash-attention-prebuild-wheels
 CORE_REQS = [
     "fastapi", "uvicorn[standard]", "websockets", "requests", "numpy",
     "soundfile", "apscheduler", "chromadb", "edge-tts", "librosa", "psutil",
+    "sounddevice",
 ]
 
 

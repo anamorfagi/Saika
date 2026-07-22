@@ -5,10 +5,10 @@
     "auto_open_browser": true
   },
   "llm": {
-    "backend": "ollama",
+    "backend": "locallm",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "gemma4:e4b",
+    "model": "huihui-ai/Huihui-Qwen3.5-9B-abliterated",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
@@ -208,5 +208,12 @@
     "max_seq_len": 1024,
     "output_name": "saika-char",
     "dataset_dir": "training/dataset"
+  },
+  "locallm": {
+    "port": 8770,
+    "model": "huihui-ai/Huihui-Qwen3.5-9B-abliterated",
+    "venv": ".venv_locallm",
+    "worker": "workers/locallm_worker.py",
+    "max_new_tokens": 2048
   }
 }

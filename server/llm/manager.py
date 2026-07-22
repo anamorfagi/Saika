@@ -26,6 +26,13 @@ def _lmstudio_url():
     return CFG.get("llm.lmstudio_url", "http://127.0.0.1:1234").rstrip("/")
 
 
+def _locallm_url():
+    """Свой воркер LocalLM (workers/locallm_worker.py) — OpenAI-совместимый,
+    как LM Studio, только модель живёт прямо в проекте (без Ollama/LM Studio)."""
+    from server.llm import locallm
+    return locallm.base_url()
+
+
 # ---------------------- облачные (онлайн) модели по API-ключу ----------------
 def _secrets() -> dict:
     """secrets.json (в .gitignore) — тут храним API-ключ облака, чтобы он не
@@ -106,6 +113,18 @@ def list_models() -> list[dict]:
                             "size": None})
         except Exception as e:
             log.debug("lmstudio offline: %s", e)
+    # своя LocalLM: показываем, если окружение установлено ИЛИ она выбрана
+    # основным бэкендом (тогда спавнер сам поставит окружение при первом
+    # запросе). Воркер может быть ещё не запущен — это нормально.
+    try:
+        from server.llm import locallm
+        if locallm.installed() or CFG.get("llm.backend") == "locallm":
+            out.append({"backend": "locallm", "name": locallm.model_name(),
+                        "size": None,
+                        "caps": {"vision": False, "tools": False,
+                                 "reasoning": True}})
+    except Exception as e:
+        log.debug("locallm unavailable: %s", e)
     # облачная модель (если включена) — показываем как выбираемую
     c = _cloud()
     if c["enabled"] and c["model"]:
@@ -132,6 +151,13 @@ def loaded_models() -> list[str]:
                 out.append(m["id"])
     except Exception:
         pass
+    try:
+        r = requests.get(_locallm_url() + "/health", timeout=2)
+        if r.ok and r.json().get("model_loaded"):
+            from server.llm import locallm
+            out.append(locallm.model_name())
+    except Exception:
+        pass
     return out
 
 
@@ -151,6 +177,13 @@ def _loaded_with_backend() -> list[tuple]:
         for m in r.json().get("data", []):
             if m.get("state") == "loaded" and m.get("id"):
                 out.append(("lmstudio", m["id"]))
+    except Exception:
+        pass
+    try:
+        r = requests.get(_locallm_url() + "/health", timeout=2)
+        if r.ok and r.json().get("model_loaded"):
+            from server.llm import locallm
+            out.append(("locallm", locallm.model_name()))
     except Exception:
         pass
     return out
@@ -190,6 +223,15 @@ def warmup(backend: str, model: str) -> bool:
                           json={"model": model, "prompt": "",
                                 "keep_alive": CFG.get("llm.keep_alive", "30m")},
                           timeout=900)
+        elif backend == "locallm":
+            from server.llm import locallm
+            st = locallm.ensure_running()
+            if st.get("error"):
+                raise LLMError(st["error"])
+            requests.post(_locallm_url() + "/v1/chat/completions",
+                          json={"model": model, "max_tokens": 1,
+                                "messages": [{"role": "user", "content": "hi"}]},
+                          timeout=900)
         else:
             requests.post(_lmstudio_url() + "/v1/chat/completions",
                           json={"model": model, "max_tokens": 1,
@@ -212,6 +254,14 @@ def unload_model(backend: str, model: str) -> bool:
                       json={"model": model, "keep_alive": 0}, timeout=30)
         log.info("Модель %s выгружена", model)
         return True
+    if backend == "locallm":
+        try:
+            requests.post(_locallm_url() + "/admin/unload", timeout=30)
+            log.info("Модель %s выгружена (LocalLM)", model)
+            return True
+        except Exception as e:
+            log.warning("LocalLM: выгрузка не удалась: %s", e)
+            return False
     try:
         r = requests.post(_lmstudio_url() + "/api/v1/models/unload",
                           json={"instance_id": model}, timeout=30)
@@ -229,6 +279,7 @@ def backend_status() -> dict:
     for name, url, probe in (
         ("ollama", _ollama_url(), "/api/tags"),
         ("lmstudio", _lmstudio_url(), "/v1/models"),
+        ("locallm", _locallm_url(), "/v1/models"),
     ):
         try:
             requests.get(url + probe, timeout=2)
@@ -413,6 +464,22 @@ def _stream_lmstudio(messages, model, temperature, tools=None, image=None):
                               messages, model, temperature, tools, image)
 
 
+def _stream_locallm(messages, model, temperature, tools=None, image=None):
+    """Свой воркер LocalLM: сперва убеждаемся, что он поднят (спавнер сам
+    поставит окружение/запустит процесс), затем — обычный OpenAI-стрим.
+    tools воркер в v1 игнорирует молча (без 400), картинок у модели нет —
+    _attach_image_openai всё равно приложит, воркер сам отбросит."""
+    from server.llm import locallm
+    st = locallm.ensure_running()
+    if st.get("error"):
+        raise LLMError("LocalLM: " + st["error"])
+    if st.get("installing"):
+        raise LLMError("LocalLM " + st.get(
+            "note", "ещё устанавливается — попробуй через пару минут"))
+    yield from _stream_openai(_locallm_url() + "/v1", None,
+                              messages, model, temperature, tools, image)
+
+
 def _stream_cloud(messages, model, temperature, tools=None, image=None):
     """Онлайн-модель по API-ключу (OpenRouter/OpenAI/Groq/… — OpenAI-совместимо)."""
     c = _cloud()
@@ -507,6 +574,13 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
                         "function": {"name": slot["name"], "arguments": args}}}
 
 
+# Реестр стрим-функций по бэкендам. Раньше жил локальной переменной внутри
+# chat_stream, но ask_specific() обращался к нему снаружи — NameError при
+# первом же «одалживании» способностей моделей оркестратором. Теперь модульный.
+_FNS = {"ollama": _stream_ollama, "lmstudio": _stream_lmstudio,
+        "locallm": _stream_locallm, "cloud": _stream_cloud}
+
+
 def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 on_model=None, use_tools=True, should_stop=None):
     """Стрим токенов. При падении основного бэкенда — автопереход на второй.
@@ -526,8 +600,7 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     primary = CFG.get("llm.backend", "ollama")
     temperature = CFG.get("llm.temperature", 0.8)
     last_err = None
-    _fns = {"ollama": _stream_ollama, "lmstudio": _stream_lmstudio,
-            "cloud": _stream_cloud}
+    _fns = _FNS
 
     # ПОРЯДОК ФОЛЛБЭКА ПО РЕЙТИНГУ: сперва выбранная модель, затем ОСТАЛЬНЫЕ
     # локальные модели по убыванию оценки (лучшая — первой запаской). Так при
@@ -547,7 +620,7 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
         for m in list_models():
             # embedding-модели — никогда (это не чат); их попадание в фолбэк
             # заставляло LM Studio грузить nomic-embed как «собеседника»
-            if (m["backend"] in ("ollama", "lmstudio")
+            if (m["backend"] in ("ollama", "lmstudio", "locallm")
                     and "embed" not in m["name"].lower()):
                 locals_.append((m["backend"], m["name"]))
     except Exception:
@@ -731,7 +804,7 @@ def ask_specific(backend: str, model: str, messages, image=None,
     """Прямой вопрос КОНКРЕТНОЙ модели, минуя выбор из конфига.
     Оркестратор одалживает у моделей их способности: например, зрение
     vision-модели для OCR картинки, когда за рулём слепая болтушка."""
-    fn = _fns.get(backend, _stream_lmstudio)
+    fn = _FNS.get(backend, _stream_lmstudio)
     parts = []
     for ev in fn(messages, model, 0.2, None, image):
         if ev["type"] == "token":

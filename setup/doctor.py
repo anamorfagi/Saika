@@ -28,6 +28,7 @@ PKG_FIX = {
     "faster_whisper": "faster-whisper", "vosk": "vosk",
     "pywhispercpp": "pywhispercpp", "edge_tts": "edge-tts",
     "librosa": "librosa", "psutil": "psutil",
+    "sounddevice": "sounddevice",
 }
 
 
