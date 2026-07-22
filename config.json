@@ -42,7 +42,7 @@
     ],
     "window_s": 30,
     "fuzzy_max_edits": 1,
-    "always": false,
+    "always": true,
     "stop_words": [
       "стоп",
       "стой",
