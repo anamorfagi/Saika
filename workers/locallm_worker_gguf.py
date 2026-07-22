@@ -217,10 +217,28 @@ def _sanitize_messages(messages):
                 if isinstance(p, dict) and p.get("type") == "text").strip()
         content = content or ""
         if role == "tool":
-            name = m.get("name", "tool")
-            role, content = "user", f"[результат инструмента {name}]\n{content}"
-        elif role == "assistant" and m.get("tool_calls"):
-            content = content or "(вызов инструмента)"
+            # шаблон Qwen3.5 рендерит tool-сообщения нативно (<tool_response>
+            # внутри user-хода) — оставляем роль как есть (2026-07-23, до
+            # этого превращали в user-заметку и модель теряла механику)
+            out.append({"role": "tool", "content": content})
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            # шаблон ждёт arguments СЛОВАРЁМ (итерирует .items()), а OpenAI
+            # шлёт JSON-строкой — парсим
+            tcs = []
+            for tc in m["tool_calls"]:
+                fn = tc.get("function", tc) or {}
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {"raw": args}
+                tcs.append({"function": {"name": fn.get("name", ""),
+                                         "arguments": args or {}}})
+            out.append({"role": "assistant", "content": content,
+                        "tool_calls": tcs})
+            continue
         if role not in ("system", "user", "assistant"):
             role = "user"
         out.append({"role": role, "content": content})
@@ -295,7 +313,7 @@ def _filter_think(chunks):
                                                      "content": buf}}]}
 
 
-def _render_prompt(msgs, enable_thinking):
+def _render_prompt(msgs, enable_thinking, tools=None):
     """Рендерим chat-шаблон из метаданных GGUF САМИ (jinja2), чтобы прокинуть
     enable_thinking. Разбор инцидента 2026-07-23: у Qwen3.5-шаблона generation
     prompt ЗАКАНЧИВАЕТСЯ на '<think>\n' — модель начинает генерить уже ВНУТРИ
@@ -315,9 +333,12 @@ def _render_prompt(msgs, enable_thinking):
         raise ValueError(msg)
 
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True)
+    # фильтр items появился только в jinja2>=3.1 — регистрируем сами, чтобы
+    # не зависеть от версии в venv (шаблон Qwen3.5 им пользуется для tools)
+    env.filters.setdefault("items", lambda d: list((d or {}).items()))
     return env.from_string(tpl).render(
         messages=msgs, add_generation_prompt=True,
-        enable_thinking=bool(enable_thinking), tools=None,
+        enable_thinking=bool(enable_thinking), tools=tools or None,
         raise_exception=raise_exception)
 
 
@@ -396,7 +417,79 @@ def _swallow_thinking(chunks):
                        "locallm.max_new_tokens]"}}]}
 
 
-def _stream(messages, temperature, max_tokens, enable_thinking=True):
+def _extract_tool_calls(chunks):
+    """Ловит в потоке блоки формата шаблона Qwen3.5:
+      <tool_call>\n<function=имя>\n<parameter=арг>\nзначение\n</parameter>…
+      \n</function>\n</tool_call>
+    и превращает их в OpenAI-чанки delta.tool_calls (arguments — JSON-строка),
+    которые manager._stream_openai уже умеет собирать. Сырой текст вызова в
+    чат не идёт. До 2026-07-23 tools игнорировались молча — модель
+    театрально ИЗОБРАЖАЛА вызовы («вот что вернул web_search…») без единого
+    реального вызова."""
+    import re
+    buf, in_call, n_calls = "", False, 0
+    OPEN, CLOSE = "<tool_call>", "</tool_call>"
+    for chunk in chunks:
+        if chunk is None:
+            yield chunk
+            continue
+        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        tok = delta.get("content")
+        if not tok:
+            yield chunk
+            continue
+        buf += tok
+        out = ""
+        while buf:
+            if in_call:
+                j = buf.find(CLOSE)
+                if j < 0:
+                    break  # копим блок дальше
+                block, buf = buf[:j], buf[j + len(CLOSE):]
+                in_call = False
+                m = re.search(r"<function=([^>\n]+)>", block)
+                if m:
+                    args = {}
+                    for k, v in re.findall(
+                            r"<parameter=([^>\n]+)>\n?(.*?)\n?</parameter>",
+                            block, re.S):
+                        try:
+                            args[k] = json.loads(v)
+                        except Exception:
+                            args[k] = v
+                    yield {"choices": [{"index": 0, "delta": {"tool_calls": [{
+                        "index": n_calls, "id": f"call_{n_calls}",
+                        "type": "function",
+                        "function": {"name": m.group(1).strip(),
+                                     "arguments": json.dumps(
+                                         args, ensure_ascii=False)}}]},
+                        "finish_reason": None}]}
+                    n_calls += 1
+                else:
+                    log.warning("tool_call без <function=…> — пропускаю: %r",
+                                block[:120])
+            else:
+                i = buf.find(OPEN)
+                if i < 0:
+                    keep = 0
+                    for k in range(min(len(OPEN) - 1, len(buf)), 0, -1):
+                        if buf.endswith(OPEN[:k]):
+                            keep = k
+                            break
+                    cut = len(buf) - keep
+                    out, buf = out + buf[:cut], buf[cut:]
+                    break
+                out, buf, in_call = out + buf[:i], buf[i + len(OPEN):], True
+        if out:
+            yield {**chunk, "choices": [{**chunk["choices"][0],
+                                         "delta": {**delta, "content": out}}]}
+    if in_call and buf.strip():
+        log.warning("Стрим оборвался внутри tool_call — блок потерян: %r",
+                    buf[:120])
+
+
+def _stream(messages, temperature, max_tokens, enable_thinking=True,
+            tools=None):
     _ready.wait(timeout=1800)
     if _model is None:
         _try_load()
@@ -426,7 +519,7 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True):
         n_chars = 0
         prompt = None
         try:
-            prompt = _render_prompt(msgs, enable_thinking)
+            prompt = _render_prompt(msgs, enable_thinking, tools=tools)
         except Exception:
             log.exception("Рендер шаблона не удался — откат на "
                           "create_chat_completion")
@@ -449,6 +542,8 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True):
             # подставил пустой блок, но страхуемся фильтром от протечек тегов
             stream = (_swallow_thinking(stream) if enable_thinking
                       else _filter_think(stream))
+            if tools:
+                stream = _extract_tool_calls(stream)
         else:
             stream = _model.create_chat_completion(
                     messages=msgs, stream=True,
@@ -487,13 +582,15 @@ def chat_completions(payload: dict):
     max_tokens = min(max_tokens, MAX_TOKENS_CAP)
     think = bool((payload.get("chat_template_kwargs") or {})
                  .get("enable_thinking", True))
+    tools = payload.get("tools") or None
     if payload.get("stream", False):
         return StreamingResponse(
-            _stream(messages, temperature, max_tokens, enable_thinking=think),
+            _stream(messages, temperature, max_tokens, enable_thinking=think,
+                    tools=tools),
             media_type="text/event-stream")
     text = ""
     for chunk in _stream(messages, temperature, max_tokens,
-                         enable_thinking=think):
+                         enable_thinking=think, tools=tools):
         if chunk.startswith("data: ") and "[DONE]" not in chunk:
             try:
                 text += json.loads(chunk[6:])["choices"][0]["delta"].get(
