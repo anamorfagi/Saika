@@ -96,7 +96,15 @@ def _health():
 
 
 def _venv_python():
-    venv = resolve(_cfg().get("venv") or _engine()["venv"])
+    # ВСЕГДА берём venv из ENGINES по текущему engine, а не из
+    # locallm.venv в конфиге — оставшийся там ключ от старой установки
+    # (или случайно затёртый обратно живым процессом через Config.save(),
+    # который пишет ВЕСЬ объект целиком — реальный инцидент 2026-07-22:
+    # чинили руками config.json, пока старый процесс ещё работал, и он
+    # затёр правку при первом же несвязанном CFG.set()) не должен иметь
+    # приоритет над выбором движка — иначе engine="llamacpp" молча
+    # запускается в venv транформерс-версии с чужими аргументами.
+    venv = resolve(_engine()["venv"])
     if os.name == "nt":
         return venv / "Scripts" / "python.exe"
     return venv / "bin" / "python"
@@ -228,8 +236,10 @@ def ensure_running() -> dict:
                             "(первый раз небыстро: библиотеки + веса модели)"}
 
         # 4) спавним воркер и ждём /health
+        # worker тоже ВСЕГДА из ENGINES по engine — та же причина, что и
+        # в _venv_python() выше (см. комментарий там).
         eng_name = _cfg().get("engine", "llamacpp")
-        worker = resolve(_cfg().get("worker") or _engine()["worker"])
+        worker = resolve(_engine()["worker"])
         if eng_name == "llamacpp":
             g = CFG.get("locallm_gguf", {}) or {}
             cmd = [str(venv_py), str(worker), "--port", str(prt),
