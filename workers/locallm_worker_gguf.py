@@ -286,6 +286,78 @@ def _filter_think(chunks):
                                                      "content": buf}}]}
 
 
+def _render_prompt(msgs, enable_thinking):
+    """Рендерим chat-шаблон из метаданных GGUF САМИ (jinja2), чтобы прокинуть
+    enable_thinking. Разбор инцидента 2026-07-23: у Qwen3.5-шаблона generation
+    prompt ЗАКАНЧИВАЕТСЯ на '<think>\n' — модель начинает генерить уже ВНУТРИ
+    блока размышлений, открывающий тег в вывод не попадает вообще, и фильтр
+    по '<think>' в потоке бессилен. Зато при enable_thinking=false шаблон сам
+    подставляет пустой блок '<think>\n\n</think>\n\n' — модель отвечает сразу.
+    create_chat_completion в llama-cpp-python прокинуть этот параметр не умеет
+    (в отличие от LM Studio) — потому рендерим сами и зовём create_completion.
+    /no_think-выключатель у Qwen3.5 не работает (проверено там же).
+    Вернёт None, если шаблона нет — вызывающий откатится на старый путь."""
+    tpl = (getattr(_model, "metadata", None) or {}).get("tokenizer.chat_template")
+    if not tpl:
+        return None
+    import jinja2
+
+    def raise_exception(msg):
+        raise ValueError(msg)
+
+    env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True)
+    return env.from_string(tpl).render(
+        messages=msgs, add_generation_prompt=True,
+        enable_thinking=bool(enable_thinking), tools=None,
+        raise_exception=raise_exception)
+
+
+def _completion_as_chat(raw):
+    """Чанки create_completion (text) -> форма chat-чанков (delta.content)."""
+    for c in raw:
+        ch = c.get("choices", [{}])[0]
+        txt = ch.get("text", "")
+        yield {"id": c.get("id", ""), "object": "chat.completion.chunk",
+               "created": c.get("created", 0), "model": MODEL_REPO,
+               "choices": [{"index": 0,
+                            "delta": ({"content": txt} if txt else {}),
+                            "finish_reason": ch.get("finish_reason")}]}
+
+
+def _swallow_thinking(chunks):
+    """Для ВКЛЮЧЁННЫХ размышлений: промпт кончается '<think>\n', так что всё
+    до '</think>' — мысли. Глотаем их (в чат не идут — ровно как LM Studio,
+    который отдаёт их отдельным полем, а Сайка его игнорирует), наружу — только
+    ответ. Страховка: если закрывающий тег так и не пришёл (модель ответила
+    без раздумий) — в конце отдаём всё скопленное, лучше поздно, чем молчание."""
+    buf, passed = "", False
+    proto = None
+    for chunk in chunks:
+        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        tok = delta.get("content")
+        if not tok:
+            yield chunk
+            continue
+        if passed:
+            yield chunk
+            continue
+        proto = chunk
+        buf += tok
+        i = buf.find("</think>")
+        if i >= 0:
+            passed = True
+            rest = buf[i + len("</think>"):].lstrip("\n")
+            if rest:
+                yield {**chunk,
+                       "choices": [{**chunk["choices"][0],
+                                    "delta": {**delta, "content": rest}}]}
+    if not passed and buf.strip() and proto is not None:
+        d0 = proto["choices"][0]
+        yield {**proto, "choices": [{**d0,
+                                     "delta": {**d0.get("delta", {}),
+                                               "content": buf}}]}
+
+
 def _stream(messages, temperature, max_tokens, enable_thinking=True):
     _ready.wait(timeout=1800)
     if _model is None:
@@ -298,36 +370,43 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True):
               + "\n\n")
         yield "data: [DONE]\n\n"
         return
-    if not _infer_lock.acquire(blocking=False):
+    # ждём очередь, а не отшиваем сразу: Сайка сама ставит реплики «отвечу
+    # следом», и мгновенный отказ превращался в мусорный ответ из 1 токена
+    # «[LocalLM уже занята генерацией]» (лог 2026-07-23)
+    if not _infer_lock.acquire(timeout=180):
         yield ("data: " + json.dumps({
             "choices": [{"index": 0,
-                        "delta": {"content": "[LocalLM уже занята генерацией]"},
+                        "delta": {"content": "[LocalLM занята дольше 3 минут — "
+                                             "похоже, генерация зависла]"},
                         "finish_reason": "stop"}]}, ensure_ascii=False)
               + "\n\n")
         yield "data: [DONE]\n\n"
         return
     try:
         msgs = _sanitize_messages(messages)
-        if not enable_thinking:
-            # мягкий выключатель размышлений Qwen3 (/no_think в последнем
-            # user-сообщении) — create_chat_completion не умеет прокидывать
-            # chat_template_kwargs в jinja-шаблон, как это делает LM Studio,
-            # поэтому (а) просим модель не думать и (б) на всякий случай
-            # вырезаем think-блоки из потока фильтром ниже.
-            for m in reversed(msgs):
-                if m["role"] == "user":
-                    m["content"] = (m["content"] or "") + " /no_think"
-                    break
         t0 = time.monotonic()
         n_chars = 0
-        # create_chat_completion сам применяет встроенный в GGUF chat-шаблон
-        # (llama.cpp понимает jinja-шаблон, зашитый в метаданные модели) и
-        # при stream=True возвращает готовые OpenAI-чанки — просто ретранслируем
-        stream = _model.create_chat_completion(
-                messages=msgs, stream=True,
-                temperature=temperature, max_tokens=max_tokens)
-        if not enable_thinking:
-            stream = _filter_think(stream)
+        prompt = None
+        try:
+            prompt = _render_prompt(msgs, enable_thinking)
+        except Exception:
+            log.exception("Рендер шаблона не удался — откат на "
+                          "create_chat_completion")
+        if prompt is not None:
+            raw = _model.create_completion(
+                prompt=prompt, stream=True, temperature=temperature,
+                max_tokens=max_tokens, stop=["<|im_end|>"])
+            stream = _completion_as_chat(raw)
+            # think вкл: всё до </think> — мысли, глотаем; think выкл: шаблон
+            # подставил пустой блок, но страхуемся фильтром от протечек тегов
+            stream = (_swallow_thinking(stream) if enable_thinking
+                      else _filter_think(stream))
+        else:
+            stream = _model.create_chat_completion(
+                    messages=msgs, stream=True,
+                    temperature=temperature, max_tokens=max_tokens)
+            if not enable_thinking:
+                stream = _filter_think(stream)
         for chunk in stream:
             delta = chunk.get("choices", [{}])[0].get("delta", {})
             n_chars += len(delta.get("content") or "")
