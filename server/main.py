@@ -1135,7 +1135,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # тул-схем (их досыпает шаблон, раньше в бюджете не учитывались — главный
     # промах), И запас под ответ.
     n_ctx = int((CFG.get("locallm_gguf") or {}).get("n_ctx", 8192))
-    CHARS_PER_TOKEN = 1.8                      # кириллица бывает 1.5 — берём с запасом
+    CHARS_PER_TOKEN = 1.5                      # воркер всё равно подрежет точно; тут просто ориентир
     ANSWER_RESERVE_TOKENS = 1500               # место под сам ответ
     budget = int((n_ctx - ANSWER_RESERVE_TOKENS) * CHARS_PER_TOKEN)
     cfg_budget = CFG.get("llm.context_chars")  # ручной потолок, если задан

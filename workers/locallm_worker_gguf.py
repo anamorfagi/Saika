@@ -540,21 +540,50 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True,
             # exceed context window of 8192», живой инцидент 2026-07-23
             # 02:28 — схемы инструментов раздули промпт). Меряем промпт
             # честно, а max_tokens ужимаем под остаток окна.
-            try:
-                n_prompt = len(_model.tokenize(
-                    prompt.encode("utf-8"), add_bos=True, special=True))
-            except Exception:
-                n_prompt = len(prompt) // 3  # грубая страховка
+            def _ntok(pr):
+                try:
+                    return len(_model.tokenize(pr.encode("utf-8"),
+                                               add_bos=True, special=True))
+                except Exception:
+                    return len(pr) // 2  # грубая страховка (кириллица плотная)
+
+            # ЖЕЛЕЗНАЯ подгонка под окно (2026-07-23): считать промпт в
+            # символах бесполезно — кириллица+JSON схем токенизируются то
+            # плотнее, то реже, оценки в main.py промахивались и промпт
+            # вылетал за окно («exceed context window»). Здесь у нас РЕАЛЬНЫЙ
+            # токенайзер модели: рендерим, меряем, и если не влезает — молча
+            # выкидываем старые сообщения (кроме первого system и последнего
+            # user) и перерендериваем, пока не останется места под ответ.
+            RESERVE = min(max_tokens, 512) if max_tokens else 512
+            n_prompt = _ntok(prompt)
+            dropped = 0
+            while n_prompt + RESERVE + 16 > N_CTX_DEFAULT and len(msgs) > 2:
+                # индекс самого старого сообщения, которое можно убрать:
+                # держим [0] (system) и [-1] (текущая реплика юзера)
+                drop_at = 1
+                if msgs[0].get("role") != "system":
+                    drop_at = 0
+                if drop_at >= len(msgs) - 1:
+                    break
+                msgs.pop(drop_at)
+                dropped += 1
+                try:
+                    prompt = _render_prompt(msgs, enable_thinking, tools=tools)
+                except Exception:
+                    break
+                n_prompt = _ntok(prompt)
             room = N_CTX_DEFAULT - n_prompt - 16
             log.info("Промпт: ~%d токенов, окно %d, места под ответ %d "
-                     "(max_tokens запрошен %d)",
-                     n_prompt, N_CTX_DEFAULT, max(room, 0), max_tokens)
-            if room < 64:
+                     "(запрошен %d)%s", n_prompt, N_CTX_DEFAULT,
+                     max(room, 0), max_tokens,
+                     f", выкинул {dropped} старых сообщений" if dropped else "")
+            if room < 32:
+                # даже голый system+инструменты не влезли — окно реально мало
                 yield ("data: " + json.dumps({
                     "choices": [{"index": 0, "delta": {"content":
-                        f"[контекст переполнен: промпт ~{n_prompt} токенов "
-                        f"при окне {N_CTX_DEFAULT}. Подними locallm_gguf."
-                        f"n_ctx (16384) или ужми llm.context_chars]"},
+                        f"[даже базовый промпт (~{n_prompt} ток.) не влез в "
+                        f"окно {N_CTX_DEFAULT}. Подними locallm_gguf.n_ctx "
+                        f"или отключи часть инструментов]"},
                         "finish_reason": "stop"}]}, ensure_ascii=False)
                       + "\n\n")
                 yield "data: [DONE]\n\n"
