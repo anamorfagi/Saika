@@ -212,9 +212,39 @@ class WhisperCppEngine(STTEngine):
         # модели ggml — в папке проекта, не в AppData (переносимость)
         models_dir = resolve("models/whispercpp")
         models_dir.mkdir(parents=True, exist_ok=True)
-        self.model = Model(cfg.get("model", "medium"),
-                           models_dir=str(models_dir),
-                           n_threads=cfg.get("n_threads", 8))
+        name = cfg.get("model", "medium")
+        # ПРЕДПОЛЁТНАЯ ПРОВЕРКА ФАЙЛА — обязательна. Живой инцидент
+        # 2026-07-23: ggml-medium.bin оказался пустышкой 0 байт (закачка
+        # когда-то сорвалась), pywhispercpp проверяет только «файл есть»,
+        # whisper_init говорит "invalid model data (bad magic)", НЕ бросает
+        # исключение — и transcribe по нулевому контексту убивает ВЕСЬ
+        # процесс Сайки access violation'ом (-1073741819), без traceback.
+        # Битый файл сносим — Model() скачает заново; если и после закачки
+        # магия не сошлась — честный RuntimeError, менеджер уйдёт на
+        # запасной движок вместо смерти сервера.
+        bin_path = models_dir / f"ggml-{name}.bin"
+
+        def _magic_ok():
+            try:
+                with open(bin_path, "rb") as f:
+                    return f.read(4) == b"lmgg"  # 0x67676d6c (ggml, LE)
+            except OSError:
+                return False
+
+        if bin_path.exists() and (bin_path.stat().st_size < 1_000_000
+                                  or not _magic_ok()):
+            log.warning("whispercpp: %s битый (размер %s байт) — удаляю, "
+                        "скачаю заново", bin_path.name,
+                        bin_path.stat().st_size)
+            bin_path.unlink()
+        model = Model(name, models_dir=str(models_dir),
+                      n_threads=cfg.get("n_threads", 8))
+        if bin_path.exists() and not _magic_ok():
+            raise RuntimeError(
+                f"whispercpp: файл модели {bin_path.name} битый и после "
+                f"перекачки (магия ggml не сошлась) — не рискую нативным "
+                f"крашем, движок помечается сломанным")
+        self.model = model
 
     def transcribe(self, pcm16, sample_rate):
         self.load()
