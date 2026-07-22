@@ -212,6 +212,32 @@ def switch_model(backend: str, model: str) -> bool:
     return warmup(backend, model)
 
 
+def prewarm_context(backend: str, model: str, system_text: str):
+    """Прогрев KV-кэша БОЕВЫМ префиксом (персоной) — быстрый старт
+    2026-07-23. warmup() греет модель крошечным 'hi', и первый реальный
+    ответ платил полный prefill персоны (~9с холодный). Скормив персону
+    заранее, первый ответ докатывает только хвост (память/история) — ~1с.
+    Работает для openai-бэкендов (llama.cpp/LM Studio переиспользуют KV по
+    совпадению префикса); ollama греется своим keep_alive."""
+    try:
+        if backend == "locallm":
+            url = _locallm_url()
+        elif backend == "lmstudio":
+            url = _lmstudio_url()
+        else:
+            return
+        requests.post(url + "/v1/chat/completions",
+                      json={"model": model, "stream": False, "max_tokens": 1,
+                            "chat_template_kwargs": {"enable_thinking": False},
+                            "messages": [
+                                {"role": "system", "content": system_text},
+                                {"role": "user", "content": "Привет"}]},
+                      timeout=300)
+        log.info("KV-кэш прогрет персоной (%s/%s)", backend, model)
+    except Exception as e:
+        log.info("Прогрев персоной пропущен: %s", e)
+
+
 def warmup(backend: str, model: str) -> bool:
     """Прогружает модель в память (блокирует, пока не загрузится).
     Для Ollama пустой prompt = «просто загрузи», ничего не генерится."""

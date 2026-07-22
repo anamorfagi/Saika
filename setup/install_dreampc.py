@@ -107,18 +107,20 @@ def _install_once() -> bool:
 
     pth.unlink(missing_ok=True)
 
-    print("[2/3] Ставлю transformers (обычным pip resolve — сам подберёт "
-          "совместимые huggingface_hub/tokenizers/safetensors)…", flush=True)
-    # transformers НЕ требует torch как обязательную зависимость (он у него
-    # опциональный extras) — поэтому ставим его БЕЗ --no-deps и даём pip-у
-    # самому разрешить huggingface_hub/tokenizers/safetensors. Раньше все
-    # эти пакеты ставились по отдельности с --no-deps каждый на последней
-    # версии — словили tokenizers==0.23.1 при transformers 5.13.1, который
-    # требует <=0.23.0 (см. known_issues.md, 2026-07-15): версии разъехались,
-    # потому что pip не видел зависимостей друг между другом. Обычный
-    # resolve этого не допустит.
-    if not run([VENV_PY, "-m", "pip", "install", "-U",
-                "transformers", "--timeout", "180", "--retries", "10"]):
+    print("[2/3] Ставлю transformers 4.x (пин! — код LLaDA несовместим с 5.x) "
+          "обычным pip resolve…", flush=True)
+    # ПИН ВЕРСИИ ОБЯЗАТЕЛЕН (2026-07-23): remote-код LLaDA (modeling_llada.py
+    # из репозитория модели) написан под transformers 4.x. При переустановке
+    # окружение утащило transformers 5.14.1, и ЛЮБАЯ LLaDA падает на загрузке:
+    # AttributeError: 'LLaDAModelLM' object has no attribute
+    # 'all_tied_weights_keys' (загрузочный путь пятёрки ждёт атрибут, которого
+    # у кастомного класса четвёрочной эпохи нет). 4.57.3 — проверенная в этом
+    # проекте версия (её же пинит Qwen3-TTS в основном venv).
+    # transformers НЕ требует torch как обязательную зависимость — ставим
+    # БЕЗ --no-deps, pip сам разрешит huggingface_hub/tokenizers/safetensors
+    # (история с tokenizers==0.23.1 — known_issues.md, 2026-07-15).
+    if not run([VENV_PY, "-m", "pip", "install",
+                "transformers==4.57.3", "--timeout", "180", "--retries", "10"]):
         return False
 
     print("[2b/3] Ставлю accelerate + bitsandbytes (--no-deps — вот ЭТИ двое "

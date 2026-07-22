@@ -535,6 +535,30 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True,
             log.exception("Рендер шаблона не удался — откат на "
                           "create_chat_completion")
         if prompt is not None:
+            # вместимость окна: llama.cpp жёстко валит запрос, если
+            # промпт+max_tokens больше n_ctx («Requested tokens (16333)
+            # exceed context window of 8192», живой инцидент 2026-07-23
+            # 02:28 — схемы инструментов раздули промпт). Меряем промпт
+            # честно, а max_tokens ужимаем под остаток окна.
+            try:
+                n_prompt = len(_model.tokenize(
+                    prompt.encode("utf-8"), add_bos=True, special=True))
+            except Exception:
+                n_prompt = len(prompt) // 3  # грубая страховка
+            room = N_CTX_DEFAULT - n_prompt - 16
+            log.info("Промпт: ~%d токенов, окно %d, места под ответ %d "
+                     "(max_tokens запрошен %d)",
+                     n_prompt, N_CTX_DEFAULT, max(room, 0), max_tokens)
+            if room < 64:
+                yield ("data: " + json.dumps({
+                    "choices": [{"index": 0, "delta": {"content":
+                        f"[контекст переполнен: промпт ~{n_prompt} токенов "
+                        f"при окне {N_CTX_DEFAULT}. Подними locallm_gguf."
+                        f"n_ctx (16384) или ужми llm.context_chars]"},
+                        "finish_reason": "stop"}]}, ensure_ascii=False)
+                      + "\n\n")
+                yield "data: [DONE]\n\n"
+                return
             stops = ["<|im_end|>"]
             if enable_thinking:
                 # мысли легко съедают 2048 целиком, а Сайка max_tokens не
@@ -545,6 +569,9 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True,
                 # ЛЮБОЙ "</think>" в выводе — рефлекторный мусор шаблона и
                 # верный признак зацикливания: рубим генерацию прямо там
                 stops.append("</think>")
+            # ужимка ПОСЛЕ думательного запаса — иначе max(…, 6144)
+            # перебивал бы ограничитель окна и переполнение возвращалось
+            max_tokens = max(1, min(max_tokens, room))
             raw = _model.create_completion(
                 prompt=prompt, stream=True, temperature=temperature,
                 max_tokens=max_tokens, stop=stops)

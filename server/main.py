@@ -1940,27 +1940,57 @@ def _autostart_components():
     # РУЧНАЯ оценка владельца (палочки в UI) поднимает движок выше: sort
     # стабильный, поэтому не оценённые вручную остаются в прежнем порядке
     # (решение владельца 2026-07-23 — «неважно ллм или ттс или стт»).
+    #
+    # БЫСТРЫЙ СТАРТ (2026-07-23, цель владельца: первый голосовой обмен
+    # через 10-20с): слух, голос и мозги грузятся ПАРАЛЛЕЛЬНО (раньше —
+    # цепочкой, и 60-секундная компиляция qwen3-TTS держала всё остальное).
+    # Голос — с времянкой: лёгкий silero/edge встаёт за секунды и отвечает,
+    # пока тяжёлый qwen3 компилируется в фоне; как догрелся — подхватывается
+    # на лету (tts.boot_override, конфиг не трогаем).
     _manual = ratings.manual_scores()
 
-    stt_chain = [CFG.get("stt.engine", "gigaam")]
-    for n in CFG.get("stt.fallback_order", []):
-        if n not in stt_chain:
-            stt_chain.append(n)
-    stt_chain.sort(key=lambda n: -_manual.get(n, 0))
-    _try_chain("stt", stt_chain, stt.load_engine)
+    def _boot_stt():
+        stt_chain = [CFG.get("stt.engine", "gigaam")]
+        for n in CFG.get("stt.fallback_order", []):
+            if n not in stt_chain:
+                stt_chain.append(n)
+        stt_chain.sort(key=lambda n: -_manual.get(n, 0))
+        _try_chain("stt", stt_chain, stt.load_engine)
 
-    tts_chain = [CFG.get("tts.engine", "qwen3")]
-    for n in CFG.get("tts.fallback_order", []):
-        if n not in tts_chain:
-            tts_chain.append(n)
-    tts_chain.sort(key=lambda n: -_manual.get(n, 0))
-    _try_chain("tts", tts_chain, tts.load_engine)
-    # разовый бенч незамеренных запасных голосов — чтобы выбор «по рейтингу»
-    # опирался на реальные замеры этого ПК, а не на порядок в конфиге
-    try:
-        tts.benchmark_missing()
-    except Exception as e:
-        log.info("Бенч голосов пропущен: %s", e)
+    def _boot_tts():
+        tts_chain = [CFG.get("tts.engine", "qwen3")]
+        for n in CFG.get("tts.fallback_order", []):
+            if n not in tts_chain:
+                tts_chain.append(n)
+        tts_chain.sort(key=lambda n: -_manual.get(n, 0))
+        # времянка: лучший движок тяжёлый (не из FAST) — поднимаем лёгкий
+        # и назначаем текущим, пока тяжёлый греется
+        FAST_TTS = ("silero", "edge")
+        best = tts_chain[0] if tts_chain else None
+        if best and best not in FAST_TTS:
+            fast = next((n for n in tts_chain if n in FAST_TTS), None)
+            if fast:
+                try:
+                    tts.load_engine(fast)
+                    tts.boot_override = fast
+                    log.info("Автопуск: голос-времянка %s (пока %s греется)",
+                             fast, best)
+                except Exception as e:
+                    log.info("Голос-времянка %s не поднялась: %s", fast, e)
+        _try_chain("tts", tts_chain, tts.load_engine)
+        tts.boot_override = None  # тяжёлый готов (или фолбэк) — времянку прочь
+        # разовый бенч незамеренных запасных голосов — чтобы выбор «по
+        # рейтингу» опирался на реальные замеры этого ПК
+        try:
+            tts.benchmark_missing()
+        except Exception as e:
+            log.info("Бенч голосов пропущен: %s", e)
+
+    threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
+               for f in (_boot_stt, _boot_tts)]
+    for t in threads:
+        t.start()
+    # мозги грузим в ЭТОМ потоке параллельно слуху/голосу — код ниже
 
     # мозги: ПО РЕЙТИНГУ, лучшая — первая (решение владельца 2026-07-23:
     # «модель, которая по рейтингу выше всего, должна быть самой первой на
@@ -1993,12 +2023,24 @@ def _autostart_components():
                 CFG.set("llm.model", model)
                 log.info("Автопуск: мозги — %s/%s (%.1f ток/с в рейтинге)",
                          backend, model, tps.get(model, 0))
+                # прогрев KV-кэша боевой персоной в фоне: первый реальный
+                # ответ докатывает только хвост промпта, а не все ~7КБ
+                try:
+                    from server.persona import SAIKA_SYSTEM
+                    threading.Thread(
+                        target=llm.prewarm_context,
+                        args=(backend, model, SAIKA_SYSTEM),
+                        daemon=True).start()
+                except Exception:
+                    pass
                 break
             except Exception as e:
                 report_problem("llm", f"{model}: {e}",
                                "автопуск пробует следующую модель")
     except Exception as e:
         report_problem("llm", str(e), "автопуск мозгов не удался")
+    for t in threads:  # дождаться слух/голос (сам автопуск — фоновый поток)
+        t.join(timeout=600)
 
 
 def main():

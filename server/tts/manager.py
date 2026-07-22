@@ -263,9 +263,16 @@ class TTSManager:
         if self.health.get(name) == "broken":
             self.health[name] = "unknown"
 
+    # голос-времянка на время загрузки тяжёлого движка (быстрый старт
+    # 2026-07-23): пока qwen3 компилируется ~60с, отвечает лёгкий silero/
+    # edge. Выставляется/снимается ТОЛЬКО автопуском, конфиг не трогает —
+    # выбор владельца не перезаписывается, и при падении на середине
+    # загрузки конфиг не остаётся замусоренным времянкой.
+    boot_override = None
+
     @property
     def current_name(self):
-        return CFG.get("tts.engine", "qwen3")
+        return self.boot_override or CFG.get("tts.engine", "qwen3")
 
     def set_engine(self, name):
         if name not in self.engines:

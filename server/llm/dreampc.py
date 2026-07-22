@@ -43,7 +43,11 @@ MAX_AUTO_REPAIRS = 2
 # автопочинка эту ошибку игнорировала (2026-07-15). Матчим по реальным
 # фразам, которые Python и torch/transformers пишут в текст сообщения.
 ENV_ERROR_SIGNS = ("cuda", "could not load this library", "no module named",
-                   "cannot import name", "cannot import", ".dll", ".pyd")
+                   "cannot import name", "cannot import", ".dll", ".pyd",
+                   # transformers 5.x против remote-кода LLaDA (2026-07-23):
+                   # реинсталл теперь ставит пин transformers==4.57.3 — само
+                   # чинится именно переустановкой окружения
+                   "all_tied_weights_keys")
 
 
 def _cfg():
