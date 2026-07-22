@@ -264,11 +264,19 @@ def _filter_think(chunks):
                 buf, in_think = buf[i + len("</think>"):], False
                 buf = buf.lstrip("\n")  # пустые строки после мыслей не нужны
             else:
+                # одинокий </think> без открывашки — рефлекторный мусор
+                # шаблона (думание выключено, а модель всё равно «закрывает
+                # мысль») — вырезаем сам тег, текст вокруг оставляем
+                j = buf.find("</think>")
                 i = buf.find("<think>")
+                if j >= 0 and (i < 0 or j < i):
+                    out, buf = out + buf[:j], buf[j + len("</think>"):]
+                    continue
                 if i < 0:
                     keep = 0  # возможное начало тега в хвосте — придержать
-                    for k in range(min(len("<think>") - 1, len(buf)), 0, -1):
-                        if buf.endswith("<think>"[:k]):
+                    for k in range(min(len("</think>") - 1, len(buf)), 0, -1):
+                        if (buf.endswith("<think>"[:k])
+                                or buf.endswith("</think>"[:k])):
                             keep = k
                             break
                     cut = len(buf) - keep
@@ -346,6 +354,13 @@ def _swallow_thinking(chunks):
             yield chunk
             continue
         if passed:
+            if "</think>" in tok:  # второй закрывающий = зацикливание, стоп
+                tok = tok.split("</think>")[0]
+                if tok:
+                    yield {**chunk,
+                           "choices": [{**chunk["choices"][0],
+                                        "delta": {**delta, "content": tok}}]}
+                return
             if not emitted:  # ведущие \n после </think> — в мусор
                 tok = tok.lstrip("\n")
                 if not tok:
@@ -416,13 +431,19 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True):
             log.exception("Рендер шаблона не удался — откат на "
                           "create_chat_completion")
         if prompt is not None:
+            stops = ["<|im_end|>"]
             if enable_thinking:
                 # мысли легко съедают 2048 целиком, а Сайка max_tokens не
                 # шлёт — даём запас, чтобы после думания остался сам ответ
                 max_tokens = max(max_tokens, 6144)
+            else:
+                # думание выключено (в промпте пустой think-блок), значит
+                # ЛЮБОЙ "</think>" в выводе — рефлекторный мусор шаблона и
+                # верный признак зацикливания: рубим генерацию прямо там
+                stops.append("</think>")
             raw = _model.create_completion(
                 prompt=prompt, stream=True, temperature=temperature,
-                max_tokens=max_tokens, stop=["<|im_end|>"])
+                max_tokens=max_tokens, stop=stops)
             stream = _completion_as_chat(raw)
             # think вкл: всё до </think> — мысли, глотаем; think выкл: шаблон
             # подставил пустой блок, но страхуемся фильтром от протечек тегов
