@@ -617,6 +617,16 @@ function connect(){
     else{ playPcm(e.data); }
   };
   ws.onclose = ()=> setTimeout(connect, 1500);
+  ws.onopen = ()=>{
+    // авто-включение микрофона при старте (просьба владельца 2026-07-23:
+    // «включённый микро со старта») — чтобы разговор начинался сразу, без
+    // клика. Отключение: localStorage.autoMic='0'. Разрешение на микрофон
+    // браузер помнит для localhost, так что getUserMedia пройдёт молча;
+    // если вдруг спросит — это разовый первый раз.
+    if(localStorage.autoMic!=='0' && !micOn){
+      setTimeout(()=>{ try{ startMic(); }catch(e){} }, 300);
+    }
+  };
 }
 let curSaikaMsg=null;
 let bootId=null;
@@ -845,6 +855,16 @@ async function startMic(){
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: selectedMic? {deviceId:{exact:selectedMic}} : true });
   audioCtx = new AudioContext();
+  // при АВТОстарте без клика Chrome может создать контекст suspended —
+  // микрофон выглядит включённым, но глух. Будим сразу; если политика не
+  // пустила — первый же клик/клавиша по странице добудит.
+  if(audioCtx.state==='suspended'){
+    audioCtx.resume().catch(()=>{});
+    const wake=()=>{ if(audioCtx && audioCtx.state==='suspended')
+        audioCtx.resume().catch(()=>{}); };
+    document.addEventListener('pointerdown', wake, {once:true});
+    document.addEventListener('keydown', wake, {once:true});
+  }
   const blob = new Blob([workletCode],{type:'application/javascript'});
   await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
   const src = audioCtx.createMediaStreamSource(micStream);
@@ -1203,10 +1223,14 @@ function effScore(name, auto){ return manualScores[name]!=null?manualScores[name
    первой именно модель с высшей оценкой. Сервер возвращает объединённый
    словарь (вдруг оценки ставились из другого браузера) — принимаем его. */
 (async()=>{ try{
+  // при старте СЕРВЕР — источник правды (шлём пустой словарь, получаем его
+  // состояние). Раньше браузер пушил свой словарь и «воскрешал» оценки,
+  // удалённые на сервере (инцидент manual:vosk 2026-07-23). Изменения из
+  // этого окна и так уходят на сервер сразу при перетаскивании палочек.
   const r=await (await fetch('/api/ratings/manual',{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({scores:manualScores})})).json();
-  if(r && r.manual){ manualScores=Object.assign({},r.manual,manualScores);
+    body:JSON.stringify({scores:{}})})).json();
+  if(r && r.manual){ manualScores=r.manual;
     localStorage.manualScores=JSON.stringify(manualScores); }
 }catch(e){} })();
 /* оценка 1..10 мини-«эквалайзером»: 10 РОВНЫХ палочек, тяни влево/вправо */
