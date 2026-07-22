@@ -5,13 +5,13 @@
     "auto_open_browser": true
   },
   "llm": {
-    "backend": "lmstudio",
+    "backend": "locallm",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "gemma-4-e4b-it",
+    "model": "huihui-ai/Huihui-Qwen3.5-9B-abliterated",
     "temperature": 0.8,
     "max_history": 14,
-    "think": true,
+    "think": false,
     "cloud": {
       "enabled": true,
       "provider": "openrouter",
@@ -59,7 +59,7 @@
     ]
   },
   "stt": {
-    "engine": "whispercpp",
+    "engine": "gigaam",
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
@@ -143,7 +143,7 @@
     "rag_top_k": 5
   },
   "dreampc": {
-    "model": "GSAI-ML/LLaDA-8B-Base",
+    "model": "GSAI-ML/LLaDA-8B-Instruct",
     "venv": ".venv_dreampc",
     "worker": "workers/dreampc_worker.py",
     "setup": "setup/install_dreampc.bat",
@@ -220,6 +220,7 @@
   "locallm_gguf": {
     "repo": "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF",
     "quant": "Q4_K_M",
-    "n_ctx": 8192
+    "n_ctx": 32768,
+    "kv_quant": "q8_0"
   }
 }

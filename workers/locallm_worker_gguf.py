@@ -59,6 +59,7 @@ MODEL_REPO = "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF"
 QUANT = "Q4_K_M"
 N_CTX_DEFAULT = 8192
 MAX_TOKENS_CAP = 2048  # locallm.max_new_tokens из config.json (см. спавнер)
+KV_QUANT = "q8_0"      # сжатие KV-кэша: q8_0 (вдвое меньше памяти) | f16 | q4_0
 
 _model = None
 _model_path = None
@@ -145,17 +146,34 @@ def _try_load():
                 if dirs:
                     os.environ["PATH"] = (os.pathsep.join(dirs) + os.pathsep
                                           + os.environ.get("PATH", ""))
+            import llama_cpp
             from llama_cpp import Llama
             path = _find_gguf_path()
-            log.info("Загружаю %s в VRAM (n_gpu_layers=-1, n_ctx=%s)…",
-                     path, N_CTX_DEFAULT)
-            model = Llama(
-                model_path=path,
-                n_gpu_layers=-1,       # весь офлоад на GPU
-                n_ctx=N_CTX_DEFAULT,
-                flash_attn=True,       # игнорируется, если сборка без флеша
-                verbose=False,
-            )
+            # СЖАТИЕ KV-КЭША (2026-07-23): окно контекста упирается в VRAM
+            # именно через KV-кэш (память под всю историю внимания). Модель
+            # тянет 262к токенов, но каждый токен при fp16 стоит памяти.
+            # Квантование KV в q8_0 РЕЗ вдвое память кэша при почти нулевой
+            # потере качества — так 32к окно стоит примерно как 16к на fp16.
+            # Требует flash_attn (уже включён). Управляется locallm_gguf.
+            # kv_quant ("q8_0"|"f16"), по умолчанию q8_0.
+            KV_TYPES = {"f16": 1, "q8_0": 8, "q4_0": 2}
+            kv = KV_TYPES.get(KV_QUANT, 8)
+            kw = dict(model_path=path, n_gpu_layers=-1, n_ctx=N_CTX_DEFAULT,
+                      flash_attn=True, verbose=False)
+            if kv != 1:
+                kw["type_k"] = kv
+                kw["type_v"] = kv
+            log.info("Загружаю %s в VRAM (n_gpu_layers=-1, n_ctx=%s, kv=%s)…",
+                     path, N_CTX_DEFAULT, KV_QUANT)
+            try:
+                model = Llama(**kw)
+            except Exception as e:
+                # старая сборка без type_k/type_v или без flash — откат на fp16
+                log.warning("KV-квант %s не принят (%s) — гружу на fp16",
+                            KV_QUANT, e)
+                model = Llama(model_path=path, n_gpu_layers=-1,
+                              n_ctx=N_CTX_DEFAULT, flash_attn=True,
+                              verbose=False)
             try:
                 offloaded = llama_cpp_gpu_check()
             except Exception:
@@ -678,11 +696,13 @@ if __name__ == "__main__":
     ap.add_argument("--quant", default=QUANT)
     ap.add_argument("--n-ctx", type=int, default=N_CTX_DEFAULT)
     ap.add_argument("--max-tokens", type=int, default=MAX_TOKENS_CAP)
+    ap.add_argument("--kv-quant", default=KV_QUANT)
     args = ap.parse_args()
     MODEL_REPO = args.repo
     QUANT = args.quant
     N_CTX_DEFAULT = args.n_ctx
     MAX_TOKENS_CAP = args.max_tokens
+    KV_QUANT = args.kv_quant
     (ROOT / "logs").mkdir(exist_ok=True)
     log.info("LocalLM (llama.cpp) воркер: %s / %s, порт=%s, n_ctx=%s",
              MODEL_REPO, QUANT, args.port, N_CTX_DEFAULT)

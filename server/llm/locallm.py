@@ -246,6 +246,7 @@ def ensure_running() -> dict:
                    "--repo", g.get("repo", "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF"),
                    "--quant", g.get("quant", "Q4_K_M"),
                    "--n-ctx", str(g.get("n_ctx", 8192)),
+                   "--kv-quant", str(g.get("kv_quant", "q8_0")),
                    # потолок длины ответа (кран для голосового режима:
                    # 58 ток/с * 2048 токенов = полминуты монолога; для
                    # «ответ за 3 сек» ставь в конфиге ~300)
