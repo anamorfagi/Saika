@@ -82,12 +82,34 @@ def _pypi_reachable() -> bool:
         return False
 
 
+
+_DLL_DIR_CODE = (
+    "import os, sys\n"
+    "if os.name == 'nt':\n"
+    "    _dirs = []\n"
+    "    for pkg in ('nvidia/cuda_runtime/bin', 'nvidia/cublas/bin'):\n"
+    "        d = os.path.join(sys.prefix, 'Lib', 'site-packages', *pkg.split('/'))\n"
+    "        if os.path.isdir(d):\n"
+    "            _dirs.append(d)\n"
+    "            try: os.add_dll_directory(d)\n"
+    "            except Exception: pass\n"
+    # llama_cpp вызывает ctypes.CDLL с winmode=0 - это ОТКЛЮЧАЕТ новый
+    # безопасный поиск через add_dll_directory и откатывает на старый
+    # (application dir + system dirs + PATH) - без PATH одного
+    # add_dll_directory недостаточно (проверено эмпирически: код доходил
+    # до import llama_cpp и всё равно падал с тем же FileNotFoundError).
+    "    if _dirs:\n"
+    "        os.environ['PATH'] = os.pathsep.join(_dirs) + os.pathsep + os.environ.get('PATH', '')\n"
+)
+
+
 def _import_ok() -> bool:
     if not VENV_PY.exists():
         return False
     try:
         return subprocess.run(
-            [str(VENV_PY), "-c", "import llama_cpp"], timeout=30).returncode == 0
+            [str(VENV_PY), "-c", _DLL_DIR_CODE + "import llama_cpp"],
+            timeout=30).returncode == 0
     except Exception:
         return False
 
@@ -101,6 +123,7 @@ def _gpu_offload_ok() -> bool:
     if not VENV_PY.exists():
         return False
     code = (
+        _DLL_DIR_CODE +
         "import llama_cpp\n"
         "try:\n"
         "    ok = llama_cpp.llama_supports_gpu_offload()\n"
@@ -123,6 +146,18 @@ def _install_llama_cpp_python() -> bool:
         if run([VENV_PY, "-m", "pip", "install", "-U", "llama-cpp-python",
                 "--prefer-binary", "--extra-index-url", idx,
                 "--timeout", "180", "--retries", "3"]):
+            # CUDA-DLL сама по себе не гарантирует, что рантайм-библиотеки
+            # (cudart/cublas) есть в системе — venv БЕЗ torch, значит, нет и
+            # тех DLL, что torch тихо подключает при импорте. Ставим их сюда
+            # явно (лёгкие pip-пакеты, ставили же так и для основного venv —
+            # см. setup/first_run.py) и подключаем через os.add_dll_directory
+            # (тот же _DLL_DIR_CODE, что и при последующих проверках/запуске).
+            print("[2b/3] Ставлю CUDA-рантайм (cudart+cublas — без них "
+                  "ggml-cuda.dll не грузится, torch рядом нет, некому "
+                  "притащить их неявно)…", flush=True)
+            run([VENV_PY, "-m", "pip", "install", "-U",
+                 "nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12",
+                 "--timeout", "180", "--retries", "10"])
             if _import_ok():
                 print(f"[OK] llama-cpp-python встал с {idx}", flush=True)
                 return True

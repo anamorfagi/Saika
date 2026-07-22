@@ -121,6 +121,25 @@ def _try_load():
             return
         _error = None
         try:
+            # venv БЕЗ torch - некому неявно подключить CUDA-DLL. llama_cpp
+            # зовёт ctypes.CDLL с winmode=0 (отключает add_dll_directory,
+            # откатывает на поиск через PATH) - подмешиваем PATH И
+            # add_dll_directory на всякий случай (проверено эмпирически:
+            # одного add_dll_directory было мало).
+            if os.name == "nt":
+                dirs = []
+                for pkg in ("nvidia/cuda_runtime/bin", "nvidia/cublas/bin"):
+                    d = os.path.join(sys.prefix, "Lib", "site-packages",
+                                     *pkg.split("/"))
+                    if os.path.isdir(d):
+                        dirs.append(d)
+                        try:
+                            os.add_dll_directory(d)
+                        except Exception:
+                            pass
+                if dirs:
+                    os.environ["PATH"] = (os.pathsep.join(dirs) + os.pathsep
+                                          + os.environ.get("PATH", ""))
             from llama_cpp import Llama
             path = _find_gguf_path()
             log.info("Загружаю %s в VRAM (n_gpu_layers=-1, n_ctx=%s)…",
