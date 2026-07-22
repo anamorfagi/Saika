@@ -235,7 +235,58 @@ def _sanitize_messages(messages):
     return rest
 
 
-def _stream(messages, temperature, max_tokens):
+def _filter_think(chunks):
+    """Вырезает <think>…</think> из потока OpenAI-чанков. Нужен, когда
+    размышления выключены (тумблер 💭), а модель всё равно думает: у Qwen
+    тег <think> браузер глотает как неизвестный HTML-элемент, и «мысли»
+    вываливаются в чат простым текстом (живой инцидент 2026-07-23 — вместо
+    короткого ответа пришло 546 токенов Thinking Process на английском).
+    Токены придерживаются ровно настолько, чтобы тег, разрезанный между
+    чанками, не просочился."""
+    buf, in_think, opened = "", False, False
+    proto = None
+    for chunk in chunks:
+        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        tok = delta.get("content")
+        if not tok:
+            yield chunk
+            continue
+        proto = chunk
+        buf += tok
+        out = ""
+        while buf:
+            if in_think:
+                i = buf.find("</think>")
+                if i < 0:
+                    buf = buf[-len("</think>"):]
+                    break
+                buf, in_think = buf[i + len("</think>"):], False
+                buf = buf.lstrip("\n")  # пустые строки после мыслей не нужны
+            else:
+                i = buf.find("<think>")
+                if i < 0:
+                    keep = 0  # возможное начало тега в хвосте — придержать
+                    for k in range(min(len("<think>") - 1, len(buf)), 0, -1):
+                        if buf.endswith("<think>"[:k]):
+                            keep = k
+                            break
+                    cut = len(buf) - keep
+                    out, buf = out + buf[:cut], buf[cut:]
+                    break
+                out, buf, in_think = out + buf[:i], buf[i + len("<think>"):], True
+                opened = True
+        if out:
+            d = {**chunk,
+                 "choices": [{**chunk["choices"][0],
+                              "delta": {**delta, "content": out}}]}
+            yield d
+    if buf and not in_think and proto is not None:  # добить хвост-недотег
+        d0 = proto["choices"][0]
+        yield {**proto, "choices": [{**d0, "delta": {**d0.get("delta", {}),
+                                                     "content": buf}}]}
+
+
+def _stream(messages, temperature, max_tokens, enable_thinking=True):
     _ready.wait(timeout=1800)
     if _model is None:
         _try_load()
@@ -257,14 +308,27 @@ def _stream(messages, temperature, max_tokens):
         return
     try:
         msgs = _sanitize_messages(messages)
+        if not enable_thinking:
+            # мягкий выключатель размышлений Qwen3 (/no_think в последнем
+            # user-сообщении) — create_chat_completion не умеет прокидывать
+            # chat_template_kwargs в jinja-шаблон, как это делает LM Studio,
+            # поэтому (а) просим модель не думать и (б) на всякий случай
+            # вырезаем think-блоки из потока фильтром ниже.
+            for m in reversed(msgs):
+                if m["role"] == "user":
+                    m["content"] = (m["content"] or "") + " /no_think"
+                    break
         t0 = time.monotonic()
         n_chars = 0
         # create_chat_completion сам применяет встроенный в GGUF chat-шаблон
         # (llama.cpp понимает jinja-шаблон, зашитый в метаданные модели) и
         # при stream=True возвращает готовые OpenAI-чанки — просто ретранслируем
-        for chunk in _model.create_chat_completion(
+        stream = _model.create_chat_completion(
                 messages=msgs, stream=True,
-                temperature=temperature, max_tokens=max_tokens):
+                temperature=temperature, max_tokens=max_tokens)
+        if not enable_thinking:
+            stream = _filter_think(stream)
+        for chunk in stream:
             delta = chunk.get("choices", [{}])[0].get("delta", {})
             n_chars += len(delta.get("content") or "")
             yield "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
@@ -289,11 +353,15 @@ def chat_completions(payload: dict):
     temperature = float(payload.get("temperature", 0.8))
     max_tokens = int(payload.get("max_tokens")
                      or payload.get("max_completion_tokens") or 2048)
+    think = bool((payload.get("chat_template_kwargs") or {})
+                 .get("enable_thinking", True))
     if payload.get("stream", False):
-        return StreamingResponse(_stream(messages, temperature, max_tokens),
-                                 media_type="text/event-stream")
+        return StreamingResponse(
+            _stream(messages, temperature, max_tokens, enable_thinking=think),
+            media_type="text/event-stream")
     text = ""
-    for chunk in _stream(messages, temperature, max_tokens):
+    for chunk in _stream(messages, temperature, max_tokens,
+                         enable_thinking=think):
         if chunk.startswith("data: ") and "[DONE]" not in chunk:
             try:
                 text += json.loads(chunk[6:])["choices"][0]["delta"].get(
