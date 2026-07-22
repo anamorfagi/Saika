@@ -503,16 +503,27 @@ def _stream(messages, temperature, max_tokens, enable_thinking=True,
         return
     # ждём очередь, а не отшиваем сразу: Сайка сама ставит реплики «отвечу
     # следом», и мгновенный отказ превращался в мусорный ответ из 1 токена
-    # «[LocalLM уже занята генерацией]» (лог 2026-07-23)
-    if not _infer_lock.acquire(timeout=180):
-        yield ("data: " + json.dumps({
-            "choices": [{"index": 0,
-                        "delta": {"content": "[LocalLM занята дольше 3 минут — "
-                                             "похоже, генерация зависла]"},
-                        "finish_reason": "stop"}]}, ensure_ascii=False)
-              + "\n\n")
-        yield "data: [DONE]\n\n"
-        return
+    # «[LocalLM уже занята генерацией]» (лог 2026-07-23).
+    # Ожидание — С ПРИЗНАКАМИ ЖИЗНИ: во время блокирующего acquire в сокет
+    # ничего не пишется, и запрос, который Сайка уже бросила («живой
+    # контекст — перезапускаю»), висел в очереди мёртвым грузом все 3
+    # минуты, наваливая 40-секундные паузы (лог 02:22-02:23). SSE-комментарий
+    # раз в 2с заставляет uvicorn заметить закрытый сокет — брошенный запрос
+    # вылетает из очереди сразу (GeneratorExit), живой — ждёт как ждал.
+    waited = 0.0
+    while not _infer_lock.acquire(timeout=2):
+        waited += 2
+        if waited >= 180:
+            yield ("data: " + json.dumps({
+                "choices": [{"index": 0,
+                            "delta": {"content": "[LocalLM занята дольше 3 "
+                                                 "минут — похоже, генерация "
+                                                 "зависла]"},
+                            "finish_reason": "stop"}]}, ensure_ascii=False)
+                  + "\n\n")
+            yield "data: [DONE]\n\n"
+            return
+        yield ": queue\n\n"
     try:
         msgs = _sanitize_messages(messages)
         t0 = time.monotonic()
