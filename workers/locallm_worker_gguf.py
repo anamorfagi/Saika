@@ -97,6 +97,7 @@ def _find_gguf_path() -> str:
     Как и install_locallm_gguf.py, матчит по СУФФИКСУ имени (не точному
     файлу) — у разных квантователей имена чуть отличаются."""
     from huggingface_hub import list_repo_files, hf_hub_download
+    from _hf_progress import DownloadProgressLogger
     _configure_hf_endpoint()
     files = [f for f in list_repo_files(MODEL_REPO) if f.lower().endswith(".gguf")]
     cands = [f for f in files if QUANT.lower() in f.lower()]
@@ -105,8 +106,11 @@ def _find_gguf_path() -> str:
             f"В {MODEL_REPO} нет файла с '{QUANT}' в имени. Доступные "
             f"кванты: {files}. Поправь locallm_gguf.quant в config.json.")
     fname = sorted(cands, key=len)[0]
-    log.info("Модель: %s / %s", MODEL_REPO, fname)
-    return hf_hub_download(MODEL_REPO, fname)
+    log.info("Модель: %s / %s (если ещё не скачана — качаю, обычно 4-7 ГБ "
+              "для Q4/Q5)", MODEL_REPO, fname)
+    with DownloadProgressLogger(log, ROOT / "models" / "hf", MODEL_REPO,
+                                 label=f"{MODEL_REPO} ({fname})"):
+        return hf_hub_download(MODEL_REPO, fname)
 
 
 def _try_load():

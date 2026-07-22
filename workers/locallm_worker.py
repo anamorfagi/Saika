@@ -140,22 +140,25 @@ def _try_load():
             _configure_hf_endpoint()
             from transformers import (AutoModelForCausalLM, AutoTokenizer,
                                       BitsAndBytesConfig)
+            from _hf_progress import DownloadProgressLogger
             log.info("Загружаю %s (первый раз — скачивание весов ~16 ГБ bf16 "
                      "в models/hf; в VRAM ложится в 4 битах ~5.5 ГБ)…",
                      MODEL_REPO)
-            tok = AutoTokenizer.from_pretrained(MODEL_REPO)
-            bnb = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_REPO,
-                quantization_config=bnb,
-                dtype=torch.bfloat16,
-                device_map="auto",
-            )
+            with DownloadProgressLogger(log, ROOT / "models" / "hf", MODEL_REPO,
+                                         label=MODEL_REPO):
+                tok = AutoTokenizer.from_pretrained(MODEL_REPO)
+                bnb = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                )
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_REPO,
+                    quantization_config=bnb,
+                    dtype=torch.bfloat16,
+                    device_map="auto",
+                )
             model.eval()
             _tokenizer = tok
             _model = model  # последним — до этого момента «не готова»

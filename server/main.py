@@ -1932,14 +1932,20 @@ def _autostart_components():
     # важнее рейтинга, рейтинг чисто скоростной и всегда тащит самую мелкую
     # (e2b «обгоняет» e4b по ток/с, но не по уму). Остальные — запасные по
     # убыванию рейтинга, если выбранная не поднялась.
+    # ВАЖНО: "locallm" (свой llama.cpp/transformers движок) — полноправный
+    # бэкенд наравне с ollama/lmstudio. Раньше был забыт здесь при добавлении
+    # locallm, из-за чего выбор пользователя (llm.backend="locallm") молча
+    # игнорировался и автопуск всегда падал на лучший по рейтингу ollama/
+    # lmstudio (обычно e4b) — баг найден и исправлен 2026-07-22.
+    BACKENDS_AUTOSTART = ("ollama", "lmstudio", "locallm")
     try:
         tps = ratings.llm_tps()
         cands = [(m["backend"], m["name"]) for m in llm.list_models()
-                 if m["backend"] in ("ollama", "lmstudio")
+                 if m["backend"] in BACKENDS_AUTOSTART
                  and "embed" not in m["name"].lower()]
         cands.sort(key=lambda c: -tps.get(c[1], 0))
         cfg_pick = (CFG.get("llm.backend", "ollama"), CFG.get("llm.model", ""))
-        if cfg_pick[1] and cfg_pick[0] in ("ollama", "lmstudio"):
+        if cfg_pick[1] and cfg_pick[0] in BACKENDS_AUTOSTART:
             cands = [cfg_pick] + [c for c in cands if c != cfg_pick]
         for backend, model in cands:
             try:

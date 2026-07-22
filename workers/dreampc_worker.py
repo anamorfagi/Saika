@@ -171,22 +171,25 @@ def _try_load():
                     "--remove, затем установка заново).")
             _configure_hf_endpoint()
             from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+            from _hf_progress import DownloadProgressLogger
             log.info("Загружаю %s (первый раз — скачивание ~16 ГБ bf16-весов, "
                       "квантование в 4 бита происходит уже на лету)…", MODEL_REPO)
-            tok = AutoTokenizer.from_pretrained(MODEL_REPO, trust_remote_code=True)
-            if tok.padding_side != "left":
-                tok.padding_side = "left"
-            bnb = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_REPO, trust_remote_code=True,
-                quantization_config=bnb if torch.cuda.is_available() else None,
-                dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto" if torch.cuda.is_available() else None,
-            )
+            with DownloadProgressLogger(log, ROOT / "models" / "hf", MODEL_REPO,
+                                         label=MODEL_REPO):
+                tok = AutoTokenizer.from_pretrained(MODEL_REPO, trust_remote_code=True)
+                if tok.padding_side != "left":
+                    tok.padding_side = "left"
+                bnb = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                )
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_REPO, trust_remote_code=True,
+                    quantization_config=bnb if torch.cuda.is_available() else None,
+                    dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                    device_map="auto" if torch.cuda.is_available() else None,
+                )
             if not torch.cuda.is_available():
                 model = model.to("cpu")
             model.eval()
