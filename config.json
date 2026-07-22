@@ -214,6 +214,12 @@
     "model": "huihui-ai/Huihui-Qwen3.5-9B-abliterated",
     "venv": ".venv_locallm",
     "worker": "workers/locallm_worker.py",
-    "max_new_tokens": 2048
+    "max_new_tokens": 2048,
+    "engine": "llamacpp"
+  },
+  "locallm_gguf": {
+    "repo": "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF",
+    "quant": "Q4_K_M",
+    "n_ctx": 8192
   }
 }

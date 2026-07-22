@@ -37,9 +37,37 @@ ENV_ERROR_SIGNS = ("cuda", "could not load this library", "no module named",
 DEFAULT_MODEL = "t-tech/T-lite-it-2.1"
 DEFAULT_PORT = 8770
 
+# Два движка за одним и тем же портом/контрактом (/health, /v1/models,
+# /v1/chat/completions, /admin/unload) — менеджер и остальной код их не
+# различают. "llamacpp" — быстрый путь (llama.cpp/GGUF, отдельный
+# .venv_locallm_gguf, без torch). "transformers" — исходный путь
+# (bitsandbytes nf4, тот же venv, что и раньше) — рабочий фолбэк, если
+# под конкретную машину не нашлось готового CUDA-wheel для llama-cpp-python.
+ENGINES = {
+    "llamacpp": {
+        "venv": ".venv_locallm_gguf",
+        "worker": "workers/locallm_worker_gguf.py",
+        "installer": "setup/install_locallm_gguf.py",
+        "install_log": "logs/locallm_gguf_install.log",
+        "worker_log": "logs/locallm_gguf_worker.log",
+    },
+    "transformers": {
+        "venv": ".venv_locallm",
+        "worker": "workers/locallm_worker.py",
+        "installer": "setup/install_locallm.py",
+        "install_log": "logs/locallm_install.log",
+        "worker_log": "logs/locallm_worker.log",
+    },
+}
+
 
 def _cfg():
     return CFG.get("locallm", {})
+
+
+def _engine():
+    name = _cfg().get("engine", "llamacpp")
+    return ENGINES.get(name, ENGINES["llamacpp"])
 
 
 def model_name() -> str:
@@ -68,7 +96,7 @@ def _health():
 
 
 def _venv_python():
-    venv = resolve(_cfg().get("venv", ".venv_locallm"))
+    venv = resolve(_cfg().get("venv") or _engine()["venv"])
     if os.name == "nt":
         return venv / "Scripts" / "python.exe"
     return venv / "bin" / "python"
@@ -111,8 +139,9 @@ def _start_install():
     global _install_proc, _install_log
     main_py = resolve(".venv/Scripts/python.exe" if os.name == "nt"
                       else ".venv/bin/python")
-    script = resolve("setup/install_locallm.py")
-    _install_log = resolve("logs") / "locallm_install.log"
+    eng = _engine()
+    script = resolve(eng["installer"])
+    _install_log = resolve(eng["install_log"])
     _install_log.parent.mkdir(exist_ok=True)
     logf = open(_install_log, "w", encoding="utf-8")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -126,7 +155,7 @@ def worker_status() -> dict:
     """Что сейчас с воркером — для UI/диагностики."""
     h = _health()
     tail = ""
-    p = resolve("logs") / "locallm_worker.log"
+    p = resolve(_engine()["worker_log"])
     if p.exists():
         try:
             lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -199,10 +228,18 @@ def ensure_running() -> dict:
                             "(первый раз небыстро: библиотеки + веса модели)"}
 
         # 4) спавним воркер и ждём /health
-        worker = resolve(_cfg().get("worker", "workers/locallm_worker.py"))
-        cmd = [str(venv_py), str(worker), "--port", str(prt),
-               "--model", model_name(),
-               "--max-new-tokens", str(_cfg().get("max_new_tokens", 2048))]
+        eng_name = _cfg().get("engine", "llamacpp")
+        worker = resolve(_cfg().get("worker") or _engine()["worker"])
+        if eng_name == "llamacpp":
+            g = CFG.get("locallm_gguf", {}) or {}
+            cmd = [str(venv_py), str(worker), "--port", str(prt),
+                   "--repo", g.get("repo", "mradermacher/Huihui-Qwen3.5-9B-abliterated-i1-GGUF"),
+                   "--quant", g.get("quant", "Q4_K_M"),
+                   "--n-ctx", str(g.get("n_ctx", 8192))]
+        else:
+            cmd = [str(venv_py), str(worker), "--port", str(prt),
+                   "--model", model_name(),
+                   "--max-new-tokens", str(_cfg().get("max_new_tokens", 2048))]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         log.info("locallm: запускаю воркер: %s", " ".join(cmd))
         _proc = subprocess.Popen(cmd, cwd=str(resolve(".")),
