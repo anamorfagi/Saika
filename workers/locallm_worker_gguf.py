@@ -223,7 +223,16 @@ def _sanitize_messages(messages):
         if role not in ("system", "user", "assistant"):
             role = "user"
         out.append({"role": role, "content": content})
-    return out
+    # Шаблон Qwen в llama.cpp жёстко требует system ТОЛЬКО первым сообщением
+    # ("System message must be at the beginning", живой инцидент 2026-07-23:
+    # Сайка докидывает «живой контекст» отдельными system-сообщениями посреди
+    # диалога — каждый ответ падал этой ошибкой). Склеиваем ВСЕ system в одно
+    # первое, порядок остальных сообщений не трогаем.
+    sys_parts = [m["content"] for m in out if m["role"] == "system" and m["content"]]
+    rest = [m for m in out if m["role"] != "system"]
+    if sys_parts:
+        return [{"role": "system", "content": "\n\n".join(sys_parts)}] + rest
+    return rest
 
 
 def _stream(messages, temperature, max_tokens):

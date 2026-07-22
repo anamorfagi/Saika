@@ -214,7 +214,12 @@ def _sanitize_messages(messages):
         if role not in ("system", "user", "assistant"):
             role = "user"
         out.append({"role": role, "content": content})
-    return out
+    # system только первым — как в gguf-воркере (шаблон Qwen), см. коммент там
+    sys_parts = [m["content"] for m in out if m["role"] == "system" and m["content"]]
+    rest = [m for m in out if m["role"] != "system"]
+    if sys_parts:
+        return [{"role": "system", "content": "\n\n".join(sys_parts)}] + rest
+    return rest
 
 
 # ---------------------- OpenAI-совместимые ручки ----------------------
