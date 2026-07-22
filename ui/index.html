@@ -1196,6 +1196,19 @@ function capsBadges(m){
 /* ручные оценки (перебивают авто), хранятся локально */
 let manualScores=(()=>{try{return JSON.parse(localStorage.manualScores||'{}')}catch(e){return {}}})();
 function effScore(name, auto){ return manualScores[name]!=null?manualScores[name]:(auto||0); }
+/* оценки раньше жили ТОЛЬКО тут (localStorage) — сервер их не видел, и
+   автопуск при старте игнорировал выбор владельца, грузя по авто-замеру
+   скорости (жалоба 2026-07-23). Теперь при каждом открытии UI отдаём весь
+   словарь серверу (data/ratings.json, ключи manual:*), и автопуск грузит
+   первой именно модель с высшей оценкой. Сервер возвращает объединённый
+   словарь (вдруг оценки ставились из другого браузера) — принимаем его. */
+(async()=>{ try{
+  const r=await (await fetch('/api/ratings/manual',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({scores:manualScores})})).json();
+  if(r && r.manual){ manualScores=Object.assign({},r.manual,manualScores);
+    localStorage.manualScores=JSON.stringify(manualScores); }
+}catch(e){} })();
 /* оценка 1..10 мини-«эквалайзером»: 10 РОВНЫХ палочек, тяни влево/вправо */
 function barColor(s){ return s>=8?'var(--ok)':s>=5?'var(--warn)':'var(--err)'; }
 function scoreBar(name, auto, title){
@@ -1228,7 +1241,14 @@ document.addEventListener('pointerdown', e=>{
 document.addEventListener('pointermove', e=>{ if(_dragBars) setBarsFromX(_dragBars, e.clientX); });
 document.addEventListener('pointerup', ()=>{
   if(!_dragBars) return;
+  const name=decodeURIComponent(_dragBars.dataset.m||'');
   _dragBars=null;
+  // оценка — на сервер: её уважает автопуск при следующем старте
+  if(name && manualScores[name]!=null){
+    try{ fetch('/api/ratings/manual',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name,score:manualScores[name]})}); }catch(e){}
+  }
   // пересортируем списки под новую оценку (после отпускания, не дёргая при драге)
   if($('#pop-model').classList.contains('show')) fillModelPop();
   else if($('#pop-tts').classList.contains('show')) fillTtsPop();

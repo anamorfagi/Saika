@@ -150,7 +150,23 @@ def status():
 @app.get("/api/models")
 def models():
     return {"models": llm.list_models(), "loaded": llm.loaded_models(),
-            "ratings": ratings.llm_scores(), "tps": ratings.llm_tps()}
+            "ratings": ratings.llm_scores(), "tps": ratings.llm_tps(),
+            "manual": ratings.manual_scores()}
+
+
+@app.post("/api/ratings/manual")
+def ratings_manual(payload: dict):
+    """Синхронизация ручных оценок из UI. Раньше палочки-оценки жили только
+    в localStorage браузера — сервер их не видел, и автопуск игнорировал
+    выбор владельца (жалоба 2026-07-23). Принимает либо {"scores": {имя:
+    1..10}} (массовая, при старте UI), либо {"name": ..., "score": 1..10|
+    null} (одиночная, при перетаскивании палочек)."""
+    if isinstance(payload.get("scores"), dict):
+        merged = ratings.merge_manual(payload["scores"])
+    else:
+        ratings.set_manual(payload.get("name", ""), payload.get("score"))
+        merged = ratings.manual_scores()
+    return {"ok": True, "manual": merged}
 
 
 @app.get("/api/baymax")
@@ -1908,18 +1924,24 @@ def _autostart_components():
                        "смотри logs/saika.log")
         return None
 
-    # слух: выбранный движок, дальше по fallback_order
+    # слух/голос: базовый порядок — выбранный движок + fallback_order, но
+    # РУЧНАЯ оценка владельца (палочки в UI) поднимает движок выше: sort
+    # стабильный, поэтому не оценённые вручную остаются в прежнем порядке
+    # (решение владельца 2026-07-23 — «неважно ллм или ттс или стт»).
+    _manual = ratings.manual_scores()
+
     stt_chain = [CFG.get("stt.engine", "gigaam")]
     for n in CFG.get("stt.fallback_order", []):
         if n not in stt_chain:
             stt_chain.append(n)
+    stt_chain.sort(key=lambda n: -_manual.get(n, 0))
     _try_chain("stt", stt_chain, stt.load_engine)
 
-    # голос: аналогично
     tts_chain = [CFG.get("tts.engine", "qwen3")]
     for n in CFG.get("tts.fallback_order", []):
         if n not in tts_chain:
             tts_chain.append(n)
+    tts_chain.sort(key=lambda n: -_manual.get(n, 0))
     _try_chain("tts", tts_chain, tts.load_engine)
     # разовый бенч незамеренных запасных голосов — чтобы выбор «по рейтингу»
     # опирался на реальные замеры этого ПК, а не на порядок в конфиге
@@ -1928,25 +1950,29 @@ def _autostart_components():
     except Exception as e:
         log.info("Бенч голосов пропущен: %s", e)
 
-    # мозги: СНАЧАЛА выбранная пользователем модель (config) — его выбор
-    # важнее рейтинга, рейтинг чисто скоростной и всегда тащит самую мелкую
-    # (e2b «обгоняет» e4b по ток/с, но не по уму). Остальные — запасные по
-    # убыванию рейтинга, если выбранная не поднялась.
+    # мозги: ПО РЕЙТИНГУ, лучшая — первая (решение владельца 2026-07-23:
+    # «модель, которая по рейтингу выше всего, должна быть самой первой на
+    # автоматическую загрузку»). Рейтинг = ручная оценка владельца (палочки
+    # в UI, синхронизируются через /api/ratings/manual) — она ПЕРЕБИВАЕТ
+    # авто-скоростную, ровно как в списке UI (effScore). Без ручной оценки —
+    # авто-балл из замеров ток/с. Последний выбор из config — только
+    # тайбрейк при равном рейтинге, очередь он больше не перепрыгивает.
     # ВАЖНО: "locallm" (свой llama.cpp/transformers движок) — полноправный
-    # бэкенд наравне с ollama/lmstudio. Раньше был забыт здесь при добавлении
-    # locallm, из-за чего выбор пользователя (llm.backend="locallm") молча
-    # игнорировался и автопуск всегда падал на лучший по рейтингу ollama/
-    # lmstudio (обычно e4b) — баг найден и исправлен 2026-07-22.
+    # бэкенд наравне с ollama/lmstudio (был забыт тут, исправлено 2026-07-22).
     BACKENDS_AUTOSTART = ("ollama", "lmstudio", "locallm")
     try:
         tps = ratings.llm_tps()
+        manual = ratings.manual_scores()
         cands = [(m["backend"], m["name"]) for m in llm.list_models()
                  if m["backend"] in BACKENDS_AUTOSTART
                  and "embed" not in m["name"].lower()]
-        cands.sort(key=lambda c: -tps.get(c[1], 0))
         cfg_pick = (CFG.get("llm.backend", "ollama"), CFG.get("llm.model", ""))
-        if cfg_pick[1] and cfg_pick[0] in BACKENDS_AUTOSTART:
-            cands = [cfg_pick] + [c for c in cands if c != cfg_pick]
+
+        def _eff(name):  # та же семантика, что effScore в ui/index.html
+            return manual.get(name, ratings.score_of(tps.get(name, 0)))
+
+        cands.sort(key=lambda c: (-_eff(c[1]), -tps.get(c[1], 0),
+                                  0 if c == cfg_pick else 1))
         for backend, model in cands:
             try:
                 if not llm.switch_model(backend, model):

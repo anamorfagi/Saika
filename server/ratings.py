@@ -57,7 +57,60 @@ def _score(tps: float) -> int:
 def llm_scores() -> dict:
     """{model: оценка 1..10}. Незамеренные — 0 (UI покажет «—», уедут наверх)."""
     return {m: _score(e.get("tps", 0)) for m, e in _load().items()
-            if not m.startswith("tts:")}
+            if not m.startswith("tts:") and not m.startswith("manual:")}
+
+
+# ---------------- ручные оценки владельца ----------------
+# Раньше жили ТОЛЬКО в localStorage браузера (ui/index.html, manualScores) —
+# пользователь тянет палочки, список в UI пересортировывается… а сервер про
+# это ни сном ни духом, и автопуск при старте продолжал выбирать по одному
+# лишь скоростному замеру. Реальная жалоба 2026-07-23: «поставил Huihui
+# высшую оценку — а грузится всё равно не она». Теперь UI синхронизирует
+# ручные оценки сюда (ключи "manual:<имя>"), и автопуск обязан их уважать:
+# ручная оценка ПЕРЕБИВАЕТ авто-скоростную (та же семантика, что в UI).
+# Имена общие для всех видов (LLM-модели, TTS/STT-движки) — как и в UI.
+
+def set_manual(name: str, score):
+    """score 1..10 или None (снять ручную оценку)."""
+    if not name:
+        return
+    key = "manual:" + name
+    with _lock:
+        d = _load()
+        if score is None:
+            d.pop(key, None)
+        else:
+            d[key] = {"score": max(1, min(10, int(score)))}
+        _save(d)
+
+
+def merge_manual(scores: dict) -> dict:
+    """Массовая синхронизация из UI (браузер присылает весь свой словарь).
+    Браузер — источник правды (оценки ставят именно там), его значения
+    перекрывают серверные. Возвращает итоговый словарь {имя: 1..10}."""
+    with _lock:
+        d = _load()
+        for name, sc in (scores or {}).items():
+            if not name:
+                continue
+            try:
+                d["manual:" + name] = {"score": max(1, min(10, int(sc)))}
+            except (TypeError, ValueError):
+                continue
+        _save(d)
+        return {k[7:]: e.get("score", 0) for k, e in d.items()
+                if k.startswith("manual:")}
+
+
+def manual_scores() -> dict:
+    """{имя: 1..10} — только ручные оценки."""
+    return {k[7:]: e.get("score", 0) for k, e in _load().items()
+            if k.startswith("manual:")}
+
+
+def score_of(tps: float) -> int:
+    """Публичный доступ к шкале ток/с -> 1..10 (для автопуска в main.py)."""
+    return _score(tps)
 
 
 # ---------------- рейтинг голосов (TTS) ----------------
@@ -106,4 +159,5 @@ def best_tts(order, exclude=(), favorites=()):
 
 
 def llm_tps() -> dict:
-    return {m: e.get("tps", 0) for m, e in _load().items()}
+    return {m: e.get("tps", 0) for m, e in _load().items()
+            if not m.startswith("tts:") and not m.startswith("manual:")}
