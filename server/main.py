@@ -149,9 +149,11 @@ def status():
 
 @app.get("/api/models")
 def models():
+    from server.llm import passport as _passport
     return {"models": llm.list_models(), "loaded": llm.loaded_models(),
             "ratings": ratings.llm_scores(), "tps": ratings.llm_tps(),
-            "manual": ratings.manual_scores()}
+            "manual": ratings.manual_scores(),
+            "passports": _passport.all_passports()}
 
 
 @app.post("/api/ratings/manual")
@@ -1123,6 +1125,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # (свежие сообщения важнее старых — старое и так уехало в память-эпизоды):
     # считаем в символах, ~3.5 символа на токен для русского.
     budget = int(CFG.get("llm.context_chars", 12000))
+    # паспорт модели: если пробы выяснили, что модель МОЛЧИТ на большом
+    # промпте (класс багов «0 токенов» — glm-4.6v/gemma-12b в LM Studio с
+    # малым окном), бюджет ужимается до замеренного рабочего автоматически
+    try:
+        from server.llm import passport as _passport
+        _pc = _passport.context_chars_for(CFG.get("llm.model", ""))
+        if _pc and _pc < budget:
+            budget = _pc
+    except Exception:
+        pass
     hist_budget = max(2000, budget - len(system))
     trimmed, used = [], 0
     for r, t in reversed(history):

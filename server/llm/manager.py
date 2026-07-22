@@ -238,6 +238,11 @@ def warmup(backend: str, model: str) -> bool:
                                 "messages": [{"role": "user", "content": "hi"}]},
                           timeout=900)
         log.info("Модель %s/%s прогрета", backend, model)
+        try:
+            from server.llm import passport
+            passport.ensure_async(backend, model)  # паспорт: пробы в фоне
+        except Exception:
+            pass
         return True
     except Exception as e:
         log.warning("Прогрев %s/%s не удался: %s", backend, model, e)
@@ -514,6 +519,18 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         # не включать thinking-фазу. llama.cpp/LM Studio понимают
         # chat_template_kwargs, остальные молча игнорируют поле.
         payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # целевое время ответа (llm.target_response_s, 0 = выкл): если
+        # паспорт знает скорость модели — считаем потолок токенов под цель.
+        # ТОЛЬКО при выключенных размышлениях: думающий режим съедает лимит
+        # мыслями и получает 0 токенов ответа (грабли 2026-07-21).
+        try:
+            from server.llm import passport
+            target = float(CFG.get("llm.target_response_s", 0) or 0)
+            tps = passport.tps_for(model)
+            if target > 0 and tps:
+                payload["max_tokens"] = max(96, int(tps * target * 0.8))
+        except Exception:
+            pass
     if tools:
         payload["tools"] = tools
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
