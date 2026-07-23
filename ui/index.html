@@ -437,6 +437,9 @@
       <input type="range" id="mic-gain" min="10" max="400" step="1"
              title="Усиление голоса ДО распознавания — влияет и на то, что слышит модель, и на прослушку"
              style="width:100%;margin:4px 0">
+      <div class="item" id="btn-mic-ns"
+           title="Шумодав браузера: давит клавиатуру/вентилятор до распознавания. Выключи на время прослушки, чтобы сравнить.">
+        🧹 <span id="mic-ns-label">Шумодав: вкл</span></div>
     </div>
   </div>
   <!-- модель -->
@@ -610,7 +613,8 @@ let outDevice=localStorage.outId||'';                       // основной 
 let dupDevice=localStorage.dupId||'';                       // дубль вывода (слышать самому)
 let ttsVolume=localStorage.ttsVol!=null?+localStorage.ttsVol:1;   // 0..1.5
 let monVolume=localStorage.monVol!=null?+localStorage.monVol:1;   // 0..3 громкость прослушки (только уши)
-let micGain=localStorage.micGain!=null?+localStorage.micGain:1;   // 0.1..4 усиление ДО STT (и модель, и прослушка)
+let micGain=localStorage.micGain!=null?+localStorage.micGain:2;   // 0.1..4 усиление ДО STT (по умолч. 2x — вместо выключенного AGC)
+let micNS=localStorage.micNS!=null?localStorage.micNS==='1':true; // шумодав браузера для STT
 let ttsVolNode=null, monGain=null, dupDest=null;
 const CABLE_RE=/cable|virtual|vb-?audio|voicemeeter|vac/i;   // виртуальные кабели
 
@@ -878,7 +882,11 @@ async function startMic(){
   // (в прослушке, полоске уровня и STT), а щелчки клавиш проходят
   // («шумодав наоборот», жалоба 2026-07-23). Диагностика важнее: пока
   // слушаешь себя — AEC выкл; выключил прослушку — вернулся.
-  const mc={echoCancellation:!monOn, noiseSuppression:false,
+  // шумодав по переключателю (по умолч. ВКЛ): 2026-07-23 попробовали
+  // совсем без него — шум клавиатуры/вентилятора дошёл до VAD, тот резал
+  // сегменты из шума, whisper на них галлюцинировал огрызки слов
+  // («слух по пезде»). Артефакты шумодава — меньшее зло.
+  const mc={echoCancellation:!monOn, noiseSuppression:micNS,
             autoGainControl:false};
   if(selectedMic) mc.deviceId={exact:selectedMic};
   micStream = await navigator.mediaDevices.getUserMedia({audio:mc});
@@ -917,7 +925,10 @@ async function startMic(){
     // перебивание: Сайка говорит, а ты начал — пригибаем её голос,
     // говоришь дальше ~полсекунды — она замолкает и слушает
     if(saikaSpeaking()){
-      if(rms > 0.03){                       // порог выше обычного VAD:
+      if(rms > 0.018){                      // порог выше обычного VAD;
+                                            // 0.03 был под AGC-уровни, без
+                                            // AGC голос тише — не доставал
+                                            // («не могу перебить»)
         if(!duckSince) duckSince=Date.now(); // в колонках играет её голос
         if(gainNode) gainNode.gain.setTargetAtTime(0.15, playCtx.currentTime, .08);
         if(Date.now()-duckSince > 450){ bargeIn(); duckSince=0; }
@@ -1023,6 +1034,7 @@ async function fillMicPop(){
   const mg=$('#mic-gain'); if(mg) mg.value=Math.round(micGain*100);
   const l1=$('#mon-vol-val'); if(l1) l1.textContent=Math.round(monVolume*100)+'%';
   const l2=$('#mic-gain-val'); if(l2) l2.textContent=Math.round(micGain*100)+'%';
+  const ns=$('#mic-ns-label'); if(ns) ns.textContent='Шумодав: '+(micNS?'вкл':'выкл');
   fillSttEngines();
 }
 
@@ -1541,6 +1553,11 @@ $('#mon-vol').oninput = e=>{
 $('#mic-gain').oninput = e=>{
   micGain=e.target.value/100; localStorage.micGain=micGain;
   const l=$('#mic-gain-val'); if(l) l.textContent=e.target.value+'%';
+};
+$('#btn-mic-ns').onclick = async()=>{
+  micNS=!micNS; localStorage.micNS=micNS?'1':'0';
+  $('#mic-ns-label').textContent='Шумодав: '+(micNS?'вкл':'выкл');
+  if(micOn){ stopMic(); await startMic(); }   // применить на живом потоке
 };
 $('#btn-clear').onclick = async()=>{
   await api('/api/dialog/clear',{});
