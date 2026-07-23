@@ -247,7 +247,11 @@ def schemas() -> list:
         local = local + _BROWSER_SCHEMAS
     if CFG.get("idle.allow_self_shutdown", True):
         local = local + [_SHUTDOWN_SCHEMA]
-    if CFG.get("hotkeys.enabled", True):
+    # хоткеи по умолчанию ВЫКЛючены (2026-07-23): abliterated-модель дважды
+    # навесила разрушительные бинды без просьбы (пробел→localhost, F8→Alt+F4
+    # закрыла приложения). Инструмент не показываем модели вообще, пока
+    # владелец сам не включит hotkeys.enabled=true в config.
+    if CFG.get("hotkeys.enabled", False):
         local = local + _hotkey_schemas()
     # файловые руки (рабочая папка files.roots) — всегда локальные;
     # если у HandsPC вдруг есть инструменты с теми же именами, он главнее

@@ -2107,12 +2107,14 @@ def main():
         pass
     # heartbeat самозапросов (импульсы): сама вспоминает про окно браузера
     threading.Thread(target=_impulse_loop, daemon=True).start()
-    # поднять сохранённые клавиатурные хоткеи (если пакет keyboard стоит)
-    try:
-        from server import hotkeys
-        hotkeys.register_all_keys()
-    except Exception as e:
-        log.debug("hotkeys register: %s", e)
+    # поднять сохранённые клавиатурные хоткеи — ТОЛЬКО если владелец включил
+    # hotkeys.enabled (по умолчанию выкл: модель дважды вешала опасные бинды)
+    if CFG.get("hotkeys.enabled", False):
+        try:
+            from server import hotkeys
+            hotkeys.register_all_keys()
+        except Exception as e:
+            log.debug("hotkeys register: %s", e)
     # живой самолечащий сторож: следит в реальном времени, Беймакс говорит
     # о проблеме и тут же чинит (report_problem внутри зовёт Беймакса)
     try:
