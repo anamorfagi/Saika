@@ -870,10 +870,15 @@ async function startMic(){
   // включены echoCancellation+noiseSuppression+autoGainControl. AGC и
   // шумодав «сдавливают» голос (компрессия + артефакты) — именно это
   // услышал владелец, когда прослушка стала играть те самые байты, что
-  // уходят в STT. Теперь: echoCancellation ВКЛ (обязателен — без него
-  // модель слышит собственный голос из колонок и отвечает сама себе),
-  // AGC и шумодав ВЫКЛ — вместо них ручной ползунок «Усиление микрофона».
-  const mc={echoCancellation:true, noiseSuppression:false,
+  // уходят в STT. AGC и шумодав ВЫКЛ — вместо них ползунок «Усиление
+  // микрофона». echoCancellation в обычном режиме ВКЛ (без него модель
+  // слышит собственный голос из колонок и отвечает сама себе), НО на
+  // время прослушки — ВЫКЛ: прослушка играет твой же голос, AEC считает
+  // его «эхом» и вычитает ИЗ микрофона — самоподавление: голос глохнет
+  // (в прослушке, полоске уровня и STT), а щелчки клавиш проходят
+  // («шумодав наоборот», жалоба 2026-07-23). Диагностика важнее: пока
+  // слушаешь себя — AEC выкл; выключил прослушку — вернулся.
+  const mc={echoCancellation:!monOn, noiseSuppression:false,
             autoGainControl:false};
   if(selectedMic) mc.deviceId={exact:selectedMic};
   micStream = await navigator.mediaDevices.getUserMedia({audio:mc});
@@ -966,12 +971,14 @@ function _playMonitorChunk(buf){
   src.start(monPlayTime);
   monPlayTime += ab.duration;
 }
-function toggleMonitor(){
+async function toggleMonitor(){
   if(monOn){
     monOn=false;
     if(monCtx){ monCtx.close(); monCtx=null; }
     $('#btn-monitor').textContent='🔉 Прослушать этот микрофон';
     $('#btn-monitor').classList.remove('sel');
+    // вернуть эхоподавление (constraints зависят от monOn — см. startMic)
+    if(micOn){ stopMic(); await startMic(); }
     return;
   }
   if(!micOn){
@@ -982,6 +989,9 @@ function toggleMonitor(){
   monOn=true;
   $('#btn-monitor').textContent='🔇 Выключить прослушку';
   $('#btn-monitor').classList.add('sel');
+  // перезапуск с echoCancellation:false — иначе AEC вычитает твой же
+  // голос, который играет прослушка (самоподавление)
+  stopMic(); await startMic();
 }
 
 /* ---------- всплывающие меню ---------- */
