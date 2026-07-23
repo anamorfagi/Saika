@@ -76,6 +76,16 @@ class STTManager:
         self.vad = VadSegmenter()
         self.lock = threading.Lock()
         self.on_problem = on_problem  # callback(component, error, action)
+        # 2026-07-23: раньше _notify звался НА КАЖДЫЙ чанк, пока основной
+        # движок сломан (комментарий в process_chunk обещал "сообщим один
+        # раз", а по факту — нет) — при потоковом STT это десятки вызовов в
+        # секунду, а каждый тянет за собой полную перезапись devboard.json
+        # (note_problem -> _save) и рассылку по всем websocket — забивало
+        # лог ("оч тыбсто строки летели") и грузило диск/память на ровном
+        # месте. Помним, на кого уже уведомили, и не повторяем, пока не
+        # вернулись на основной (тогда сброс — следующая поломка уведомит
+        # заново).
+        self._notified_fallback = None
 
     # ---------- выбор движка ----------
     @property
@@ -118,8 +128,13 @@ class STTManager:
                         if text:
                             results.append({"text": text, "engine": name})
                 if name != self.current_name:
-                    # работаем на запасном — сообщим один раз
-                    self._notify(name)
+                    # работаем на запасном — сообщим ОДИН раз за эпизод
+                    # (не на каждый чанк, см. коммент в __init__)
+                    if self._notified_fallback != name:
+                        self._notify(name)
+                        self._notified_fallback = name
+                else:
+                    self._notified_fallback = None
                 self.health[name] = "ok"
                 return results
             except Exception as e:

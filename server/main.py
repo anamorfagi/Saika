@@ -67,7 +67,7 @@ PROBLEMS: list[dict] = []          # лента проблем/починок д
 ACTIVE_LLM = {"backend": "", "model": ""}  # кто реально отвечал последним
 EVENT_CLIENTS: set = set()          # активные websockets
 DIALOG_CUTOFF = {"ts": 0.0}         # «новый диалог»: контекст только после отметки
-DIALOG_STATE = {"active_since": 0.0}   # идёт ли сейчас ответ (для импульсов)
+DIALOG_STATE = {"active_since": 0.0, "first_token_ts": 0.0}   # идёт ли сейчас ответ + успела ли выдать первый токен (для импульсов и живого контекста)
 LAST_IMAGE = {"data": None, "ts": 0.0}  # последняя картинка (для OCR слепыми)
 # уникальный id этого запуска процесса: вкладка запоминает его при коннекте
 # и, если после переподключения видит другой id, значит сервер
@@ -883,6 +883,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     memory.add_event(person_id, "user", user_text)
 
     DIALOG_STATE["active_since"] = time.time()
+    DIALOG_STATE["first_token_ts"] = 0.0
     t0 = time.monotonic()   # старт пайплайна (для разбивки «думала N сек»)
     mem_context = ""
     try:
@@ -1258,6 +1259,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 break
             if t_first is None:
                 t_first = time.monotonic()
+                DIALOG_STATE["first_token_ts"] = time.time()
             n_tokens += 1
             full_reply.append(token)
             sentence_buf += token
@@ -1286,20 +1288,61 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         log.info("LLM стрим завершён: %d токенов, прерван stop_event=%s",
                  n_tokens, stop_event.is_set())
 
-        # Псевдо-вызовы текстом от кривых моделей: <|tool_call|>call:NAME{...}
-        # или голый JSON {"name":"NAME"}. Вырезаем из ответа (в чат/память
-        # такое не попадает), а безопасные намерения ИСПОЛНЯЕМ по-настоящему:
-        # close_browser — закрыть окно; поисковые — заменить на честный
-        # серверный поиск словами; shutdown — только пометка, без действия.
+        # Псевдо-вызовы текстом от кривых моделей: <|tool_call|>call:NAME{...},
+        # голый JSON {"name":"NAME"}, или Harmony-формат gpt-oss — модель шлёт
+        # спецтокены <|channel|>commentary to=functions.web_search<|message|>
+        # {...}, LM Studio их прячет, а голый текст между ними («commentary
+        # to=web_search json{"query":...}») утекает как обычный ответ —
+        # 2026-07-23: openai/gpt-oss-20b именно так «ответил» пользователю
+        # сырым текстом инструмента вместо результата поиска.
+        # Вырезаем из ответа (в чат/память такое не попадает), а безопасные
+        # намерения ИСПОЛНЯЕМ по-настоящему: close_browser — закрыть окно;
+        # web_search/web_research/open_page/fetch_page — реальный вызов +
+        # короткая суммаризация словами; shutdown — только пометка.
         _raw = "".join(full_reply)
+        _harmony_m = re.search(
+            r'to=(?:functions\.)?([a-z_]+)\s*(?:json)?\s*(\{.*)',
+            _raw, re.I | re.S)
         _has_pseudo = ("<|" in _raw or "call:" in _raw
-                       or re.search(r'\{\s*"name"\s*:', _raw))
+                       or re.search(r'\{\s*"name"\s*:', _raw)
+                       or _harmony_m)
         if _has_pseudo:
             _names = re.findall(r'(?:call:|"name"\s*:\s*")([a-z_]+)',
                                 _raw, re.I)
+            _harmony_args = None
+            if _harmony_m:
+                _names.append(_harmony_m.group(1).lower())
+                # достаём JSON-объект по балансу скобок — regex `.*` жадно
+                # хватает лишнее, а нам нужен ровно один объект
+                _tail = _harmony_m.group(2)
+                depth, end = 0, None
+                for i, ch in enumerate(_tail):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                if end:
+                    try:
+                        _harmony_args = json.loads(_tail[:end])
+                    except Exception:
+                        _harmony_args = None
             clean = re.sub(r'<\|[^>]*\|>', '', _raw)
             clean = re.sub(r'call:[a-z_]+\s*(\{[^}]*\})?', '', clean, flags=re.I)
             clean = re.sub(r'\{\s*"name"\s*:.*?\}', '', clean, flags=re.S)
+            if _harmony_m:
+                # позиции _harmony_m посчитаны по _raw ДО подстановок выше —
+                # переиспользовать их как офсеты в уже изменённом clean
+                # опасно (могут разъехаться, если сработал ещё и другой
+                # паттерн). Ищем по факту в clean заново и режем максимум
+                # один раз.
+                _fresh = re.search(
+                    r'to=(?:functions\.)?[a-z_]+\s*(?:json)?\s*\{.*',
+                    clean, re.I | re.S)
+                if _fresh:
+                    clean = clean[:_fresh.start()] + clean[_fresh.end():]
             clean = clean.strip()
             acted = None
             if "close_browser" in _names:
@@ -1310,6 +1353,31 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                         acted = "закрыла окно браузера"
                 except Exception:
                     pass
+            elif any(n in _names for n in
+                    ("web_search", "web_research", "open_page", "fetch_page")):
+                _tool_name = next(n for n in _names if n in
+                                  ("web_search", "web_research",
+                                   "open_page", "fetch_page"))
+                try:
+                    from server.llm import tools as _handspc
+                    _result = _handspc.call(_tool_name, _harmony_args or {})
+                    _result = (_result or "")[:2500]
+                    if _result and "отказ:" not in _result[:20]:
+                        _summary = llm.chat_once([
+                            {"role": "system", "content":
+                             "Ты голосовой ассистент. Дай короткий "
+                             "устный ответ (1-3 фразы) по результату "
+                             "поиска ниже — без markdown, без ссылок "
+                             "списком, как будто рассказываешь другу."},
+                            {"role": "user", "content":
+                             f"Результат поиска:\n{_result}"}],
+                            max_len=600).strip()
+                        if _summary:
+                            clean = _summary
+                            acted = f"{_tool_name} исполнен по-настоящему"
+                except Exception as e:
+                    log.info("Досчитать псевдо-%s не вышло: %s",
+                            _tool_name, e)
             sentence_buf = ""
             if not clean:
                 clean = "Закрыла браузер." if acted else "Секунду, разберусь."
@@ -1380,6 +1448,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                         break
                     if t_first is None:
                         t_first = time.monotonic()
+                        DIALOG_STATE["first_token_ts"] = time.time()
                     n_tokens += 1
                     full_reply.append(token)
                     sentence_buf += token
@@ -1448,6 +1517,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             reply += " …(прервана — собеседник добавил уточнение)"
         memory.add_event(person_id, "assistant", reply)
     DIALOG_STATE["active_since"] = 0.0
+    DIALOG_STATE["first_token_ts"] = 0.0
     out.put({"type": "done"})
 
 
@@ -1678,7 +1748,23 @@ async def ws_endpoint(ws: WebSocket):
     def handle_text(user_text, heard_ts=None, image=None):
         nonlocal worker
         if worker is not None and worker.is_alive():
-            if CFG.get("dialog.live_context", True):
+            # живой контекст интересен только когда генерация УЖЕ что-то
+            # говорит — тогда есть что подхватывать. Если она ещё не выдала
+            # ни одного токена (холодный старт модели, долгий prefill,
+            # разбухший от предыдущих доливок промпт) — прерывать бессмысленно
+            # и вредно: 2026-07-23 ровно так модель ни разу не успела
+            # ответить за 3+ минуты — каждая новая (нетерпеливая) реплика
+            # юзера рестартовала генерацию за долю секунды до первого
+            # токена, и счётчик обнулялся до бесконечности («0 токенов,
+            # прерван stop_event=True» по кругу). Даём генерации грейс-период
+            # на выдачу первого токена; если он уже прошёл — считаем её
+            # зависшей и тоже не мешаем ждать (перезапуск всё равно не
+            # ускорит уже идущий prefill/загрузку модели).
+            started = DIALOG_STATE.get("active_since", 0.0)
+            has_output = DIALOG_STATE.get("first_token_ts", 0.0) > 0
+            gen_age = (time.time() - started) if started else 0.0
+            grace = CFG.get("dialog.live_context_grace_s", 6)
+            if CFG.get("dialog.live_context", True) and (has_output or gen_age < grace):
                 # докидка на лету: копим фразу И прерываем текущий ответ —
                 # _dialog_loop подхватит её в обновлённом контексте
                 log.info("handle_text: живой контекст — докидываю %r и "
@@ -1693,6 +1779,10 @@ async def ws_endpoint(ws: WebSocket):
                 out.put({"type": "queued", "text": user_text, "n": n})
                 stop_event.set()   # прервать текущий ответ -> рестарт в loop
             else:
+                if CFG.get("dialog.live_context", True):
+                    log.info("handle_text: генерация ещё без единого токена "
+                             "дольше %sс (холодный старт/завал) — коплю %r "
+                             "молча, НЕ прерываю", grace, user_text[:40])
                 # старое поведение: копим, ответим одним куском после
                 log.info("handle_text: диалог идёт — фраза %r в очередь",
                          user_text[:40])
