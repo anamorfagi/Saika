@@ -871,6 +871,7 @@ async function startMic(){
   workletNode = new AudioWorkletNode(audioCtx,'cap');
   workletNode.port.onmessage = e=>{
     if(ws && ws.readyState===1) ws.send(e.data);
+    if(monOn) _playMonitorChunk(e.data);   // «что слышит модель» — те же байты
     // индикатор уровня: RMS чанка -> полоска в кнопке 🎧
     const a=new Int16Array(e.data); let s=0, n=0;
     for(let i=0;i<a.length;i+=4){ const v=a[i]/32768; s+=v*v; n++; }
@@ -907,43 +908,50 @@ function stopMic(){
   if(ws && ws.readyState===1) ws.send(JSON.stringify({type:'mic_stop'}));
 }
 
-/* ---------- прослушка микрофона (слышишь сам себя) ---------- */
-let monOn=false, monStream, monCtx;
-async function toggleMonitor(){
+/* ---------- прослушка микрофона (буквально «что слышит модель») ----------
+   2026-07-23: раньше открывали ОТДЕЛЬНЫЙ getUserMedia со своими constraints
+   (echo/noise/AGC) — приходилось гадать, какой набор ближе к тому, что
+   реально уходит в STT, и жалобы «слышу клавиши, а голос глухо» лечились
+   подбором флагов вслепую. Теперь прослушка просто играет ТЕ ЖЕ САМЫЕ
+   байты (Int16 PCM 16кГц), что улетают в STT по вебсокету — то есть
+   гарантированно 100% то, что слышит модель, без всякого гадания. */
+let monOn=false, monCtx, monPlayTime=0;
+function _playMonitorChunk(buf){
+  if(!monCtx){
+    monCtx = new AudioContext({latencyHint:'interactive'});
+    monGain = monCtx.createGain();
+    monGain.gain.value = monVolume;
+    monGain.connect(monCtx.destination);
+    monPlayTime = 0;
+  }
+  const ints = new Int16Array(buf);
+  const f32 = new Float32Array(ints.length);
+  for(let i=0;i<ints.length;i++) f32[i] = ints[i]/32768;
+  const ab = monCtx.createBuffer(1, f32.length, 16000);
+  ab.copyToChannel(f32, 0);
+  const src = monCtx.createBufferSource();
+  src.buffer = ab; src.connect(monGain);
+  const now = monCtx.currentTime;
+  if(monPlayTime < now) monPlayTime = now + 0.05;   // догнать реальное время
+  src.start(monPlayTime);
+  monPlayTime += ab.duration;
+}
+function toggleMonitor(){
   if(monOn){
-    if(monCtx) monCtx.close();
-    if(monStream) monStream.getTracks().forEach(t=>t.stop());
     monOn=false;
+    if(monCtx){ monCtx.close(); monCtx=null; }
     $('#btn-monitor').textContent='🔉 Прослушать этот микрофон';
     $('#btn-monitor').classList.remove('sel');
     return;
   }
-  try{
-    // сырой звук без DSP браузера: echoCancellation глушит сам себя
-    // (вычитает из микро то, что слышит в колонках). noiseSuppression ВКЛ —
-    // давит клавиатуру/вентилятор без проблем echo/AGC.
-    // 2026-07-23: сперва AGC держали выключенным («плавает»), а тихость
-    // голоса пытались лечить ручным усилением (потолок слайдера подняли до
-    // 300%) — не помогло: владелец выкрутил на максимум, шум ОК, а голос
-    // всё равно «далеко». Плоский множитель громкости поднимает голос И фон
-    // одинаково — он не может добавить того «приближающего» эффекта, что
-    // даёт AGC (динамическая подтяжка именно голоса). Включаем AGC обратно;
-    // если начнёт заметно «плавать» (громкость гуляет туда-сюда) — тогда
-    // возвращать выключенным и искать другое решение (физическое положение
-    // микрофона, аппаратный буст в Windows).
-    const c={echoCancellation:false, noiseSuppression:true,
-             autoGainControl:true};
-    if(selectedMic) c.deviceId={exact:selectedMic};
-    monStream = await navigator.mediaDevices.getUserMedia({audio:c});
-    monCtx = new AudioContext({latencyHint:'interactive'});
-    monGain = monCtx.createGain();
-    monGain.gain.value = monVolume;
-    monCtx.createMediaStreamSource(monStream).connect(monGain);
-    monGain.connect(monCtx.destination);
-    monOn=true;
-    $('#btn-monitor').textContent='🔇 Выключить прослушку';
-    $('#btn-monitor').classList.add('sel');
-  }catch(e){ alert('Не удалось открыть микрофон: '+e); }
+  if(!micOn){
+    showProblem({error:'микрофон выключен', component:'monitor',
+                action:'сначала включи слух (🎧), потом прослушку'});
+    return;
+  }
+  monOn=true;
+  $('#btn-monitor').textContent='🔇 Выключить прослушку';
+  $('#btn-monitor').classList.add('sel');
 }
 
 /* ---------- всплывающие меню ---------- */
