@@ -16,8 +16,16 @@
   model     передаётся воркеру как --model
   timeout_s таймаут транскрипции (первая может ждать загрузку модели)
 
-Протокол воркера: GET /health; POST /transcribe?sr=16000 (тело — raw int16 LE)
--> {"text": "..."}.
+Протокол воркера: GET /health -> {"ok", "model_loaded", "loading", "error"};
+POST /transcribe?sr=16000 (тело — raw int16 LE) -> {"text": "..."} или
+{"loading": true} пока модель качается/грузится.
+
+2026-07-23: воркер во время первой закачки модели (~9 ГБ) отвечает
+{"loading": true} мгновенно — мы это НЕ считаем поломкой (категория
+'loading' в diagnostics, менеджер не перезапускает и не переустанавливает).
+Плюс усыновление: если наш свежий процесс упал, а порт занят ЖИВЫМ воркером
+(с прошлого запуска или от гонки перезапуска) — берём его, а не плодим
+процессы, которые падают о занятый порт («код 3» по кругу).
 """
 import logging
 import os
@@ -47,12 +55,17 @@ class ExternalEngine(STTEngine):
     def _url(self, path):
         return f"http://127.0.0.1:{self.cfg.get('port', 8766)}{path}"
 
-    def _alive(self):
+    def _health(self):
+        """dict из /health или None, если воркер не отвечает."""
         import requests
         try:
-            return requests.get(self._url("/health"), timeout=2).ok
+            r = requests.get(self._url("/health"), timeout=2)
+            return r.json() if r.ok else None
         except Exception:
-            return False
+            return None
+
+    def _alive(self):
+        return self._health() is not None
 
     def _venv_python(self):
         venv = resolve(self.cfg.get("venv", f".venv_{self.name}"))
@@ -96,6 +109,13 @@ class ExternalEngine(STTEngine):
             if self._alive():
                 return
             if self.proc.poll() is not None:
+                # наш процесс умер, но порт может держать ЖИВОЙ воркер
+                # (гонка перезапуска / остался с прошлого раза) — усыновляем
+                if self._alive():
+                    log.info("%s: порт занят живым воркером — усыновляю его, "
+                             "новый не спавню", self.name)
+                    self.proc = None
+                    return
                 raise RuntimeError(
                     f"{self.name}: воркер упал при старте "
                     f"(код {self.proc.returncode}), см. logs/{self.name}_worker.log")
@@ -112,6 +132,12 @@ class ExternalEngine(STTEngine):
             timeout=self.cfg.get("timeout_s", 180))
         r.raise_for_status()
         data = r.json()
+        if data.get("loading"):
+            # не поломка: модель ещё качается/грузится (первый раз — долго).
+            # Текст сигнатуры ловит diagnostics.classify -> категория 'loading'
+            raise RuntimeError(
+                f"{self.name}: модель ещё загружается (первая закачка может "
+                f"идти десятки минут) — воркер живой, работаю на запасном")
         if data.get("error"):
             raise RuntimeError(f"{self.name}: {data['error']}")
         return data.get("text", "").strip()

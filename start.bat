@@ -59,7 +59,10 @@ if "%NEED_SETUP%"=="1" (
 )
 
 :: ---------- quick check + auto-fix before start ----------
-"%VPY%" setup\doctor.py --fix
+:: --fast: если прошлый запуск был здоровым (младше суток), полный осмотр
+:: (десятки секунд подпроцессов с torch) пропускается — старт заметно быстрее.
+:: После падения сервера ниже зовётся полный doctor без --fast.
+"%VPY%" setup\doctor.py --fix --fast
 if errorlevel 1 (
     echo [!] Critical problems found - trying to start anyway...
 )

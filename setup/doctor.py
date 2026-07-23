@@ -194,7 +194,8 @@ def _stt_engine_valid():
     from server.config import CFG
     order = CFG.get("stt.fallback_order", [])
     mods = {"faster_whisper": "faster_whisper", "gigaam": "gigaam",
-            "vosk": "vosk", "whispercpp": "pywhispercpp", "tone": "tone"}
+            "vosk": "vosk", "whispercpp": "pywhispercpp", "tone": "tone",
+            "groq_whisper": "requests"}  # облачный — хватает requests
 
     def usable(name):
         venv = CFG.get(f"stt.engines.{name}.venv")
@@ -344,8 +345,31 @@ def run_checks(fix=False):
     return report
 
 
+def _fast_skip_ok():
+    """Быстрый старт: полный осмотр (куча python-подпроцессов с импортом
+    torch/faster_whisper/qwen_tts — десятки секунд) не нужен НА КАЖДЫЙ
+    запуск. Пропускаем, если (а) прошлый запуск дошёл до веб-сервера
+    (logs/boot_ok.json свежий, младше суток) и (б) последний отчёт доктора
+    без критических провалов. Падение сервера start.bat лечит полным
+    осмотром (зовёт doctor без --fast)."""
+    try:
+        boot = json.loads((ROOT / "logs" / "boot_ok.json")
+                          .read_text(encoding="utf-8"))
+        if time.time() - float(boot.get("ts", 0)) > 24 * 3600:
+            return False
+        report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+        return not any(c.get("status") == "fail" and c.get("required")
+                       for c in report)
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     fix = "--fix" in sys.argv
+    if "--fast" in sys.argv and _fast_skip_ok():
+        print("Беймакс: прошлый запуск был здоровым (<24ч) — быстрый старт, "
+              "полный осмотр пропускаю. Полный: setup\\doctor.py --fix")
+        sys.exit(0)
     report = run_checks(fix=fix)
     sys.exit(1 if any(c["status"] == "fail" and c["required"]
                       for c in report) else 0)

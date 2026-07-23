@@ -71,7 +71,10 @@
   .chip b{color:var(--text);font-weight:500;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
   /* всплывающие меню как в Claude */
-  .pop{position:absolute;bottom:52px;left:0;min-width:260px;max-height:320px;
+  /* один скролл на всё меню: внутренние списки НЕ скроллятся сами
+     (двойные скроллбары путали), прокручивается только сам .pop */
+  .pop{position:absolute;bottom:52px;left:0;min-width:260px;
+    max-height:min(76vh,calc(100vh - 120px));
     overflow-y:auto;background:var(--panel2);border:1px solid var(--border);
     border-radius:12px;padding:6px;display:none;z-index:10;
     box-shadow:0 8px 30px rgba(0,0,0,.5)}
@@ -88,6 +91,7 @@
     border-radius:6px;color:var(--dim);cursor:pointer;font-size:12px;
     width:26px;height:22px;line-height:1;flex:none}
   .pop .item button.mini:hover{color:var(--text);border-color:var(--accent)}
+  .pop .item button.mini.del:hover{color:var(--err);border-color:var(--err)}
   .pop .engerr{font-size:11px;color:var(--err);padding:0 10px 6px 28px;
     white-space:normal;word-break:break-word;cursor:text;user-select:text}
   /* бегущая полоска загрузки модели */
@@ -420,9 +424,9 @@
     <button class="iconbtn" id="btn-mic" title="Настройки микрофона">🎙</button>
     <div class="pop" id="pop-mic">
       <div class="title">Движок слуха</div>
-      <div id="stt-engines" style="max-height:200px;overflow-y:auto"></div>
+      <div id="stt-engines"></div>
       <div class="title">Микрофон в системе</div>
-      <div id="mic-devices" style="max-height:140px;overflow-y:auto"></div>
+      <div id="mic-devices"></div>
       <div class="title">Режим слуха</div>
       <div class="item" id="btn-always" title="Обычный режим: при включённом микрофоне отвечает на всё, что слышит. Умный слух (тест) — отвечает только по имени «Сайка» или пока идёт разговор.">
         <span id="always-ic">👂</span>&nbsp;<span id="always-label">Обычный (слушает всё)</span>
@@ -452,6 +456,9 @@
         <option value="openrouter">OpenRouter (все топ-модели, 1 ключ)</option>
         <option value="openai">OpenAI</option>
         <option value="groq">Groq</option>
+        <option value="kimi">Kimi (Moonshot AI)</option>
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="seed">Seed (ByteDance / BytePlus Ark)</option>
         <option value="deepseek">DeepSeek</option>
         <option value="custom">Своё (OpenAI-совместимое)</option>
       </select>
@@ -462,7 +469,7 @@
       <div id="cloud-status" style="font-size:11px;color:var(--dim);margin-top:4px"></div>
       </details>
       <div class="title">Модели (худшие сверху → лучшие внизу, у курсора)</div>
-      <div id="model-list" style="max-height:340px;overflow-y:auto"></div>
+      <div id="model-list"></div>
     </div>
   </div>
   <!-- голос -->
@@ -485,15 +492,22 @@
   <button class="iconbtn" id="btn-train" title="Инженерная вкладка — дообучение характера Сайки">🎓</button>
   <input id="input" placeholder="Скажи или напиши…" autocomplete="off">
   <button class="iconbtn" id="btn-send" title="Отправить">➤</button>
-  <!-- прикрепить картинку (мультимодальная модель посмотрит фото) -->
-  <button class="iconbtn" id="btn-attach" title="Прикрепить картинку (перетащи фото сюда). Модель должна быть с 👁">📎</button>
-  <input type="file" id="img-file" accept="image/*" style="display:none">
+  <!-- прикрепить картинку/PDF (мультимодальная модель посмотрит; PDF рендерится в картинку на сервере) -->
+  <button class="iconbtn" id="btn-attach" title="Прикрепить картинку или PDF-чертёж (перетащи файл сюда). Модель должна быть с 👁">📎</button>
+  <input type="file" id="img-file" accept="image/*,application/pdf" style="display:none">
 </div>
 <!-- превью прикреплённой картинки над панелью -->
 <div id="img-preview" style="display:none;position:relative;padding:6px 16px;
   border-top:1px solid var(--border);background:var(--panel)">
   <img id="img-thumb" style="max-height:64px;border-radius:8px;border:1px solid var(--border)">
   <button id="img-clear" class="iconbtn" title="Убрать"
+    style="width:22px;height:22px;font-size:11px;vertical-align:top;margin-left:8px">✕</button>
+</div>
+<!-- превью прикреплённого PDF (нет клиентского превью — просто имя файла) -->
+<div id="pdf-preview" style="display:none;position:relative;padding:6px 16px;
+  border-top:1px solid var(--border);background:var(--panel)">
+  <span style="font-size:12px;color:var(--text)">📄 <span id="pdf-name"></span></span>
+  <button id="pdf-clear" class="iconbtn" title="Убрать"
     style="width:22px;height:22px;font-size:11px;vertical-align:top;margin-left:8px">✕</button>
 </div>
 
@@ -724,6 +738,19 @@ function handleJson(m){
   else if(m.type==='audio_meta'){ curSr=m.sr; }
   else if(m.type==='done'){ curSaikaMsg=null; loader(false); }
   else if(m.type==='error'){ addMsg('saika','⚠ '+m.text); curSaikaMsg=null; loader(false); }
+  // молчание с объяснением: сервер разобрался, почему ответа не было
+  else if(m.type==='noreply'){ addMsg('saika','🤐 '+m.text); curSaikaMsg=null; loader(false); }
+  // LoopGuard оборвал зацикленную генерацию — тоже показываем, а не молчим
+  else if(m.type==='guard'){ addMsg('saika','🔁 Генерация зациклилась ('+(m.reason||'')+') — оборвала и пробую прийти в себя.'); }
+  // живой признак жизни на долгой генерации (2026-07-23): раньше долгая
+  // тишина ДО первого токена выглядела как зависший Беймакс — теперь сама
+  // подаёт голос, пока не пришёл первый токен
+  else if(m.type==='thinking'){
+    const d=document.createElement('div');
+    d.style.cssText='align-self:center;font-size:11px;color:var(--dim);padding:2px 6px';
+    d.textContent='⏳ '+m.text;
+    $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+  }
   else if(m.type==='baymax'){ addBaymax(m); }
   else if(m.type==='problem'){ showProblem(m); }
 }
@@ -1023,8 +1050,12 @@ async function fillMicPop(){
   $('#mic-devices').innerHTML='';
   mics.forEach((d,i)=>{
     const el=document.createElement('div');
-    el.className='item'+((selectedMic? d.deviceId===selectedMic : i===0)?' sel':'');
-    el.textContent='🎙 '+(d.label||('Микрофон '+(i+1)));
+    const sel = selectedMic ? d.deviceId===selectedMic : i===0;
+    el.className='item'+(sel?' sel':'');
+    const label=d.label||('Микрофон '+(i+1));
+    const labelEsc=label.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    el.innerHTML='🎙 <span class="mname" title="'+labelEsc+'">'+labelEsc+'</span>'+
+      (sel?' <span class="st ok">✓ выбран</span>':'');
     el.onclick=()=>{selectedMic=d.deviceId;localStorage.micId=d.deviceId;
       fillMicPop(); if(micOn){stopMic();startMic();}
       };
@@ -1056,13 +1087,18 @@ async function fillOutputs(){
   // По умолчанию — СИСТЕМНОЕ устройство (что стоит дефолтом в Windows,
   // наушники так наушники). Кабель для OBS/UE5 — только явным кликом.
   const box=$('#tts-outputs'); if(!box) return; box.innerHTML='';
+  const cableTag='<span class="tag" style="color:var(--dim);font-size:10px;flex:none" '+
+    'title="виртуальный аудио-кабель (для OBS/UE5 и т.п.)">кабель</span> ';
   outs.forEach((d,i)=>{
     const isCable=CABLE_RE.test(d.label||'');
     const el=document.createElement('div');
     const sel = outDevice ? d.deviceId===outDevice : d.deviceId==='default';
     el.className='item'+(sel?' sel':'');
-    el.textContent=(isCable?'🔌 ':'🔈 ')+(d.label||('Устройство '+(i+1)))
-      +(isCable?' · кабель':'');
+    const label=d.label||('Устройство '+(i+1));
+    const labelEsc=label.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    el.innerHTML=(isCable?'🔌':'🔈')+' '+(isCable?cableTag:'')+
+      '<span class="mname" title="'+labelEsc+'">'+labelEsc+'</span>'+
+      (sel?' <span class="st ok">✓ выбран</span>':'');
     el.onclick=async()=>{ outDevice=d.deviceId; localStorage.outId=outDevice;
       localStorage.outChosen='1';   // выбрал человек — уважаем выбор
       await applyOutputDevice(); fillOutputs(); };
@@ -1073,16 +1109,23 @@ async function fillOutputs(){
   // список дубля (слышать самому) — с пунктом «не дублировать» сверху
   const dbox=$('#tts-dup-outputs'); if(dbox){ dbox.innerHTML='';
     const off=document.createElement('div');
-    off.className='item'+(dupDevice?'':' sel');
-    off.textContent='🚫 не дублировать';
+    const offSel=!dupDevice;
+    off.className='item'+(offSel?' sel':'');
+    off.innerHTML='🚫 <span class="mname">не дублировать</span>'+
+      (offSel?' <span class="st ok">✓ выбран</span>':'');
     off.onclick=async()=>{ dupDevice=''; localStorage.dupId='';
       await applyDupDevice(); fillOutputs(); };
     dbox.appendChild(off);
     outs.forEach((d,i)=>{
       const isCable=CABLE_RE.test(d.label||'');
       const el=document.createElement('div');
-      el.className='item'+(d.deviceId===dupDevice?' sel':'');
-      el.textContent=(isCable?'🔌 ':'🎧 ')+(d.label||('Устройство '+(i+1)));
+      const sel=d.deviceId===dupDevice;
+      el.className='item'+(sel?' sel':'');
+      const label=d.label||('Устройство '+(i+1));
+      const labelEsc=label.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      el.innerHTML=(isCable?'🔌':'🎧')+' '+(isCable?cableTag:'')+
+        '<span class="mname" title="'+labelEsc+'">'+labelEsc+'</span>'+
+        (sel?' <span class="st ok">✓ выбран</span>':'');
       el.onclick=async()=>{ dupDevice=d.deviceId; localStorage.dupId=dupDevice;
         await applyDupDevice(); fillOutputs(); };
       dbox.appendChild(el);
@@ -1094,9 +1137,16 @@ function fillSttEngines(){
   const names={faster_whisper:'Faster-Whisper (large-v3-turbo)',
     gigaam:'GigaAM v3 (Сбер)', vosk:'Vosk (лёгкий, офлайн)',
     whispercpp:'Whisper.cpp', tone:'T-one (Т-Банк)',
-    voxtral:'Voxtral Realtime 4B (Mistral)'};
+    voxtral:'Voxtral Realtime 4B (Mistral)',
+    groq_whisper:'☁ Whisper (облако, 0 VRAM)'};
   const st = status.stt||{};
-  const box=$('#stt-engines'); box.innerHTML='';
+  const box=$('#stt-engines');
+  // один скролл на всё меню (.pop). Позицию пользователя сохраняем:
+  // refresh() перерисовывает список каждые 5с, и прежний
+  // «box.scrollTop=scrollHeight» в конце отшвыривал прокрутку вниз.
+  const pop=box.closest('.pop');
+  const prevScroll=pop?pop.scrollTop:0;
+  box.innerHTML='';
   // сортируем по оценке ВВЕРХ: лучший движок слуха — внизу, у курсора
   const engs=(st.engines||[]).slice()
     .sort((a,b)=>effScore(a,sttScore(a,st))-effScore(b,sttScore(b,st)));
@@ -1137,9 +1187,9 @@ function fillSttEngines(){
       box.appendChild(ed);
     }
   });
-  // лучший движок — последний в списке (внизу, у курсора/кнопки) —
-  // открываем панель сразу проскроленной к нему, а не к худшему сверху
-  box.scrollTop = box.scrollHeight;
+  // прокрутку не трогаем — просто возвращаем как было у пользователя.
+  // (лучший движок и так внизу секции, а панель обычно влезает целиком)
+  if(pop) pop.scrollTop = prevScroll;
 }
 
 /* ---------- панель системы слева ---------- */
@@ -1191,15 +1241,27 @@ function weightDot(m){ return weightDotBytes(m.size, 1.2, false); }
 /* оценочный вес STT/TTS-движков в памяти (байты). Для индикатора нагрузки —
    реального API размеров у них нет, цифры приблизительные по классам моделей. */
 const STT_WEIGHT={faster_whisper:1.6e9, gigaam:1.0e9, vosk:0.05e9,
-  whispercpp:1.5e9, tone:0.2e9, voxtral:9e9};
+  whispercpp:1.5e9, tone:0.2e9, voxtral:9e9, groq_whisper:null};
 const TTS_WEIGHT={qwen3:3.6e9, silero:0.1e9, edge:null};
 
 let modelPoll=null;
+// взведённый крестик удаления: refresh() перерисовывает список каждые 5с и
+// раньше «съедал» состояние «точно?» между двумя кликами — модель не
+// удалялась. Держим взвод вне DOM: ключ модели + дедлайн.
+let delArmKey=null, delArmUntil=0;
 async function fillModelPop(){
   const r = await (await fetch('/api/models')).json();
   const loaded = new Set(r.loaded||[]);
   const ratings=r.ratings||{}, tpsMap=r.tps||{};
-  const list=$('#model-list'); list.innerHTML='';
+  const list=$('#model-list');
+  // скроллит теперь родительское меню (.pop, один скроллбар). Запоминаем,
+  // где пользователь, ДО перерисовки: refresh() зовёт нас каждые 5с, и
+  // раньше список «отскакивал» вниз, стоило прокрутить вверх.
+  const pop=list.closest('.pop');
+  const wasEmpty=!list.childElementCount;
+  const prevScroll=pop?pop.scrollTop:0;
+  const wasAtBottom=pop ? (pop.scrollTop+pop.clientHeight>=pop.scrollHeight-30) : true;
+  list.innerHTML='';
   // тумблер «размышлений» думающих моделей (gemma-4, qwen3, r1…):
   // мысли = те самые «думала 7-10с» перед ответом. Выкл = отвечает сразу.
   {
@@ -1234,6 +1296,10 @@ async function fillModelPop(){
                : isLoaded ? ' <span class="st" style="color:var(--dim)">в памяти</span>' : '';
     const btn = `<button class="mini" title="${isLoaded?'Выгрузить из памяти'
         :'Загрузить в память'}">${isLoaded?'⏏':'⬇'}</button>`;
+    // ✕ удалить модель С ДИСКА — только для локальных бэкендов с файлами
+    const canDel = m.backend==='ollama'||m.backend==='lmstudio';
+    const delBtn = canDel ? `<button class="mini del"
+        title="Удалить модель из системы (стереть с диска)">✕</button>` : '';
     const backendLabel=m.backend==='ollama'?'ol':m.backend==='lmstudio'?'lm'
       :m.backend==='locallm'?'lo':m.backend==='cloud'?'☁':m.backend;
     const tag='<span class="tag" style="color:var(--dim);font-size:10px;flex:none" title="бэкенд">'+
@@ -1242,13 +1308,52 @@ async function fillModelPop(){
     el.innerHTML=scoreBar(m.name, score, tps?('~'+tps+' ток/с'):'ещё не замеряла')+
       tag+weightDot(m)+
       '<span class="mname" title="'+nameEsc+'">🧠 '+m.name+'</span>'+
-      capsBadges(m)+dot+btn;
-    const mb=el.querySelector('.mini');
+      capsBadges(m)+dot+btn+delBtn;
+    const mb=el.querySelector('.mini:not(.del)');
     if(mb) mb.onclick=async(e)=>{
       e.stopPropagation();
       mb.textContent='⏳'; mb.disabled=true;
       await api('/api/llm/model',{name:m.name,backend:m.backend,
                                   action:isLoaded?'unload':'load'});
+      fillModelPop();
+    };
+    // удаление с диска: двухшаговое подтверждение прямо в кнопке
+    // (1-й клик — «взводит» на 6с, 2-й — удаляет по-настоящему).
+    // Взвод хранится в delArmKey (вне DOM), поэтому переживает
+    // перерисовку списка по refresh() каждые 5с.
+    const db=el.querySelector('.mini.del');
+    const mkey=m.backend+'/'+m.name;
+    const arm=(on)=>{
+      if(!db) return;
+      db.textContent=on?'точно?':'✕';
+      db.style.width=on?'auto':''; db.style.color=on?'var(--err)':'';
+      db.style.borderColor=on?'var(--err)':'';
+      db.title=on?'Клик ещё раз — модель будет СТЁРТА с диска'
+               :'Удалить модель из системы (стереть с диска)';
+    };
+    if(db && delArmKey===mkey && Date.now()<delArmUntil) arm(true);
+    if(db) db.onclick=async(e)=>{
+      e.stopPropagation();
+      const armed = delArmKey===mkey && Date.now()<delArmUntil;
+      if(!armed){
+        delArmKey=mkey; delArmUntil=Date.now()+6000;
+        arm(true);
+        setTimeout(()=>{ if(db.isConnected && !(delArmKey===mkey &&
+          Date.now()<delArmUntil)) arm(false); },6100);
+        return;
+      }
+      delArmKey=null;
+      db.textContent='⏳'; db.disabled=true;
+      const r=await api('/api/llm/model',{name:m.name,backend:m.backend,
+                                          action:'delete'});
+      if(r && r.error){
+        db.disabled=false; arm(false);
+        db.title='Не удалилась: '+r.error;
+        db.style.color='var(--err)';
+        addMsg('saika','⚠ Модель '+m.name+' не удалилась: '+r.error);
+        return;
+      }
+      addMsg('saika','🗑 '+(r.detail||m.name+' удалена'));
       fillModelPop();
     };
     el.onclick=async()=>{
@@ -1272,8 +1377,13 @@ async function fillModelPop(){
     };
     list.appendChild(el);
   });
-  // лучшая модель — последняя (внизу, ближе к кнопке) — скроллим сразу к ней
-  list.scrollTop = list.scrollHeight;
+  // лучшая модель — последняя (внизу, ближе к кнопке): при ПЕРВОМ открытии
+  // скроллим к ней; при перерисовках держим позицию пользователя (к низу
+  // липнем только если он и так был внизу)
+  if(pop){
+    if(wasEmpty || wasAtBottom) pop.scrollTop = pop.scrollHeight;
+    else pop.scrollTop = prevScroll;
+  }
 }
 /* значки возможностей модели — аккуратные боксы в ряд, как в LM Studio */
 function capIcon(g, t, c){
@@ -1381,7 +1491,10 @@ function fillTtsPop(){
   const names={qwen3:'Qwen3-TTS — голос Сайки', silero:'Silero (запасной)',
     edge:'Edge-TTS (онлайн)'};
   const st=status.tts||{};
-  const box=$('#tts-engines'); box.innerHTML='';
+  const box=$('#tts-engines');
+  const pop=box.closest('.pop');
+  const prevScroll=pop?pop.scrollTop:0;   // не дёргаем прокрутку при refresh
+  box.innerHTML='';
   // сортируем по оценке ВВЕРХ: лучшая озвучка внизу, у самого курсора
   const engs=(st.engines||[]).slice()
     .sort((a,b)=>effScore(a,ttsScore(a,st))-effScore(b,ttsScore(b,st)));
@@ -1421,9 +1534,8 @@ function fillTtsPop(){
       box.appendChild(ed);
     }
   });
-  // лучшая озвучка — последняя в списке (внизу, у курсора/кнопки) —
-  // открываем панель сразу проскроленной к ней, а не к худшей сверху
-  box.scrollTop = box.scrollHeight;
+  // позицию прокрутки возвращаем как была (скроллит родительское меню)
+  if(pop) pop.scrollTop = prevScroll;
 }
 
 async function api(url, body){
@@ -1512,6 +1624,9 @@ const CLOUD_PRESETS={
   openrouter:{url:'https://openrouter.ai/api/v1', hint:'напр. anthropic/claude-3.5-sonnet, openai/gpt-4o, google/gemini-2.0-flash'},
   openai:{url:'https://api.openai.com/v1', hint:'напр. gpt-4o, gpt-4o-mini'},
   groq:{url:'https://api.groq.com/openai/v1', hint:'напр. llama-3.3-70b-versatile'},
+  kimi:{url:'https://api.moonshot.ai/v1', hint:'напр. kimi-k3 (ключ — platform.kimi.ai)'},
+  seed:{url:'https://ark.ap-southeast.bytepluses.com/api/v3', hint:'напр. seed-2-0-lite-260228 (ключ — console.byteplus.com, ModelArk)'},
+  anthropic:{url:'https://api.anthropic.com/v1', hint:'напр. claude-sonnet-4-6 (нужен API-ключ, подписка Max не подходит)'},
   deepseek:{url:'https://api.deepseek.com/v1', hint:'напр. deepseek-chat'},
   custom:{url:'', hint:'своя OpenAI-совместимая модель'}
 };
@@ -1528,6 +1643,9 @@ async function loadCloud(){
 $('#cloud-provider').onchange=()=>{
   const p=CLOUD_PRESETS[$('#cloud-provider').value]||CLOUD_PRESETS.custom;
   if(p.url) $('#cloud-base').value=p.url;
+  // имя модели от ПРЕЖНЕГО провайдера почти наверняка не подойдёт новому
+  // (у Groq — llama-3.3-70b-versatile, у OpenRouter — vendor/model:free…)
+  $('#cloud-model').value='';
   $('#cloud-model').placeholder=p.hint;
 };
 $('#cloud-save').onclick=async()=>{
@@ -1535,9 +1653,21 @@ $('#cloud-save').onclick=async()=>{
     model:$('#cloud-model').value.trim(), enabled:true};
   const k=$('#cloud-key').value.trim(); if(k) body.api_key=k;
   if(!body.model){ $('#cloud-status').textContent='впиши название модели'; return; }
-  await api('/api/llm/cloud', body);
+  $('#cloud-status').textContent='проверяю ключ у провайдера…';
+  const r=await api('/api/llm/cloud', body);
   $('#cloud-key').value='';
-  $('#cloud-status').textContent='✓ сохранено и включено';
+  // сервер сходил к провайдеру за /models: сразу видно, жив ли ключ
+  // и существует ли такая модель — а не при первой фразе
+  if(r.key_ok===false){
+    $('#cloud-status').textContent='✗ провайдер отверг ключ (401) — проверь его';
+  } else if(r.model_ok===false){
+    const sug=(r.models||[]).filter(m=>/chat|instruct|llama|gpt|qwen|deepseek|gemma/i.test(m)).slice(0,4).join(', ');
+    $('#cloud-status').textContent='⚠ сохранено, но модели «'+body.model+'» у провайдера нет.'+(sug?' Есть напр.: '+sug:'');
+  } else if(r.key_ok===true){
+    $('#cloud-status').textContent='✓ ключ работает'+(r.model_ok?', модель на месте':'')+' — включено';
+  } else {
+    $('#cloud-status').textContent='✓ сохранено и включено (проверка ключа не удалась — сеть?)';
+  }
   fillModelPop(); refresh();
 };
 $('#btn-tts').onclick = ()=>{ fillTtsPop(); fillOutputs(); togglePop('pop-tts'); };
@@ -1997,35 +2127,55 @@ $('#tr-export').onclick = async()=>{
 
 $('#btn-send').onclick = send;
 $('#input').addEventListener('keydown', e=>{ if(e.key==='Enter') send(); });
-let pendingImage=null;
+let pendingImage=null, pendingPdf=null;
 function setImage(dataUrl){ pendingImage=dataUrl; $('#img-thumb').src=dataUrl;
   $('#img-preview').style.display='block'; }
 function clearImage(){ pendingImage=null; $('#img-preview').style.display='none';
   $('#img-file').value=''; }
-function fileToImage(file){ if(!file||!file.type.startsWith('image/')) return;
-  const rd=new FileReader(); rd.onload=()=>setImage(rd.result); rd.readAsDataURL(file); }
+// 2026-07-23: PDF-чертежи (эвакуационные планы и т.п.) — клиент их не рисует
+// (нет PDF-рендера в браузере без тяжёлых библиотек), просто шлёт base64 PDF
+// целиком; сервер рендерит первую страницу в PNG (server/pdf_hands.py) и
+// дальше это идёт по тому же пути, что обычная прикреплённая картинка.
+function setPdf(dataUrl, name){ pendingPdf=dataUrl; $('#pdf-name').textContent=name||'чертёж.pdf';
+  $('#pdf-preview').style.display='block'; }
+function clearPdf(){ pendingPdf=null; $('#pdf-preview').style.display='none';
+  $('#img-file').value=''; }
+function fileToAttachment(file){
+  if(!file) return;
+  if(file.type==='application/pdf'){
+    clearImage();
+    const rd=new FileReader(); rd.onload=()=>setPdf(rd.result, file.name); rd.readAsDataURL(file);
+    return;
+  }
+  if(!file.type.startsWith('image/')) return;
+  clearPdf();
+  const rd=new FileReader(); rd.onload=()=>setImage(rd.result); rd.readAsDataURL(file);
+}
 $('#btn-attach').onclick=()=>$('#img-file').click();
-$('#img-file').onchange=e=>fileToImage(e.target.files[0]);
+$('#img-file').onchange=e=>fileToAttachment(e.target.files[0]);
 $('#img-clear').onclick=clearImage;
-/* drag-drop картинки в любое место окна + вставка из буфера (Ctrl+V) */
+$('#pdf-clear').onclick=clearPdf;
+/* drag-drop картинки/PDF в любое место окна + вставка из буфера (Ctrl+V) */
 window.addEventListener('dragover', e=>e.preventDefault());
 window.addEventListener('drop', e=>{ e.preventDefault();
-  const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) fileToImage(f); });
+  const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) fileToAttachment(f); });
 window.addEventListener('paste', e=>{
-  const it=[...((e.clipboardData&&e.clipboardData.items)||[])].find(i=>i.type.startsWith('image/'));
-  if(it) fileToImage(it.getAsFile());
+  const it=[...((e.clipboardData&&e.clipboardData.items)||[])].find(
+    i=>i.type.startsWith('image/')||i.type==='application/pdf');
+  if(it) fileToAttachment(it.getAsFile());
 });
 function send(){
   const v=$('#input').value.trim();
-  if((!v && !pendingImage) || !ws || ws.readyState!==1) return;
+  if((!v && !pendingImage && !pendingPdf) || !ws || ws.readyState!==1) return;
   const msg={type:'text', text:v};
   if(pendingImage) msg.image=pendingImage;
+  if(pendingPdf) msg.pdf=pendingPdf;
   ws.send(JSON.stringify(msg));
-  const bubble=addMsg('user', v||'🖼 картинка'); curSaikaMsg=null;
+  const bubble=addMsg('user', v||(pendingPdf?'📄 PDF-чертёж':'🖼 картинка')); curSaikaMsg=null;
   if(pendingImage){ const im=document.createElement('img'); im.src=pendingImage;
     im.style.cssText='max-height:120px;border-radius:8px;margin-top:6px;display:block';
     bubble.appendChild(im); }
-  $('#input').value=''; clearImage();
+  $('#input').value=''; clearImage(); clearPdf();
   loader(true);   // ждём ответ модели — показываем полоску активности
 }
 /* тонкая полоска активности сверху (модель грузится/думает/отвечает) */

@@ -1,10 +1,12 @@
-"""ИИ-Беймакс: локальная LLM (Ollama / LM Studio) читает логи и чинит Сайку.
+"""ИИ-Беймакс: LLM (текущие мозги Сайки — Ollama / LM Studio / облако)
+читает логи и чинит Сайку.
 
 Как работает:
  1. Собирает контекст: отчёт обычного доктора, хвост logs/saika.log,
     config.json, версии окружения.
- 2. Отдаёт это локальной LLM (той же, что выбрана для Сайки) и просит
-    план починки в виде СТРОГОГО JSON из безопасного набора действий.
+ 2. Отдаёт это LLM (той же, что выбрана для Сайки, — в том числе облачной
+    вроде Kimi) и просит план починки в виде СТРОГОГО JSON из безопасного
+    набора действий.
  3. Выполняет только действия из белого списка (см. ниже), максимум 5 за
     раунд, до 3 раундов; после каждого раунда перепроверяет доктором.
  4. Всё пишет в logs/ai_doctor.log.
@@ -19,7 +21,9 @@
   python setup/ai_doctor.py          интерактивно (спросит подтверждение)
   python setup/ai_doctor.py --auto   молча: выходит если всё ок, чинит если нет
                                      (вызывается из start.bat при падениях)
-Нужен работающий Ollama или LM Studio с хотя бы одной моделью.
+  из кода сервера: ai_doctor.run(auto=True, on_event=колбэк) — 2026-07-23,
+  зовётся фоном при КАЖДОМ старте Сайки (main.py), прогресс уходит пузырями
+  Беймакса в чат. Нужен работающий LLM-бэкенд (любой).
 """
 import json
 import os
@@ -126,9 +130,9 @@ def has_problems(report):
 def ask_llm(ctx):
     from server.llm import manager as llm
     if not any(llm.backend_status().values()):
-        _log("[X] Ни Ollama, ни LM Studio не отвечают — ИИ-Беймаксу не с кем думать.")
+        _log("[X] Ни один LLM-бэкенд не отвечает — ИИ-Беймаксу не с кем думать.")
         return None
-    _log("[ai] Спрашиваю локальную модель…")
+    _log("[ai] Спрашиваю модель…")
     raw = llm.chat_once([{"role": "system", "content": SYSTEM},
                          {"role": "user", "content": ctx}], max_len=8000)
     m = re.search(r"\[.*\]", raw, re.S)
@@ -191,28 +195,45 @@ def execute(act) -> str:
     return ""
 
 
-def main():
-    auto = "--auto" in sys.argv
+def run(auto=True, on_event=None) -> bool:
+    """Полный цикл ИИ-Беймакса. Возвращает True, если реально что-то чинил.
+
+    auto=False — спросить подтверждение в консоли (CLI-режим).
+    on_event(text) — необязательный колбэк для живого прогресса (сервер
+    передаёт сюда рассылку пузырей Беймакса в чат). Никогда не бросает
+    наружу: любые ошибки уходят в лог."""
+    def emit(text):
+        if not on_event:
+            return
+        try:
+            on_event(str(text))
+        except Exception:
+            pass
+
     report, ctx = collect_context()
     if not has_problems(report):
         _log("✓ Проблем не вижу — ИИ-Беймакс не нужен.")
-        return
+        return False
 
     if not auto:
-        ans = input("Найдены проблемы. Позвать локальную LLM чинить? [y/N] ")
+        ans = input("Найдены проблемы. Позвать LLM чинить? [y/N] ")
         if ans.strip().lower() not in ("y", "д", "да", "yes"):
-            return
+            return False
 
+    emit("осмотр при запуске: вижу проблемы — зову умного доктора, чиню в фоне")
     for rnd in range(1, MAX_ROUNDS + 1):
         _log(f"\n── ИИ-Беймакс, раунд {rnd}/{MAX_ROUNDS} ──")
         plan = ask_llm(ctx)
         if plan is None:  # нет LLM
-            return
+            emit("умный доктор недоступен: ни один LLM-бэкенд не отвечает")
+            return False
         if not plan:
             _log("[!] Пустой план — прекращаю.")
-            return
+            return rnd > 1
         finished = False
         for act in plan[:MAX_ACTIONS]:
+            if act.get("action") in ("note", "done") and act.get("text"):
+                emit(act["text"])
             if execute(act) == "done":
                 finished = True
                 break
@@ -221,9 +242,16 @@ def main():
         report = run_checks(fix=True)
         if finished or not has_problems(report):
             _log("✓ ИИ-Беймакс закончил.")
-            return
+            emit("починка закончена — перепроверил, живём")
+            return True
         _, ctx = collect_context()
     _log("[!] Раунды кончились — что осталось, чинить руками (см. logs/ai_doctor.log).")
+    emit("сделал что смог; остаток — руками, подробности в logs/ai_doctor.log")
+    return True
+
+
+def main():
+    run(auto="--auto" in sys.argv)
 
 
 if __name__ == "__main__":

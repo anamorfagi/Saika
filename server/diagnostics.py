@@ -6,7 +6,7 @@
 сырой стек-трейс, а понятную причину и то, что Сайка уже делает сама.
 
 Возвращаемая структура (dict):
-  category : str   — network / space / corrupt / cuda / internal / offline / unknown
+  category : str   — loading / network / space / corrupt / cuda / internal / offline / unknown
   human    : str   — что случилось, человеческим языком
   action   : str   — что Сайка делает автоматически прямо сейчас
   fix      : str|None — код авто-починки для менеджера:
@@ -14,10 +14,17 @@
                        "pagefile"    подсказать про tools/fix_pagefile.bat
                        "switch"      просто уйти на запасной движок
                        "cpu"         откатиться на CPU
+                       "wait"        ничего не чинить — процесс идёт сам
 """
 
 # каждая запись: (список сигнатур в тексте ошибки, функция-строитель ответа)
 # порядок важен — более специфичные категории идут раньше общих.
+
+# 2026-07-23: «модель ещё грузится» — НЕ поломка. Раньше долгую первую
+# закачку Voxtral (~9 ГБ) принимали за network-смерть и перезапускали
+# воркер по кругу (падал о занятый порт, «код 3»).
+_LOADING = ("ещё загружается", "модель ещё грузится", "первая закачка",
+            "still loading", "model is loading", "воркер живой")
 
 _NETWORK = ("read timed out", "readtimeout", "read timeout", "max retries",
             "httpsconnectionpool", "connectionerror", "getaddrinfo",
@@ -55,8 +62,18 @@ def classify(component: str, error: str) -> dict:
     t = (error or "").lower()
     name = component.split(".")[-1] if component else "движок"
 
-    # порядок: сеть перед space (таймаут HF важнее, чем «не хватило места»
-    # где-то в тексте), corrupt перед offline, cuda отдельно.
+    # порядок: loading раньше всех (это вообще не ошибка), сеть перед space
+    # (таймаут HF важнее, чем «не хватило места» где-то в тексте),
+    # corrupt перед offline, cuda отдельно.
+    if _has(t, _LOADING):
+        return {
+            "category": "loading",
+            "human": (f"«{name}» ещё загружает модель — первая закачка "
+                      "большая и может идти десятки минут."),
+            "action": ("работаю на запасном движке; воркер докачает сам, "
+                       "и я вернусь на него автоматически"),
+            "fix": "wait"}
+
     if _has(t, _NETWORK):
         return {
             "category": "network",
@@ -127,8 +144,8 @@ def short(component: str, error: str) -> str:
 
 # сломанному модулю оценка зависит от категории причины (что-то лечится легко,
 # что-то — глубокая проблема)
-_BROKEN_SCORE = {"corrupt": 4, "network": 4, "offline": 4, "internal": 3,
-                 "space": 3, "cuda": 2, "unknown": 2}
+_BROKEN_SCORE = {"loading": 6, "corrupt": 4, "network": 4, "offline": 4,
+                 "internal": 3, "space": 3, "cuda": 2, "unknown": 2}
 
 
 def assess(component: str, health: str, loaded, is_current: bool,

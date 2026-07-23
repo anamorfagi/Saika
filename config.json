@@ -5,18 +5,18 @@
     "auto_open_browser": true
   },
   "llm": {
-    "backend": "locallm",
+    "backend": "cloud",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "t-tech/T-lite-it-2.1",
+    "model": "kimi-k3",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "openrouter",
-      "base_url": "https://openrouter.ai/api/v1",
-      "model": "meta-llama/llama-3.3-70b-instruct:free"
+      "provider": "kimi",
+      "base_url": "https://api.moonshot.ai/v1",
+      "model": "kimi-k3"
     },
     "tools_broken": [
       "google/gemma-4-12b-qat",
@@ -105,6 +105,8 @@
     "engine": "qwen3",
     "enabled": true,
     "disabled": [],
+    "output_device": "CABLE Input",
+    "output_device_dup": "WH-1000XM4",
     "voice_ref": "voice/ref.mp3",
     "voice_ref_wav": "voice/ref.wav",
     "voice_ref_text": "Я проснулась раньше будильника, когда комната всё ещё была укутана синим рассветом. Несколько секунд я просто слушала своё дыхание и ощущала тихую тяжесть грядущего дня. Раньше утра пугали меня, слишком много ожиданий, слишком много незавершённых мыслей. Теперь они кажутся чистыми страницами. Я сварила кофе, наблюдая, как поднимается пар, словно что-то живое, и улыбнулась этому маленькому ритуалу. Снаружи город медленно просыпался, притворяясь спокойным. Я надела куртку и вышла в холодный воздух, позволяя ему прояснить голову. Я не знаю точно, куда иду, и, к моему удивлению, это больше не тревожит. Я поняла, что движение вперёд не всегда требует идеального плана. Иногда достаточно доверять собственным шагам, даже если они не уверены.",
@@ -225,5 +227,63 @@
   },
   "hotkeys": {
     "enabled": false
+  },
+  "avatar": {
+    "enabled": true,
+    "llm_gestures": true,
+    "gestures": {
+      "enabled": true,
+      "cooldown_s": 8,
+      "slot_names": [
+        "reset",
+        "joy",
+        "angry",
+        "sorrow",
+        "fun",
+        "wave",
+        "good",
+        "nodding",
+        "shaking",
+        "clap"
+      ],
+      "word_to_motion_hotkeys": [
+        "ctrl+alt+1",
+        "ctrl+alt+2",
+        "ctrl+alt+3",
+        "ctrl+alt+4",
+        "ctrl+alt+5",
+        "ctrl+alt+6",
+        "ctrl+alt+7",
+        "ctrl+alt+8",
+        "ctrl+alt+9",
+        "ctrl+alt+0"
+      ],
+      "camera_pose_hotkeys": [
+        "ctrl+shift+1",
+        "ctrl+shift+2",
+        "ctrl+shift+3"
+      ],
+      "tone_map": {
+        "hostile": "angry",
+        "vulgar": "shaking",
+        "flirt": "fun",
+        "praise": "joy",
+        "provoke": "good"
+      }
+    },
+    "vmcp": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 39539,
+      "blend_map": {
+        "joy": "Joy",
+        "angry": "Angry",
+        "sorrow": "Sorrow",
+        "fun": "Fun"
+      },
+      "decay_s": 4.0,
+      "head_bob": true,
+      "head_bob_max_deg": 6.0
+    }
   }
 }

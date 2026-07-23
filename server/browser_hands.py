@@ -16,6 +16,7 @@
 """
 import logging
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -311,8 +312,35 @@ def search(query: str) -> str:
                     "текст страницы: " + _page_text(ctx["page"], 1200))
         out = [f"{i+1}. {r['title']}\n   {r['url']}\n   {r['snippet']}"
                for i, r in enumerate(items[:6])]
+        # ГЛУБЖЕ ПЕРВОЙ СТРАНИЦЫ (2026-07-23): модели останавливались на
+        # сниппетах выдачи и отвечали поверхностно. Теперь web_search сам
+        # приносит выжимки двух верхних страниц (параллельный HTTP, ~1-2с) —
+        # даже «ленивая» модель отвечает по содержимому, а не по заголовкам.
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            top = [r for r in items[:3]
+                   if not any(b in r["url"].lower()
+                              for b in ("youtube.com", "youtu.be", ".pdf"))][:2]
+            if top:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futs = {pool.submit(_http_fetch, r["url"], 900): r
+                            for r in top}
+                    ext = []
+                    for fut, r in futs.items():
+                        try:
+                            t = fut.result(timeout=6)
+                            if t and len(t) > 150:
+                                ext.append(f"— выжимка «{r['title']}»: {t}")
+                        except Exception:
+                            pass
+                if ext:
+                    out.append("\nПрочитала верхние страницы:\n"
+                               + "\n".join(ext))
+        except Exception as e:
+            log.info("web_search: выжимки не получились (%s)", e)
         return ("Нашла (окно браузера открыто, могу открыть любой пункт "
-                "через open_page):\n" + "\n".join(out))
+                "через open_page; для глубокой сводки есть web_research):\n"
+                + "\n".join(out))
 
     try:
         result = _post(job)
@@ -329,7 +357,15 @@ def open_url(url: str) -> str:
     if not available() or not _chromium_present():
         _install_bg()
         return INSTALLING_MSG
-    if not url.startswith("http"):
+    # 2026-07-23: было `if not url.startswith("http"): url = "https://"+url` —
+    # рассчитано на голое «ютуб.com» из голоса, но калечило УЖЕ полные URI с
+    # другой схемой: workshop_create отдавал file:///C:/AI/Saika/workshop/x.svg
+    # (Path.as_uri()), и это превращалось в «https://file:///C:/...» — Chrome
+    # читал «file» как ИМЯ ХОСТА и падал с ERR_NAME_NOT_RESOLVED (реальный
+    # инцидент: картинка от Kimi не открылась, хотя файл создался нормально).
+    # Теперь трогаем только то, что вообще без схемы — есть двоеточие-схема
+    # (http/https/file/data/…) — оставляем как есть.
+    if not re.match(r"^[a-z][a-z0-9+.\-]*://", url, re.I):
         url = "https://" + url
 
     def job(ctx):
@@ -413,14 +449,14 @@ def research(query: str) -> str:
 
     skip = ("youtube.com", "youtu.be", ".pdf", "vk.com/video")
     cands = [r for r in items if not any(b in r["url"].lower()
-                                         for b in skip)][:4]
+                                         for b in skip)][:6]
 
     # ПАРАЛЛЕЛЬНОЕ чтение: все страницы качаются одновременно обычным HTTP
     # (пара секунд на всё), а видимое окно тем временем открывает первый
     # результат — «театр» для пользователя без потери скорости
     from concurrent.futures import ThreadPoolExecutor
     pages = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {pool.submit(_http_fetch, r["url"]): r for r in cands}
         if cands:
             def show(ctx, u=cands[0]["url"]):
@@ -438,7 +474,7 @@ def research(query: str) -> str:
                     pages.append((r, text))
             except Exception as e:
                 log.info("research: %s не скачалась (%s)", r["url"], e)
-    pages = pages[:3]
+    pages = pages[:5]   # глубина сводки: 5 источников вместо 3 (2026-07-23)
 
     # если параллельный HTTP ничего не принёс (капчи/JS-сайты) — читаем
     # первую страницу медленно, но честно, через видимый браузер
@@ -475,7 +511,7 @@ def research(query: str) -> str:
              "факты номерами источников [1][2]. 6-10 коротких строк, без "
              "воды. Пиши на русском."},
             {"role": "user", "content":
-             f"Вопрос: {query}\n\nМатериалы:\n{materials[:9000]}"}])
+             f"Вопрос: {query}\n\nМатериалы:\n{materials[:12000]}"}])
     except Exception as e:
         log.warning("research: сводка не удалась (%s)", e)
         return ("Собрала тексты, но сводка не удалась — вот сырьё:\n"

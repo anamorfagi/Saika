@@ -150,8 +150,12 @@ class Memory:
                 "(SELECT id FROM events ORDER BY id DESC LIMIT ?)", (limit,))
             self._conn.commit()
 
-    def recent_raw(self, person_id=None, limit=30, since_ts=0.0):
-        q = "SELECT role,text FROM events"
+    def recent_raw(self, person_id=None, limit=30, since_ts=0.0,
+                   with_ts=False):
+        """Последние сообщения. with_ts=True — кортежи (ts, role, text):
+        нужно якорю истории в main.py (стабильный префикс для KV-кэша)."""
+        q = ("SELECT ts,role,text FROM events" if with_ts
+             else "SELECT role,text FROM events")
         conds, args = [], []
         if person_id:
             conds.append("person_id=?")

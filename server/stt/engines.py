@@ -330,6 +330,78 @@ class ToneEngine(STTEngine):
         return self.pipeline is not None
 
 
+class CloudWhisperEngine(STTEngine):
+    """☁ Облачный слух через ЛЮБОЙ OpenAI-совместимый /audio/transcriptions
+    (2026-07-23). Сегмент в 2-5с речи транскрибируется за ~200-500мс + пинг —
+    сопоставимо с локальным GigaAM, но БЕЗ ЕДИНОГО мегабайта VRAM (важно для
+    UE-проекта: GPU целиком уходит рендеру и LLM).
+
+    Провайдер настраивается в config -> stt.engines.groq_whisper:
+      base_url      https://api.groq.com/openai/v1 (дефолт; Groq в РФ может
+                    блокаться — тогда впиши РФ-агрегатор, напр.
+                    https://api.proxyapi.ru/openai/v1 или
+                    https://api.aitunnel.ru/v1 — оплата рублями)
+      model         whisper-large-v3-turbo (у агрегаторов обычно whisper-1)
+      key_provider  из какого слота ☁-ключей брать ключ (groq/openai/custom…)
+    Ключ — secrets.json -> llm.cloud_keys[key_provider], запасной вариант —
+    старый общий слот cloud_api_key. Нет сети/ключа — менеджер сам уйдёт на
+    локальный движок по fallback_order."""
+    name = "groq_whisper"   # id оставлен прежним (конфиги/рейтинги)
+    kind = "buffered"
+
+    def __init__(self):
+        self.model = None   # is_loaded: "загружен" = ключ найден и проверен
+
+    def _cfg(self) -> dict:
+        return CFG.get("stt.engines.groq_whisper", {}) or {}
+
+    def _key(self) -> str:
+        import json as _json
+        from server.config import ROOT
+        try:
+            s = _json.loads((ROOT / "secrets.json").read_text(encoding="utf-8"))
+            lm = s.get("llm", {}) or {}
+            prov = self._cfg().get("key_provider", "groq")
+            return ((lm.get("cloud_keys", {}) or {}).get(prov, "")
+                    or lm.get("cloud_api_key", ""))
+        except Exception:
+            return ""
+
+    def load(self):
+        if self.model:
+            return
+        if not self._key():
+            raise RuntimeError(
+                "нет ключа для облачного слуха — вбей ключ провайдера в "
+                "☁-настройках (по умолчанию слот Groq) или задай "
+                "stt.engines.groq_whisper.key_provider")
+        self.model = self._cfg().get("model", "whisper-large-v3-turbo")
+
+    def transcribe(self, pcm16, sample_rate):
+        self.load()
+        import io
+        import requests
+        import soundfile as sf
+        base = (self._cfg().get("base_url",
+                                "https://api.groq.com/openai/v1")).rstrip("/")
+        buf = io.BytesIO()
+        sf.write(buf, pcm16, sample_rate, format="WAV")
+        buf.seek(0)
+        r = requests.post(
+            base + "/audio/transcriptions",
+            headers={"Authorization": "Bearer " + self._key()},
+            files={"file": ("speech.wav", buf, "audio/wav")},
+            data={"model": self.model,
+                  "language": CFG.get("stt.language", "ru"),
+                  "temperature": "0"},
+            timeout=20)
+        r.raise_for_status()
+        return (r.json().get("text") or "").strip()
+
+    def unload(self):
+        self.model = None
+
+
 ALL_ENGINES = {
     "faster_whisper": FasterWhisperEngine,
     "gigaam": GigaAMEngine,
@@ -337,4 +409,5 @@ ALL_ENGINES = {
     "whispercpp": WhisperCppEngine,
     "tone": ToneEngine,
     "voxtral": VoxtralEngine,
+    "groq_whisper": CloudWhisperEngine,
 }

@@ -14,7 +14,7 @@ import requests
 from server.config import CFG
 
 log = logging.getLogger("saika.tools")
-_cache = {"t": 0.0, "schemas": []}
+_cache = {"t": 0.0, "schemas": [], "checking": False, "fail_until": 0.0}
 
 # Режим внутреннего импульса (мысль самой себе, пользователь не писал).
 # В нём Сайке можно трогать ТОЛЬКО СВОЁ: закрыть свой браузер, выключить
@@ -23,7 +23,7 @@ _cache = {"t": 0.0, "schemas": []}
 # пользователя — смешно, но нельзя).
 IMPULSE_MODE = {"on": False}
 _IMPULSE_SAFE = {"close_browser", "shutdown_self",
-                 "devboard_read", "devboard_add"}
+                 "devboard_read", "devboard_add", "avatar_action"}
 
 # ЛОКАЛЬНЫЕ инструменты Сайки (не через HandsPC): дев-доска — чтобы она могла
 # свериться со своей историей разработки и дописывать в блокнот сама.
@@ -124,6 +124,77 @@ def _hotkey_schemas():
 
 _HOTKEY_NAMES = {"bind_create", "bind_list", "bind_delete"}
 
+# АВАТАР (2026-07-23): даёт модели САМОЙ решать, когда показать эмоцию/жест
+# на VRM-аватаре — по контексту разговора, а не только когда её прямо
+# попросили «улыбнись»/«станцуй». В отличие от хоткеев/файлов это НЕ
+# изменяющий инструмент (ничего не трогает на машине пользователя, только
+# посылает жест своему же аватару) — поэтому не в _MUTATING_INTENT и
+# разрешён даже во внутреннем импульсе (см. _IMPULSE_SAFE выше). Показываем
+# ВСЕМ моделям (без gating по _model_tier), включая мелкие локальные —
+# именно с ними и был замечен провал («не умею показывать эмоции»).
+def _avatar_schema():
+    from server import avatar
+    names = CFG.get("avatar.gestures.slot_names", avatar.DEFAULT_SLOT_NAMES)
+    gestures = [n for n in names if n != "reset"]
+    opts = ", ".join(f"{n} ({avatar.ACTION_DESC.get(n, n)})" for n in gestures)
+    return {"type": "function", "function": {
+        "name": "avatar_action",
+        "description": ("Показать эмоцию или жест на своём VRM-аватаре — это "
+                        "настоящее физическое действие, а не описание "
+                        "словами. Зови по смыслу разговора, не только когда "
+                        "прямо попросили: доступны " + opts + ". Не зови на "
+                        "каждую реплику — только когда жест реально уместен."),
+        "parameters": {"type": "object", "properties": {
+            "gesture": {"type": "string", "enum": gestures,
+                        "description": "имя жеста/эмоции"}},
+            "required": ["gesture"]}}}
+
+# МАСТЕРСКАЯ (2026-07-23): сильная модель (Kimi и т.п.) умеет не только
+# болтать — может сверстать страницу, нарисовать SVG, написать скрипт.
+# Инструмент даёт ей творить ФАЙЛАМИ в отдельной папке workshop/ и сразу
+# показывать результат в видимом браузере. Мелким моделям не выдаётся
+# (см. _model_tier) — они с ним сходят с ума.
+_WORKSHOP_SCHEMA = {"type": "function", "function": {
+    "name": "workshop_create",
+    "description": ("Создать файл в своей мастерской (папка workshop/): "
+                    "HTML-страницу/мини-сайт, SVG-картинку, скрипт, текст. "
+                    "HTML и SVG сразу открываются в твоём видимом браузере — "
+                    "пользователь видит результат. Используй, когда просят "
+                    "сделать сайт/страницу/картинку/визуализацию/код-файл. "
+                    "HTML пиши самодостаточным (CSS/JS внутри одного файла)."),
+    "parameters": {"type": "object", "properties": {
+        "filename": {"type": "string",
+                     "description": "имя файла, напр. page.html / logo.svg / tool.py"},
+        "content": {"type": "string", "description": "полное содержимое файла"}},
+        "required": ["filename", "content"]}}}
+
+
+def _model_tier() -> str:
+    """'full' или 'lite' — насколько богатый набор инструментов показывать
+    активной модели. Система подстраивается под возможности модели:
+    - сильные (облако; локальные с натуральным function-calling и нормальной
+      скоростью) получают ПОЛНЫЙ набор: файлы, мастерская, (опц.) доска;
+    - мелкие/медленные — только базу (поиск/браузер), чтобы не сходили с ума
+      от десятка схем и не дёргали опасное. Принудительно: tools.grade в
+      config ("full"/"lite"), по умолчанию "auto"."""
+    grade = CFG.get("tools.grade", "auto")
+    if grade in ("full", "lite"):
+        return grade
+    model = CFG.get("llm.model", "")
+    if not model or model in set(CFG.get("llm.tools_broken", [])):
+        return "lite"
+    if CFG.get("llm.backend") == "cloud":
+        return "full"          # облачные мозги (Kimi, Claude…) тянут всё
+    try:
+        from server.llm import passport
+        p = passport.get(model) or {}
+    except Exception:
+        p = {}
+    if (p.get("tools_native") and p.get("big_prompt_ok", True)
+            and (p.get("tps") or 0) >= 12):
+        return "full"
+    return "lite"
+
 # Самовыключение: Сайка может выключить себя сама — попрощаться и уйти
 # (напр. по прощальному импульсу, когда её надолго оставили одну, или по
 # прямой просьбе «выключайся»). Сервер гаснет ПОСЛЕ того, как она
@@ -162,6 +233,9 @@ _MUTATING_INTENT = {
     "fs_mkdir":     r"папк|директор|созда|mkdir|каталог",
     "fs_open":      r"откр|запус|покаж файл|open",
     "place_save":   r"сохран|запомни мест|закладк|место",
+    "workshop_create": r"сдела|созда|сгенери|нарису|сверста|сайт|страниц|"
+                       r"макет|визуализ|график|картинк|svg|html|напиши код|"
+                       r"скрипт|программ",
 }
 
 
@@ -217,17 +291,34 @@ def _url():
     return CFG.get("tools.handspc_url", "http://127.0.0.1:8767").rstrip("/")
 
 
-def _hands_schemas() -> list:
-    if not CFG.get("tools.enabled", True):
-        return []
-    if time.time() - _cache["t"] < 30:
-        return _cache["schemas"]
+def _refresh_hands_schemas():
+    """Фоновое обновление схем HandsPC. НИКОГДА не зовётся из горячего пути:
+    раньше requests.get с timeout=1.5 стоял прямо в сборке промпта, и когда
+    HandsPC не запущен (обычный случай), КАЖДОЕ протухание кэша (30с)
+    добавляло ровно ~1.5с к ответу («промпт 1516мс» в логах — это оно)."""
     try:
         r = requests.get(_url() + "/tools", timeout=1.5)
         _cache["schemas"] = r.json()
+        _cache["fail_until"] = 0.0
     except Exception:
         _cache["schemas"] = []
+        # HandsPC нет — не дёргаем его чаще, чем раз в 2 минуты
+        _cache["fail_until"] = time.time() + 120
     _cache["t"] = time.time()
+    _cache["checking"] = False
+
+
+def _hands_schemas() -> list:
+    if not CFG.get("tools.enabled", True):
+        return []
+    now = time.time()
+    ttl = 120 if now < _cache["fail_until"] else 30
+    if now - _cache["t"] >= ttl and not _cache["checking"]:
+        _cache["checking"] = True
+        import threading as _th
+        _th.Thread(target=_refresh_hands_schemas, daemon=True).start()
+    # отдаём то, что есть (пусть слегка устаревшее) — промпт не ждёт сеть;
+    # пока HandsPC не объявился, работает встроенный браузер (см. schemas())
     return _cache["schemas"]
 
 
@@ -239,7 +330,10 @@ def schemas() -> list:
     сервер сам (см. _is_dev_query в main.py — подкладывает доску только на
     вопросы про разработку). Хочешь дать инструменты модели (для крупной с
     хорошим function-calling) — включи tools.devboard_tools в config."""
-    local = list(_LOCAL_SCHEMAS) if CFG.get("tools.devboard_tools", False) else []
+    tier = _model_tier()
+    local = (list(_LOCAL_SCHEMAS)
+             if tier == "full" and CFG.get("tools.devboard_tools", False)
+             else [])
     hands = _hands_schemas()
     if not hands and CFG.get("browser.enabled", True):
         # HandsPC нет — даём встроенный видимый браузер (те же имена
@@ -247,15 +341,25 @@ def schemas() -> list:
         local = local + _BROWSER_SCHEMAS
     if CFG.get("idle.allow_self_shutdown", True):
         local = local + [_SHUTDOWN_SCHEMA]
+    # аватар: намеренно БЕЗ gating по tier — даём даже мелким локальным
+    # моделям, их же и просили осознавать, что тело у них есть
+    if CFG.get("avatar.enabled", False) and CFG.get("avatar.llm_gestures", True):
+        try:
+            local = local + [_avatar_schema()]
+        except Exception as e:
+            log.debug("avatar_schema недоступна: %s", e)
     # хоткеи по умолчанию ВЫКЛючены (2026-07-23): abliterated-модель дважды
     # навесила разрушительные бинды без просьбы (пробел→localhost, F8→Alt+F4
     # закрыла приложения). Инструмент не показываем модели вообще, пока
     # владелец сам не включит hotkeys.enabled=true в config.
-    if CFG.get("hotkeys.enabled", False):
+    if tier == "full" and CFG.get("hotkeys.enabled", False):
         local = local + _hotkey_schemas()
-    # файловые руки (рабочая папка files.roots) — всегда локальные;
+    # мастерская — только сильным (сайты/SVG/скрипты в workshop/)
+    if tier == "full" and CFG.get("tools.workshop", True):
+        local = local + [_WORKSHOP_SCHEMA]
+    # файловые руки (рабочая папка files.roots) — только сильным моделям;
     # если у HandsPC вдруг есть инструменты с теми же именами, он главнее
-    if CFG.get("files.enabled", True):
+    if tier == "full" and CFG.get("files.enabled", True):
         try:
             from server import file_hands
             hands_names = {s["function"]["name"] for s in hands}
@@ -286,6 +390,48 @@ def _local_call(name: str, arguments) -> str:
         devboard.add_item(col, text, note)
         return f"записала в доску ({col}): {text}"
     return "неизвестный локальный инструмент"
+
+
+def _workshop_call(arguments) -> str:
+    """Создать файл в workshop/ и показать результат в видимом браузере."""
+    import json as _json
+    import re as _re
+    from server.config import resolve
+    if isinstance(arguments, str):
+        try:
+            arguments = _json.loads(arguments)
+        except Exception:
+            arguments = {}
+    arguments = arguments or {}
+    fname = str(arguments.get("filename", "")).strip()
+    content = arguments.get("content", "")
+    if not fname or not content:
+        return "нужны filename и content"
+    # только имя файла, без путей и фокусов с ..\
+    fname = _re.sub(r"[^\w.\-]", "_", fname.replace("\\", "/").split("/")[-1])
+    if not _re.search(r"\.[a-z0-9]{1,8}$", fname, _re.I):
+        fname += ".txt"
+    if _re.search(r"\.(exe|bat|cmd|ps1|vbs|scr|msi|lnk)$", fname, _re.I):
+        return "нельзя: исполняемые файлы в мастерской запрещены"
+    wdir = resolve(CFG.get("tools.workshop_dir", "workshop"))
+    wdir.mkdir(parents=True, exist_ok=True)
+    path = wdir / fname
+    path.write_text(str(content), encoding="utf-8")
+    log.info("Мастерская: создала %s (%d байт)", path, len(str(content)))
+    shown = ""
+    if fname.lower().endswith((".html", ".htm", ".svg")):
+        try:
+            from server import browser_hands
+            browser_hands.open_url(path.as_uri())
+            shown = " и открыла в браузере — результат на экране"
+        except Exception:
+            try:
+                import os as _os
+                _os.startfile(str(path))  # системный браузер как запасной
+                shown = " и открыла в системном браузере"
+            except Exception:
+                pass
+    return f"создала workshop/{fname}{shown}"
 
 
 def _browser_call(name: str, arguments) -> str:
@@ -328,10 +474,26 @@ def call(name: str, arguments) -> str:
                 "shutdown_self и дев-доска.")
     if name in _LOCAL_NAMES:
         return _local_call(name, arguments)
+    if name == "workshop_create":
+        try:
+            return _workshop_call(arguments)
+        except Exception as e:
+            log.exception("workshop_create")
+            return f"мастерская споткнулась: {e}"
     if name == "shutdown_self":
         if not CFG.get("idle.allow_self_shutdown", True):
             return "самовыключение отключено в настройках"
         return _shutdown_call()
+    if name == "avatar_action":
+        import json as _json
+        from server import avatar
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        try:
+            return avatar.fire_named(str((a or {}).get("gesture", "")))
+        except Exception as e:
+            log.exception("avatar_action")
+            return f"аватар споткнулся: {e}"
     if name in _HOTKEY_NAMES:
         import json as _json
         from server import hotkeys

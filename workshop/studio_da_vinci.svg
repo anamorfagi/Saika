@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000" viewBox="0 0 800 1000">
+  <defs>
+    <radialGradient id="paper" cx="50%" cy="42%" r="75%">
+      <stop offset="0%" stop-color="#e9dab9"/>
+      <stop offset="55%" stop-color="#dfcfa8"/>
+      <stop offset="100%" stop-color="#c6af80"/>
+    </radialGradient>
+    <radialGradient id="vig" cx="50%" cy="45%" r="72%">
+      <stop offset="0%" stop-color="#3a2a18" stop-opacity="0"/>
+      <stop offset="78%" stop-color="#3a2a18" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#3a2a18" stop-opacity="0.30"/>
+    </radialGradient>
+    <radialGradient id="stain" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8a6a3a" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#8a6a3a" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.35  0 0 0 0 0.27  0 0 0 0 0.15  0 0 0 0.05 0"/>
+    </filter>
+    <filter id="rough">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="3" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="3.5"/>
+    </filter>
+  </defs>
+
+  <rect width="800" height="1000" fill="url(#paper)"/>
+  <rect width="800" height="1000" filter="url(#noise)" opacity="0.55"/>
+  <ellipse cx="140" cy="860" rx="190" ry="120" fill="url(#stain)"/>
+  <ellipse cx="680" cy="180" rx="150" ry="110" fill="url(#stain)"/>
+  <ellipse cx="620" cy="720" rx="120" ry="90" fill="url(#stain)"/>
+
+  <!-- пропорциональный этюд (как на листах Леонардо) -->
+  <g stroke="#9a7a52" stroke-width="1" opacity="0.35" fill="none">
+    <circle cx="452" cy="408" r="196"/>
+    <line x1="180" y1="300" x2="640" y2="300"/>
+    <line x1="180" y1="372" x2="640" y2="372"/>
+    <line x1="180" y1="472" x2="640" y2="472"/>
+    <line x1="180" y1="556" x2="640" y2="556"/>
+    <line x1="452" y1="190" x2="452" y2="620"/>
+  </g>
+
+  <!-- основной рисунок, сангина -->
+  <g fill="none" stroke="#7a4630" stroke-linecap="round" filter="url(#rough)">
+
+    <!-- задняя масса волос -->
+    <g stroke-width="1.6" opacity="0.75">
+      <path d="M452 220 C 380 236 328 296 316 372 C 306 438 312 500 292 562 C 276 612 248 654 216 690"/>
+      <path d="M470 224 C 552 244 606 316 614 402 C 620 474 606 548 574 616 C 554 660 526 698 494 728"/>
+      <path d="M452 218 C 392 226 344 268 330 330 C 318 382 322 440 306 500 C 292 556 262 606 232 646"/>
+      <path d="M452 218 C 540 226 596 296 606 386 C 614 462 600 540 566 612 C 548 652 522 690 492 720"/>
+    </g>
+
+    <!-- штриховка волос -->
+    <g stroke-width="0.8" opacity="0.45">
+      <path d="M470 232 C 420 250 388 296 380 356"/>
+      <path d="M478 236 C 432 258 402 304 394 362"/>
+      <path d="M486 244 C 448 268 420 314 412 368"/>
+      <path d="M480 234 C 540 254 576 312 582 384"/>
+      <path d="M486 244 C 548 268 584 330 588 402"/>
+      <path d="M492 256 C 554 284 588 348 590 420"/>
+      <path d="M588 400 C 590 470 574 540 542 600"/>
+      <path d="M596 420 C 596 486 580 552 550 612"/>
+      <path d="M584 380 C 590 440 580 506 552 566"/>
+      <path d="M348 360 C 344 420 348 470 336 522"/>
+      <path d="M338 380 C 334 436 336 486 322 536"/>
+      <path d="M330 410 C 326 462 322 506 306 552"/>
+      <path d="M452 220 C 372 240 318 304 306 384"/>
+    </g>
+
+    <!-- пряди поверх лица -->
+    <g stroke-width="1.4" opacity="0.85">
+      <path d="M452 222 C 420 236 400 262 396 292"/>
+      <path d="M452 222 C 436 244 428 268 430 292"/>
+      <path d="M460 224 C 396 236 356 286 348 350 C 342 402 350 452 336 506 C 324 552 300 596 272 632"/>
+      <path d="M470 226 C 420 240 386 278 374 330"/>
+      <path d="M470 226 C 540 244 584 306 590 384 C 594 446 584 508 560 566 C 544 606 522 642 496 672"/>
+    </g>
+
+    <!-- пентименти: слабый дублированный контур -->
+    <g stroke-width="1.2" opacity="0.12" stroke="#4a3a28" transform="translate(4,3)">
+      <path d="M486 300 C 446 282 402 292 382 330 C 372 352 368 372 366 392 C 364 412 360 430 354 448 C 350 460 348 470 354 478 C 360 486 362 490 358 496 C 352 502 352 508 358 512 C 366 516 368 520 362 524 C 358 528 360 534 368 538 C 380 548 398 556 420 558 C 452 560 484 548 504 522 C 522 498 530 462 528 424"/>
+    </g>
+
+    <!-- контур лица -->
+    <path stroke-width="2.4" opacity="0.95" d="M486 300 C 446 282 402 292 382 330 C 372 352 368 372 366 392 C 364 412 360 430 354 448 C 350 460 348 470 354 478 C 360 486 362 490 358 496 C 352 502 352 508 358 512 C 366 516 368 520 362 524 C 358 528 360 534 368 538 C 380 548 398 556 420 558 C 452 560 484 548 504 522 C 522 498 530 462 528 424 C 530 396 526 372 518 352"/>
+
+    <!-- бровь и опущенный глаз -->
+    <path stroke-width="2" opacity="0.9" d="M388 384 C 400 375 418 374 432 381"/>
+    <path stroke-width="2.2" opacity="0.95" d="M392 402 C 402 394 416 393 428 400"/>
+    <path stroke-width="1" opacity="0.5" d="M397 407 C 405 411 415 411 424 406"/>
+    <path stroke-width="1" opacity="0.7" d="M398 400 l -4 6 M 406 397 l -3 6 M 414 396 l -2 6"/>
+    <g stroke-width="0.8" opacity="0.4">
+      <path d="M396 392 l 10 8"/>
+      <path d="M408 388 l 10 8"/>
+      <path d="M420 388 l 10 8"/>
+    </g>
+
+    <!-- штриховка носа, щеки, лба -->
+    <g stroke-width="0.8" opacity="0.5">
+      <path d="M392 420 l 14 22"/>
+      <path d="M400 412 l 14 22"/>
+      <path d="M386 430 l 12 20"/>
+      <path d="M476 424 l 26 30"/>
+      <path d="M484 414 l 26 30"/>
+      <path d="M466 436 l 26 30"/>
+      <path d="M458 448 l 24 28"/>
+      <path d="M492 406 l 24 28"/>
+      <path d="M450 460 l 22 26"/>
+      <path d="M444 472 l 20 24"/>
+      <path d="M430 300 l 8 18"/>
+      <path d="M444 296 l 8 18"/>
+      <path d="M458 294 l 8 18"/>
+      <path d="M372 544 l 16 8"/>
+      <path d="M380 550 l 16 6"/>
+    </g>
+
+    <!-- шея и плечи -->
+    <g stroke-width="1.8" opacity="0.85">
+      <path d="M420 558 C 424 592 420 622 404 652"/>
+      <path d="M504 522 C 496 560 500 596 516 628"/>
+      <path d="M404 652 C 360 672 320 700 296 740"/>
+      <path d="M516 628 C 556 656 586 690 602 734"/>
+    </g>
+    <g stroke-width="0.8" opacity="0.45">
+      <path d="M470 560 l 22 26"/>
+      <path d="M460 572 l 22 26"/>
+      <path d="M452 584 l 20 24"/>
+      <path d="M486 548 l 20 24"/>
+    </g>
+    <path stroke-width="1.2" opacity="0.4" d="M340 720 C 400 700 460 700 520 722"/>
+
+    <!-- локоны у плеч -->
+    <g stroke-width="1.3" opacity="0.85">
+      <path d="M336 520 C 320 560 316 600 328 636 C 336 660 352 676 372 682"/>
+      <path d="M372 682 c 18 2 26 18 16 30 c -9 11 -27 7 -28 -6 c -1 -11 12 -16 19 -8"/>
+      <path d="M560 560 C 556 600 560 636 576 664"/>
+      <path d="M576 664 c 16 4 20 22 8 31 c -11 8 -26 0 -23 -12 c 2 -10 15 -11 19 -3"/>
+    </g>
+
+    <!-- этюд завитка слева внизу -->
+    <g stroke-width="1.3" opacity="0.7">
+      <path d="M150 820 c 30 -6 46 20 34 42 c -12 22 -44 18 -48 -6 c -3 -20 18 -30 34 -20 c 12 8 10 24 -2 28"/>
+      <path d="M150 820 C 120 800 96 806 88 828"/>
+      <path d="M150 820 C 176 796 204 800 214 824"/>
+    </g>
+
+    <!-- этюд глаза справа внизу -->
+    <g stroke-width="1.4" opacity="0.8">
+      <path d="M610 832 C 632 816 664 814 690 830"/>
+      <path d="M614 836 C 636 848 664 848 688 834"/>
+      <circle cx="650" cy="830" r="11"/>
+      <circle cx="650" cy="830" r="4" fill="#7a4630" stroke="none" opacity="0.8"/>
+      <path d="M614 820 C 636 806 666 804 692 818" opacity="0.5"/>
+    </g>
+    <g stroke-width="0.8" opacity="0.4">
+      <path d="M622 846 l 12 8"/>
+      <path d="M640 850 l 12 8"/>
+      <path d="M658 850 l 12 8"/>
+    </g>
+  </g>
+
+  <!-- зеркальные пометки, как в тетрадях Леонардо -->
+  <g font-family="Georgia, 'Times New Roman', serif" font-style="italic" fill="#6a4630" opacity="0.75">
+    <text transform="translate(724 140) scale(-1 1)" font-size="19">studio di donna</text>
+    <text transform="translate(724 168) scale(-1 1)" font-size="15">la proportione del volto</text>
+    <text transform="translate(724 192) scale(-1 1)" font-size="15">ochio chinato</text>
+    <text transform="translate(700 900) scale(-1 1)" font-size="14">capelli come l'acqua</text>
+    <text transform="translate(240 910) scale(-1 1)" font-size="14">moto de' capelli</text>
+  </g>
+
+  <text x="400" y="96" text-anchor="middle" font-family="Georgia, serif" font-size="20" letter-spacing="7" fill="#7a5a3a" opacity="0.45">STVDIO DI TESTA DI DONNA</text>
+
+  <rect width="800" height="1000" fill="url(#vig)"/>
+  <rect x="16" y="16" width="768" height="968" fill="none" stroke="#6a4a2a" stroke-width="2" opacity="0.45"/>
+  <rect x="26" y="26" width="748" height="948" fill="none" stroke="#6a4a2a" stroke-width="1" opacity="0.3"/>
+</svg>

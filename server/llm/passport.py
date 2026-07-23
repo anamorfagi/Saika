@@ -43,7 +43,7 @@ except Exception:  # pragma: no cover
     log = None
 
 PATH = ROOT / "data" / "model_passports.json"
-VERSION = 1  # поднять при изменении набора проб — паспорта перепрощупаются
+VERSION = 2  # v2 (2026-07-23): + проба формата tool-вызовов (tools_native)
 _lock = threading.Lock()
 _probing = set()  # модели, которые щупаются прямо сейчас (не дублировать)
 
@@ -143,6 +143,21 @@ def _ask(backend: str, model: str, system: str, user: str,
     return text.strip(), max(time.monotonic() - t0, 0.001)
 
 
+def _wait_quiet(backend: str, model: str, max_wait: int = 300) -> bool:
+    """Ждать, пока живой чат отпустит бэкенд/модель (manager.is_busy).
+    True — дождались тишины; False — потолок вышел, а модель всё ещё занята
+    (проба этот шаг пропускает/прерывает, а не лезет в драку за модель)."""
+    try:
+        from server.llm import manager as _mgr
+    except Exception:
+        return True
+    waited = 0
+    while _mgr.is_busy(backend, model) and waited < max_wait:
+        time.sleep(3)
+        waited += 3
+    return not _mgr.is_busy(backend, model)
+
+
 def _probe(backend: str, model: str) -> dict:
     p = {"version": VERSION, "backend": backend,
          "probed_at": time.strftime("%Y-%m-%d %H:%M:%S")}
@@ -166,6 +181,11 @@ def _probe(backend: str, model: str) -> dict:
     budgets = sorted({target, 8000, 5000, 3000}, reverse=True)
     working = None
     for b in budgets:
+        # живой диалог мог возобновиться МЕЖДУ попытками (пользователь
+        # снова заговорил, пока проба перебирала бюджеты) — не лезем
+        # драться за ту же модель, ждём тишины ещё раз перед каждым шагом
+        if not _wait_quiet(backend, model):
+            break
         filler = (_FILLER * (b // len(_FILLER) + 1))[:b - 300]
         sys_prompt = ("Ты голосовой ассистент. Отвечай одним коротким "
                       "словом.\n\n" + filler)
@@ -182,7 +202,93 @@ def _probe(backend: str, model: str) -> dict:
     if working is None:
         # даже 3000 молчит — модель/бэкенд нездоровы, паспорт это фиксирует
         p["big_prompt_ok"] = False
+
+    # 3) tools: родной ли function calling у СВЯЗКИ модель+бэкенд.
+    # У каждой модели своя выучка формата вызова (OpenAI tool_calls /
+    # Harmony «to=web_search json{...}» у gpt-oss / голый JSON у llama3.2),
+    # и часть бэкендов её шаблон не переводит в нормальные tool_calls —
+    # тогда «вызов» утекает текстом в чат. Прощупываем и записываем.
+    _wait_quiet(backend, model)  # снова могли не успеть — та же осторожность
+    try:
+        p["tools_native"] = _probe_tools(backend, model)
+    except Exception:
+        p["tools_native"] = None
     return p
+
+
+_TOOLS_PROBE_SCHEMA = [{
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "Поиск в интернете по текстовому запросу",
+        "parameters": {"type": "object",
+                       "properties": {"query": {"type": "string"}},
+                       "required": ["query"]}}}]
+
+# маркеры «вызова текстом»: Harmony (gpt-oss), спецтокены, голый JSON
+_PSEUDO_MARKERS = ("to=", "<|", "call:", '"name"')
+
+
+def _probe_tools(backend: str, model: str):
+    """True — модель вернула нормальные tool_calls; False — написала вызов
+    ТЕКСТОМ (утёк бы в чат); None — не определить (ответила просто словами,
+    без попытки вызова — тоже нормально)."""
+    from server.llm import manager
+    msgs = [{"role": "system",
+             "content": ("Ты голосовой ассистент с инструментами. Если "
+                         "нужен свежий факт из интернета — вызови "
+                         "web_search.")},
+            {"role": "user",
+             "content": "Загугли, какая завтра погода в Самаре."}]
+    if backend == "ollama":
+        r = requests.post(manager._ollama_url() + "/api/chat",
+                          json={"model": model, "messages": msgs,
+                                "stream": False,
+                                "tools": _TOOLS_PROBE_SCHEMA,
+                                "options": {"num_predict": 200}},
+                          timeout=120)
+        r.raise_for_status()
+        m = r.json().get("message") or {}
+        if m.get("tool_calls"):
+            return True
+        text = (m.get("content") or "").lower()
+    else:  # lmstudio / locallm — OpenAI-диалект
+        url = (manager._locallm_url() if backend == "locallm"
+               else manager._lmstudio_url())
+        payload = {"model": model, "messages": msgs, "stream": False,
+                   "max_tokens": 200, "tools": _TOOLS_PROBE_SCHEMA,
+                   "chat_template_kwargs": {"enable_thinking": False}}
+        r = requests.post(url + "/v1/chat/completions", json=payload,
+                          timeout=120)
+        r.raise_for_status()
+        ch = (r.json().get("choices") or [{}])[0]
+        m = ch.get("message") or {}
+        if m.get("tool_calls"):
+            return True
+        text = (m.get("content") or "").lower()
+    if any(k in text for k in _PSEUDO_MARKERS):
+        return False
+    return None
+
+
+def _apply_tools_verdict(model: str, native):
+    """Подстройка конвейера под вердикт пробы: «безрукие» модели — в
+    llm.tools_broken (сервер сам ищет за них, см. main.py), а модели с
+    подтверждённым родным форматом — ИЗ чёрного списка (самолечение:
+    вдруг попала туда из-за старого бага шаблона)."""
+    broken = set(CFG.get("llm.tools_broken", []))
+    if native is False and model not in broken:
+        broken.add(model)
+        CFG.set("llm.tools_broken", sorted(broken))
+        if log:
+            log.warning("Паспорт %s: пишет tool-вызовы ТЕКСТОМ — добавила "
+                        "в tools_broken, искать за неё будет сервер", model)
+    elif native is True and model in broken:
+        broken.discard(model)
+        CFG.set("llm.tools_broken", sorted(broken))
+        if log:
+            log.info("Паспорт %s: родной function calling подтверждён — "
+                     "убрала из tools_broken", model)
 
 
 def ensure_async(backend: str, model: str):
@@ -202,6 +308,15 @@ def ensure_async(backend: str, model: str):
             # компилировалась; к 02:16 — ответы за 1-2с). Паспорт — дело
             # не срочное: ждём тишины.
             time.sleep(180)
+            # 2026-07-23: 180с фиксированной паузы было НЕДОСТАТОЧНО, если
+            # пользователь как раз в эти минуты живо тестирует свежепереключённую
+            # модель (обычный случай!) — проба стартовала ПРЯМО поверх живого
+            # диалога и дралась с ним за одну и ту же модель в Ollama/LM Studio
+            # (лог: «думала 76.3с»/«думала 253.2с» на gemma4:26b, ping_s=40.8
+            # у gemma4:12b — ровно во время проб). Теперь ждём НАСТОЯЩЕЙ тишины
+            # (manager.is_busy метится живым чат-стримом на каждый токен), а не
+            # просто истечения таймера — с потолком ожидания в 30 минут.
+            _wait_quiet(backend, model, max_wait=1800)
             if get(model) is not None:  # пока ждали — кто-то уже прощупал
                 return
             if log:
@@ -211,6 +326,7 @@ def ensure_async(backend: str, model: str):
                 d = _load()
                 d[model] = p
                 _save(d)
+            _apply_tools_verdict(model, p.get("tools_native"))
             if log:
                 if not p.get("big_prompt_ok"):
                     log.warning(

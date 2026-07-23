@@ -1,9 +1,9 @@
 {
-  "updated": "2026-07-21T21:02:23",
+  "updated": "2026-07-23T19:24:21",
   "items": [
     {
       "id": "s01",
-      "col": "doing",
+      "col": "done",
       "text": "DreamPC: качается LLaDA-MoE 7B (~14 ГБ)",
       "note": "первый прогон, смотреть статус в панели",
       "auto": false,
@@ -59,7 +59,7 @@
     },
     {
       "id": "p06",
-      "col": "planned",
+      "col": "done",
       "text": "Переименовать консольного доктора в Беймакса",
       "note": "в чате уже Беймакс",
       "auto": false,
@@ -275,381 +275,1093 @@
     },
     {
       "id": "a922c44c",
-      "col": "bugs",
+      "col": "done",
       "text": "qwen3 прирывистая озвучка появилась",
       "note": "",
       "auto": false,
       "ts": "2026-07-17T21:38"
+    },
+    {
+      "id": "48ebc904",
+      "col": "done",
+      "text": "Скорость LLM: якорь истории — KV-кэш живёт",
+      "note": "Скользящее окно истории ломало префикс промпта: prefill 2.4-2.7с на КАЖДЫЙ ход. Теперь окно прибито якорем, полная пережёвка — раз в десятки ходов.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "d914f173",
+      "col": "done",
+      "text": "Фикс «промпт 1516мс»: опрос HandsPC ушёл в фон",
+      "note": "Сборка промпта ходила в неподнятый HandsPC (порт 8767) с таймаутом 1.5с каждые 30с. Теперь фоновое обновление + бэкофф 2 мин.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "a3bb7452",
+      "col": "done",
+      "text": "Паспорт v2: проба формата tool-вызовов",
+      "note": "Модель просят вызвать web_search: родные tool_calls — ок (и амнистия из tools_broken), вызов текстом (Harmony/JSON) — авто в tools_broken, ищет сервер.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "890667a2",
+      "col": "done",
+      "text": "Слух: адаптивный VAD + предролл 240мс",
+      "note": "Порог подстраивается под шумовой пол (микрофон без аудиокарты), гистерезис не рвёт фразы, предролл не съедает первую согласную («кто я» слышалось «то я»).",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "fc3b9108",
+      "col": "done",
+      "text": "Быстрый старт: doctor --fast",
+      "note": "Полный осмотр (подпроцессы с torch, десятки секунд) пропускается, если прошлый запуск был здоровым и младше суток (logs/boot_ok.json). После падения — полный.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "bb61a73f",
+      "col": "done",
+      "text": "UI: один скролл в меню, списки не отскакивают",
+      "note": "Двойные скроллбары убраны, перерисовка по refresh каждые 5с больше не мотает список вниз.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "459fc259",
+      "col": "done",
+      "text": "Поиск глубже: web_search читает топ-2 страницы",
+      "note": "Плюс web_research: до 5 источников в сводке. Модели больше не отвечают по одним заголовкам выдачи.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "f4d6bd70",
+      "col": "done",
+      "text": "Harmony-вызовы gpt-oss ловятся и исполняются",
+      "note": "«commentary to=web_search json{...}» больше не утекает в чат — вызов вырезается и выполняется по-настоящему.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
+    },
+    {
+      "id": "deb1f18a",
+      "col": "doing",
+      "text": "Groq: онлайн-модель по ключу",
+      "note": "Проверка ключа/модели при сохранении; у Groq имена без префиксов — напр. llama-3.3-70b-versatile.",
+      "auto": false,
+      "ts": "2026-07-23T10:45"
     }
   ],
   "log": [
     {
-      "ts": "2026-07-17T17:30:19",
-      "text": "⚠ llm: переключилась на ollama/llama3.2:latest",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:29:28",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:30:35",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:30:47",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:30:55",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:31:25",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:31:36",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:31:49",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T18:32:05",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T19:25:45",
-      "text": "⚠ tts.edge: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T19:25:45",
-      "text": "✓ tts.edge: движок восстановлен",
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:34",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:35",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:48",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T10:00:48",
+      "text": "✓ stt.tone: движок восстановлен",
       "kind": "fix"
     },
     {
-      "ts": "2026-07-17T20:27:10",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
+      "ts": "2026-07-23T14:40:33",
+      "text": "⚠ stt: работаю на gigaam",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-17T20:27:45",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:28:24",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:28:41",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:35:21",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:39:43",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:42:35",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:43:07",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:44:37",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:45:18",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:47:04",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:47:38",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:51:33",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:52:41",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-17T20:55:51",
-      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e2b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T14:01:57",
-      "text": "⚠ tts.edge: переключаюсь на рабочий движок; как появится сеть — докачаю модель сама",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T14:50:32",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T14:55:43",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T16:36:24",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T16:36:44",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T16:37:30",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T16:46:39",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T16:57:38",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T19:20:29",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T19:20:59",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T19:40:20",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T19:40:31",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-18T19:51:33",
-      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-20T19:06:30",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-20T19:34:54",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-20T19:51:52",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T13:25:38",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T13:26:55",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T13:32:52",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T13:55:32",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:11:36",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:15:20",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:15:20",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:21:48",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:22:30",
-      "text": "⚠ tts.qwen3: запусти tools/fix_pagefile.bat (один раз, от админа) — он увеличит подкачку; пока беру лёгкий движок",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:22:33",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:23:09",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:23:39",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T14:59:29",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T15:39:17",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T15:53:52",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T16:06:34",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-21T16:09:00",
-      "text": "✓ browser: видимый браузер установлен и готов",
+      "ts": "2026-07-23T10:45:54",
+      "text": "✓ cowork: доска пополнена итогами сессии 2026-07-23 (скорость, слух, UI, старт, поиск, паспорт v2)",
       "kind": "fix"
     },
     {
-      "ts": "2026-07-21T16:37:25",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:15:02",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T17:33:31",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:22:25",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T18:08:20",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:23:26",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T19:00:00",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:25:21",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T19:28:34",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:26:02",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T19:29:50",
-      "text": "⚠ llm: проверь что Ollama или LM Studio запущены",
+      "ts": "2026-07-23T15:28:36",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T19:30:01",
-      "text": "⚠ llm: автопуск пробует следующую модель",
+      "ts": "2026-07-23T15:29:26",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T20:05:01",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:32:06",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T20:37:25",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:35:05",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T20:40:13",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:35:55",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T20:44:35",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:37:43",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T20:48:12",
-      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "ts": "2026-07-23T15:41:00",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
       "kind": "problem"
     },
     {
-      "ts": "2026-07-21T21:02:23",
-      "text": "⚠ stt: pip install sounddevice — и серверный микрофон заработает",
+      "ts": "2026-07-23T15:42:01",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:42:20",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:43:05",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:43:30",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:45:12",
+      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:46:44",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:48:19",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:48:45",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T15:49:44",
+      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T16:15:55",
+      "text": "⚠ llm.guard: оборвала и привожу Сайку в чувство",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T16:21:55",
+      "text": "⚠ llm.guard: оборвала и привожу Сайку в чувство",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T16:48:05",
+      "text": "⚠ llm.guard: оборвала и привожу Сайку в чувство",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:09:55",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:10:10",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:10:10",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:10:15",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-23T17:10:17",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:11:21",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:11:54",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:14:27",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:16:28",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:17:21",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:18:17",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:18:20",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:18:52",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:25:18",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:28:57",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T17:29:12",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:00:38",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:00:38",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:00:42",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-23T18:02:00",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:08:41",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:24:12",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:25:37",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:27:13",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:39:47",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T18:47:25",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T19:11:21",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-23T19:24:21",
+      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
       "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "google/gemma-4-12b-qat: прогрев не удался",
-      "count": 26,
+      "text": "основной бэкенд не ответил: 429 от https://api.moonshot.ai/v1: {\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}",
+      "count": 78,
       "resolved": false,
-      "last": "2026-07-21T19:30"
+      "last": "2026-07-23T19:24"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
@@ -664,16 +1376,46 @@
       "last": "2026-07-18T14:01"
     },
     "stt": {
-      "text": "нет пакета sounddevice",
-      "count": 24,
+      "text": "основной движок недоступен",
+      "count": 1852,
       "resolved": false,
-      "last": "2026-07-21T21:02"
+      "last": "2026-07-23T18:00"
     },
     "browser": {
       "text": "browser",
       "count": 0,
       "resolved": true,
-      "last": "2026-07-21T16:09"
+      "last": "2026-07-23T00:21"
+    },
+    "stt.voxtral": {
+      "text": "«voxtral» упал с незнакомой мне ошибкой.",
+      "count": 4,
+      "resolved": false,
+      "last": "2026-07-23T09:54"
+    },
+    "stt.tone": {
+      "text": "«tone» получил данные не того формата — это моя внутренняя несовместимость, не твоя вина.",
+      "count": 22,
+      "resolved": true,
+      "last": "2026-07-23T10:00"
+    },
+    "llm.guard": {
+      "text": "генерация зависла: таймаут генерации (180с)",
+      "count": 6,
+      "resolved": false,
+      "last": "2026-07-23T16:48"
+    },
+    "llm.silence": {
+      "text": "модель промолчала: модель вернула пустой ответ без ошибки — чаще всего это переполненное окно контекста или зависший prefill; попробуй 🧹 новый диалог или перезагрузи модель ⏏/⬇",
+      "count": 4,
+      "resolved": false,
+      "last": "2026-07-23T18:25"
+    },
+    "stt.gigaam": {
+      "text": "«gigaam» упал с незнакомой мне ошибкой.",
+      "count": 2,
+      "resolved": true,
+      "last": "2026-07-23T18:00"
     }
   }
 }

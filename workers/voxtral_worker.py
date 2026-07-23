@@ -6,8 +6,17 @@
 Требует в своём окружении transformers>=5.2 и mistral-common[audio]
 (ставит setup/install_voxtral.bat); torch/numpy/fastapi берутся из основного
 .venv через main_env.pth.
+
+2026-07-23: /transcribe раньше делал _ready.wait(1800) ПРЯМО в event loop —
+на первой закачке модели (~9 ГБ, десятки минут) это замораживало ВЕСЬ uvicorn,
+/health переставал отвечать, сервер решал «воркер умер», спавнил второго на
+тот же порт — тот падал (код 3, порт занят), и так по кругу. Теперь: пока
+модель грузится, /transcribe мгновенно отвечает {"loading": true}, а сама
+инференция гоняется в отдельном потоке (asyncio.to_thread) — event loop
+всегда свободен, /health всегда живой.
 """
 import argparse
+import asyncio
 import logging
 import os
 import threading
@@ -61,15 +70,12 @@ def _load_model():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "model_loaded": _model is not None, "error": _error}
+    return {"ok": True, "model_loaded": _model is not None,
+            "loading": not _ready.is_set(), "error": _error}
 
 
-@app.post("/transcribe")
-async def transcribe(request: Request, sr: int = 16000):
-    _ready.wait(timeout=1800)  # первая загрузка может качать модель
-    if _error:
-        return {"error": _error}
-    body = await request.body()
+def _infer(body: bytes, sr: int) -> dict:
+    """Синхронная инференция — вызывается через asyncio.to_thread."""
     pcm = np.frombuffer(body, dtype=np.int16)
     audio = pcm.astype(np.float32) / 32768.0
 
@@ -84,6 +90,18 @@ async def transcribe(request: Request, sr: int = 16000):
         out = _model.generate(**inputs)
     text = _processor.batch_decode(out, skip_special_tokens=True)[0]
     return {"text": text.strip()}
+
+
+@app.post("/transcribe")
+async def transcribe(request: Request, sr: int = 16000):
+    # НЕ ждём загрузку в event loop'е: пока модель качается/грузится,
+    # честно отвечаем «ещё гружусь» — сервер поработает на запасном движке
+    if not _ready.is_set():
+        return {"loading": True, "text": ""}
+    if _error:
+        return {"error": _error}
+    body = await request.body()
+    return await asyncio.to_thread(_infer, body, sr)
 
 
 if __name__ == "__main__":

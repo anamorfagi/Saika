@@ -49,20 +49,31 @@ def _secrets() -> dict:
 def _cloud() -> dict:
     """Настройки облачного бэкенда. Ключ — из secrets.json (приоритет) или из
     config (запасной вариант). Дефолт base_url — OpenRouter (один ключ, много
-    моделей; OpenAI-совместимый). Подходит и OpenAI/Groq/DeepSeek и т.п."""
+    моделей; OpenAI-совместимый). Подходит и OpenAI/Groq/DeepSeek/Kimi и т.п.
+
+    2026-07-23: ключи хранятся ПО-ПРОВАЙДЕРНО (llm.cloud_keys[provider]) —
+    переключение OpenRouter↔Groq↔Kimi больше не затирает предыдущий ключ.
+    Старый одиночный слот cloud_api_key остаётся запасным (миграция)."""
     c = CFG.get("llm.cloud", {}) or {}
-    key = ((_secrets().get("llm", {}) or {}).get("cloud_api_key", "")
+    s = _secrets().get("llm", {}) or {}
+    prov = c.get("provider", "openrouter")
+    key = ((s.get("cloud_keys", {}) or {}).get(prov, "")
+           or s.get("cloud_api_key", "")
            or c.get("api_key", ""))
     return {"enabled": bool(c.get("enabled")),
             "base_url": (c.get("base_url") or "https://openrouter.ai/api/v1").rstrip("/"),
             "model": c.get("model", ""), "key": key}
 
 
-def save_cloud_key(key: str):
-    """Пишем/обновляем API-ключ в secrets.json (не трогая остальное)."""
+def save_cloud_key(key: str, provider: str | None = None):
+    """Пишем/обновляем API-ключ в secrets.json (не трогая остальное).
+    Ключ кладётся в слот СВОЕГО провайдера (cloud_keys[provider]) — у
+    каждого облака свой ключ, и они не перетирают друг друга."""
     p = ROOT / "secrets.json"
     data = _secrets()
-    data.setdefault("llm", {})["cloud_api_key"] = key or ""
+    prov = provider or CFG.get("llm.cloud.provider", "openrouter")
+    llm_s = data.setdefault("llm", {})
+    llm_s.setdefault("cloud_keys", {})[prov] = key or ""
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -189,27 +200,43 @@ def _loaded_with_backend() -> list[tuple]:
     return out
 
 
-def unload_others(keep_backend: str, keep_model: str):
+def unload_others(keep_backend: str, keep_model: str) -> list:
     """Выгружает ВСЕ прочие загруженные локальные модели, кроме указанной —
     чтобы две большие LLM не висели в памяти одновременно (это и вешало ПК
-    чёрным экраном). Работает и через LM Studio, и через Ollama."""
+    чёрным экраном). Работает и через LM Studio, и через Ollama.
+
+    Возвращает список (backend, model) моделей, которые выгрузить НЕ
+    удалось — раньше это молча терялось в логе, и владелец видел «клик по
+    модели — предыдущая всё ещё в памяти» без единого объяснения (частая
+    причина: старая версия LM Studio без REST API /models/unload)."""
+    failed = []
     for b, n in _loaded_with_backend():
         if b == keep_backend and n == keep_model:
             continue
         try:
             if unload_model(b, n):
                 log.info("Освободила память: выгрузила %s/%s", b, n)
+            else:
+                failed.append((b, n))
         except Exception as e:
             log.warning("Не смогла выгрузить %s/%s: %s", b, n, e)
+            failed.append((b, n))
+    return failed
 
 
-def switch_model(backend: str, model: str) -> bool:
+def switch_model(backend: str, model: str) -> dict:
     """Переключение LLM с защитой памяти: по умолчанию держим в памяти только
     ОДНУ модель (llm.keep_only_one) — сперва выгружаем прочие, потом греем
-    новую. Нужны две сразу (маленькая+большая связка) — выключи keep_only_one."""
+    новую. Нужны две сразу (маленькая+большая связка) — выключи keep_only_one.
+
+    Возвращает {"ok": bool, "unload_failed": [(backend, model), …]} — раньше
+    отдавался голый bool, и молчаливый провал выгрузки старой модели (см.
+    unload_others) никак не долетал до UI/чата."""
+    unload_failed = []
     if backend != "cloud" and CFG.get("llm.keep_only_one", True):
-        unload_others(backend, model)
-    return warmup(backend, model)
+        unload_failed = unload_others(backend, model)
+    ok = warmup(backend, model)
+    return {"ok": ok, "unload_failed": unload_failed}
 
 
 def prewarm_context(backend: str, model: str, system_text: str):
@@ -305,6 +332,62 @@ def unload_model(backend: str, model: str) -> bool:
         return False
 
 
+def delete_model(backend: str, model: str) -> str:
+    """Удаляет модель С ДИСКА (крестик ✕ в списке моделей UI).
+    Ollama — родное API /api/delete. LM Studio — своего API удаления нет:
+    выгружаем из памяти и сносим папку модели в каталоге LM Studio
+    (~/.lmstudio/models/издатель/модель, старые версии — ~/.cache/lm-studio).
+    Возвращает человеческое описание результата, кидает RuntimeError с
+    понятной причиной, если удалить нельзя."""
+    if backend == "ollama":
+        r = requests.delete(_ollama_url() + "/api/delete",
+                            json={"model": model, "name": model}, timeout=120)
+        if r.status_code == 404:
+            raise RuntimeError(f"Ollama не знает модель {model}")
+        r.raise_for_status()
+        log.info("Модель %s УДАЛЕНА из Ollama", model)
+        return f"{model} удалена из Ollama"
+    if backend == "lmstudio":
+        try:
+            unload_model("lmstudio", model)
+        except Exception:
+            pass
+        import shutil
+        from pathlib import Path
+        home = Path.home()
+        roots = [home / ".lmstudio" / "models",
+                 home / ".cache" / "lm-studio" / "models"]
+        # каталог LM Studio часто ПЕРЕНЕСЁН на другой диск — настоящий путь
+        # лежит в файле-указателе ~/.lmstudio-home-pointer (первая строка)
+        try:
+            ptr = home / ".lmstudio-home-pointer"
+            if ptr.exists():
+                target = Path(ptr.read_text(encoding="utf-8",
+                                            errors="ignore")
+                              .strip().splitlines()[0].strip())
+                if target.exists():
+                    roots.insert(0, target / "models")
+        except Exception as e:
+            log.debug("lmstudio home-pointer: %s", e)
+        for root in roots:
+            if not root.exists():
+                continue
+            cand = (root / Path(*model.split("/"))).resolve()
+            # защита от выхода за каталог моделей (имя с ..)
+            if not str(cand).startswith(str(root.resolve())):
+                continue
+            if cand.is_dir():
+                shutil.rmtree(cand)
+                log.info("Модель %s УДАЛЕНА с диска (%s)", model, cand)
+                return f"{model}: файлы стёрты ({cand})"
+        raise RuntimeError(
+            "папка модели не нашлась в каталоге LM Studio — удали её в самом "
+            "LM Studio (My Models)")
+    raise RuntimeError("удаление умею для Ollama и LM Studio; облако — это "
+                       "просто настройка, а LocalLM-модели лежат в models/ "
+                       "проекта")
+
+
 def backend_status() -> dict:
     st = {}
     for name, url, probe in (
@@ -369,13 +452,23 @@ def _attach_image_ollama(messages, image):
 
 def _attach_image_openai(messages, image):
     """OpenAI-формат: content последнего user-сообщения становится списком
-    [text, image_url(data-url)]."""
+    [text, image_url(data-url)].
+
+    2026-07-23: реальный инцидент — пользователь прислал ТОЛЬКО картинку, без
+    подписи (текст ''). Пустая text-часть тут же ловилась 400 у Moonshot/Kimi
+    («text content is empty»), и — куда хуже — эта пустая user-реплика
+    сохранялась в память и лежала в истории ПОСТОЯННО: Kimi 400-ила на КАЖДОМ
+    следующем ходу («message at position 8 with role user must not be
+    empty»), пока не отвалилась совсем — Сайка молча и незаметно для
+    пользователя осталась сидеть на мелкой локальной модели. Пустой text
+    рядом с картинкой больше никогда не уходит наружу."""
     if not image:
         return messages
     msgs = [dict(m) for m in messages]
     for m in reversed(msgs):
         if m.get("role") == "user":
-            m["content"] = [{"type": "text", "text": m.get("content", "")},
+            _txt = (m.get("content") or "").strip() or "(без подписи — просто посмотри)"
+            m["content"] = [{"type": "text", "text": _txt},
                             {"type": "image_url", "image_url": {"url": image}}]
             break
     return msgs
@@ -521,6 +614,37 @@ def _stream_cloud(messages, model, temperature, tools=None, image=None):
                               messages, model, temperature, tools, image)
 
 
+# ЗАНЯТОСТЬ бэкенда живым диалогом (2026-07-23). Обнаружено по логу
+# пользователя: passport.ensure_async() запускает фоновые пробы (ping +
+# несколько big-prompt попыток + tools-проба, суммарно МИНУТЫ, каждая —
+# отдельный блокирующий HTTP-запрос той же модели) через 180с после
+# warmup(). Но у Ollama/LM Studio модель обслуживает запросы ПО ОДНОМУ —
+# если за эти 180с пользователь продолжает живой разговор (частый случай:
+# только что переключил модель и тут же тестирует её), проба и настоящий
+# ответ дерутся за одну и ту же модель. В логе это выглядело как
+# «думала 76.3с» / «думала 253.2с» (обрыв по таймауту 180с) на gemma4:26b
+# и ping_s=40.8 у паспорта gemma4:12b — ровно во время probe-окон.
+# Фикс: живой чат метит бэкенд «занят» на каждый токен, паспорт ждёт тишины.
+_BUSY: dict = {}
+_BUSY_GRACE_S = 20  # столько секунд после последнего токена бэкенд ещё "занят"
+
+
+def mark_busy(backend: str, model: str):
+    _BUSY[(backend, model)] = time.time() + _BUSY_GRACE_S
+
+
+def is_busy(backend: str, model: str) -> bool:
+    return time.time() < _BUSY.get((backend, model), 0.0)
+
+
+# Причуды конкретных API, выученные на лету: (base_url, model) -> поля,
+# которые этот провайдер не принимает (2026-07-23: Moonshot/kimi-k3 отвечает
+# 400 «invalid temperature: only 1 is allowed» на наш temperature=0.8).
+# Выучив один раз, дальше строим запрос сразу без неугодного поля — без
+# трёх холостых запросов на каждую фразу.
+_API_QUIRKS: dict = {}
+
+
 def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
                    image=None):
     """Общий OpenAI-совместимый стрим (LM Studio и облако).
@@ -559,25 +683,84 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             pass
     if tools:
         payload["tools"] = tools
+    # 2026-07-23: облако (Kimi/Moonshot) по 7-47с «думает» даже на реплики в
+    # 30-90 токенов — то есть почти всё время это ПРЕФИЛЛ растущей истории,
+    # не генерация. Moonshot заявляет автоматическое кэширование префикса
+    # (без нашего участия, просто по совпадению начала запроса), но со
+    # стороны не видно, попадаем мы в кэш или нет. stream_options.include_usage
+    # — стандартное OpenAI-расширение, просим провайдера вернуть usage в
+    # финальном чанке стрима; ЕСЛИ там есть поля про кэш (у части провайдеров
+    # это prompt_tokens_details.cached_tokens) — увидим в логе и поймём,
+    # реально ли работает кэш или бьёмся об одну и ту же стену каждый раз.
+    # Только для облака (есть api_key) — по локальным бэкендам не рискуем
+    # незнакомым полем.
+    if api_key:
+        payload["stream_options"] = {"include_usage": True}
+    # выученные причуды этого API: неугодные поля не кладём с самого начала
+    for f in _API_QUIRKS.get((base_url, model), ()):
+        payload.pop(f, None)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     def _do_request(body):
         r = requests.post(base_url + "/chat/completions", json=body,
                           headers=headers, stream=True, timeout=(10, 600))
-        r.raise_for_status()
+        if not r.ok:
+            # тело ответа — единственное место, где провайдер объясняет,
+            # ЧТО ему не понравилось («unknown field», «model not found»…).
+            # requests.HTTPError сам по себе теряет его (только код и URL) —
+            # 2026-07-23: именно из-за этого Kimi/облако тихо фолбэчилось на
+            # локальную модель, а причина не долетала даже до лога.
+            detail = ""
+            try:
+                detail = r.text[:400]
+            except Exception:
+                pass
+            err = requests.exceptions.HTTPError(
+                f"{r.status_code} от {base_url}: {detail}", response=r)
+            raise err
         return r
 
     try:
         r = _do_request(payload)
-    except requests.exceptions.HTTPError:
-        if not tools:
-            raise
-        # некоторые модели/шаблоны в LM Studio не понимают параметр tools
-        # и отвечают 400 — откатываемся на обычный чат без инструментов
-        log.warning("LM Studio отверг tools (модель без function calling?) "
-                    "— повторяю без инструментов")
-        payload.pop("tools", None)
-        r = _do_request(payload)
+    except requests.exceptions.HTTPError as e0:
+        # 400/422 бывает по РАЗНЫМ причинам у разных облаков: строгий
+        # temperature у Moonshot («only 1 is allowed»), незнакомый
+        # chat_template_kwargs (расширение llama.cpp/LM Studio), кривые
+        # tools-схемы. Ищем виновника ПО ОДНОМУ (не скопом — иначе вместе с
+        # виноватым полем навсегда потеряли бы, например, инструменты),
+        # а найденное запоминаем в _API_QUIRKS: следующая фраза строит
+        # запрос сразу правильно, без холостых заходов.
+        recovered, last = False, e0
+        suspects = [f for f in ("tools", "chat_template_kwargs",
+                                "max_tokens", "temperature", "stream_options")
+                    if payload.get(f) is not None]
+        for fix in suspects:                    # фаза 1: по одному
+            trial = {k: v for k, v in payload.items() if k != fix}
+            try:
+                r = _do_request(trial)
+                recovered = True
+                payload = trial
+                _API_QUIRKS.setdefault((base_url, model), set()).add(fix)
+                log.warning("API %s не принял поле «%s» (%s) — запомнила, "
+                            "дальше шлю без него", model, fix,
+                            str(last)[:160])
+                break
+            except requests.exceptions.HTTPError as e1:
+                last = e1
+        if not recovered and len(suspects) > 1:  # фаза 2: все разом
+            trial = {k: v for k, v in payload.items() if k not in suspects}
+            try:
+                r = _do_request(trial)
+                recovered = True
+                payload = trial
+                _API_QUIRKS.setdefault((base_url, model),
+                                       set()).update(suspects)
+                log.warning("API %s принял запрос только без %s — запомнила",
+                            model, ", ".join(suspects))
+            except requests.exceptions.HTTPError as e1:
+                last = e1
+        if not recovered:
+            raise last
 
     calls = {}  # index -> {"id": str, "name": str, "arguments": str}
     for line in r.iter_lines():
@@ -590,7 +773,20 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         if raw == "[DONE]":
             break
         try:
-            delta = json.loads(raw)["choices"][0]["delta"]
+            chunk = json.loads(raw)
+        except Exception:
+            continue
+        # финальный чанк с include_usage несёт "usage" и ПУСТОЙ choices —
+        # разбор токена ниже по коду тут упал бы на choices[0], перехватываем
+        # раньше и просто логируем, что провайдер рассказал о промпте
+        _usage = chunk.get("usage")
+        if _usage:
+            log.info("API %s usage: %s", model,
+                     json.dumps(_usage, ensure_ascii=False))
+        if not chunk.get("choices"):
+            continue
+        try:
+            delta = chunk["choices"][0]["delta"]
         except Exception:
             continue
         token = delta.get("content") or ""
@@ -704,7 +900,14 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 except Exception:
                     pass
             if idx > 0 and on_fallback:
-                on_fallback(backend, model)
+                # last_err — причина, по которой ПРЕДЫДУЩИЙ кандидат не
+                # ответил (2026-07-23: раньше терялась, и в чате/логе была
+                # только «переключилась на X» без единого слова, ПОЧЕМУ —
+                # напр. Kimi «включена», а по факту всегда фолбэчилась)
+                try:
+                    on_fallback(backend, model, last_err)
+                except TypeError:
+                    on_fallback(backend, model)   # старые колбэки без reason
 
             msgs = list(messages)
             seen_calls = set()      # от зацикливания на одном и том же вызове
@@ -735,10 +938,12 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 calls, text_parts = [], []
                 # картинку прикладываем только в первом раунде (это ход юзера)
                 img = image if _round == 0 else None
+                mark_busy(backend, model)   # начали реальный запрос — паспорт подождёт
                 for ev in fn(msgs, model, temperature, tools, img):
                     if ev["type"] == "token":
                         text_parts.append(ev["text"])
                         yielded_any = True
+                        mark_busy(backend, model)   # продлеваем на каждый токен
                         yield ev["text"]
                     else:
                         calls.append(ev["call"])

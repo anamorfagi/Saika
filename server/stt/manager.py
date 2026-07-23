@@ -21,7 +21,19 @@ log = logging.getLogger("saika.stt")
 
 
 class VadSegmenter:
-    """Простой энергетический VAD: копим речь, отдаём сегмент после тишины."""
+    """Энергетический VAD с адаптацией под шумный микрофон (2026-07-23).
+
+    Микрофон без аудиокарты/фантомного питания даёт постоянный шумовой фон,
+    и жёсткий порог из конфига либо режет тихий голос, либо ловит помехи.
+    Три доработки:
+    - АДАПТИВНЫЙ ПОРОГ: следим за шумовым полом (EMA RMS вне речи), порог =
+      max(конфигный, пол*2.5 + запас). Конфигный rms_threshold — это МИНИМУМ,
+      вверх порог подстраивается сам.
+    - ГИСТЕРЕЗИС: войти в речь — выше порога, выйти — ниже 0.6*порога.
+      Дрожание уровня на границе не рвёт фразу на куски.
+    - ПРЕДРОЛЛ: кольцевой буфер ~240мс ДО срабатывания порога уходит в
+      сегмент — начало первого слова больше не съедается (тихая атака
+      «с», «п», «э-э» раньше не долетала до распознавания)."""
 
     def __init__(self):
         vad = CFG.get("stt.vad", {})
@@ -29,21 +41,51 @@ class VadSegmenter:
         self.silence_ms = vad.get("silence_ms", 700)
         self.min_speech_ms = vad.get("min_speech_ms", 300)
         self.max_segment_s = vad.get("max_segment_s", 25)
+        self.preroll_ms = vad.get("preroll_ms", 240)
+        self.adaptive = vad.get("adaptive", True)
         self.sr = CFG.get("stt.sample_rate", 16000)
+        self.noise_floor = 0.0     # EMA шумового пола (живёт через reset)
         self.reset()
 
     def reset(self):
         self.buffer = []
+        self.preroll = []          # последние чанки ДО начала речи
+        self.preroll_samples = 0
         self.in_speech = False
         self.silence_samples = 0
         self.speech_samples = 0
 
+    def _eff_threshold(self):
+        if not self.adaptive:
+            return self.threshold
+        # пол шума * 2.5 + небольшой запас; конфигный порог — нижняя планка
+        return max(self.threshold, self.noise_floor * 2.5 + 0.004)
+
     def push(self, pcm16: np.ndarray):
         """Вернёт np.int16-сегмент когда фраза закончилась, иначе None."""
         rms = float(np.sqrt(np.mean((pcm16.astype(np.float32) / 32768.0) ** 2)))
-        is_voice = rms > self.threshold
+        thr = self._eff_threshold()
+        # гистерезис: подняться над порогом сложнее, чем удержаться
+        is_voice = rms > (thr * 0.6 if self.in_speech else thr)
+
+        if not self.in_speech and not is_voice:
+            # обновляем шумовой пол ТОЛЬКО на чистой тишине (медленная EMA);
+            # чанк, взявший порог, в пол не считаем — иначе тихий голос
+            # у границы постепенно задирал бы порог сам себе
+            self.noise_floor = (0.95 * self.noise_floor + 0.05 * rms
+                                if self.noise_floor > 0 else rms)
+            # копим предролл (кольцо ~preroll_ms)
+            self.preroll.append(pcm16)
+            self.preroll_samples += len(pcm16)
+            cap = int(self.sr * self.preroll_ms / 1000)
+            while self.preroll_samples > cap and len(self.preroll) > 1:
+                self.preroll_samples -= len(self.preroll.pop(0))
 
         if is_voice:
+            if not self.in_speech:
+                # старт речи: предролл — в начало сегмента
+                self.buffer = list(self.preroll)
+                self.preroll, self.preroll_samples = [], 0
             self.in_speech = True
             self.silence_samples = 0
             self.speech_samples += len(pcm16)
@@ -219,7 +261,7 @@ class STTManager:
           (у gigaam снос встроен в engine.load, тут общий случай);
         - остальное — обычная попытка выгрузить/загрузить заново."""
         cat = (diag or {}).get("category", "unknown")
-        if cat in ("network", "space", "offline"):
+        if cat in ("loading", "network", "space", "offline"):
             # чинить нечего до восстановления условий — просто фиксируем причину
             log.info("STT %s: причина '%s' — жду условий, не переустанавливаю",
                      name, cat)
