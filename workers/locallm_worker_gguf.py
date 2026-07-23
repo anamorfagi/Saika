@@ -465,26 +465,43 @@ def _extract_tool_calls(chunks):
                     break  # копим блок дальше
                 block, buf = buf[:j], buf[j + len(CLOSE):]
                 in_call = False
+                fname, fargs = None, {}
                 m = re.search(r"<function=([^>\n]+)>", block)
                 if m:
-                    args = {}
+                    # формат Qwen3.5: <function=имя><parameter=k>v</parameter>
+                    fname = m.group(1).strip()
                     for k, v in re.findall(
                             r"<parameter=([^>\n]+)>\n?(.*?)\n?</parameter>",
                             block, re.S):
                         try:
-                            args[k] = json.loads(v)
+                            fargs[k] = json.loads(v)
                         except Exception:
-                            args[k] = v
+                            fargs[k] = v
+                else:
+                    # формат Qwen2.5/T-lite: JSON {"name":..,"arguments":{..}}
+                    try:
+                        obj = json.loads(block.strip())
+                        fname = obj.get("name") or obj.get("function")
+                        fargs = obj.get("arguments") or obj.get("parameters") or {}
+                        if isinstance(fargs, str):
+                            try:
+                                fargs = json.loads(fargs)
+                            except Exception:
+                                fargs = {"raw": fargs}
+                    except Exception:
+                        fname = None
+                if fname:
                     yield {"choices": [{"index": 0, "delta": {"tool_calls": [{
                         "index": n_calls, "id": f"call_{n_calls}",
                         "type": "function",
-                        "function": {"name": m.group(1).strip(),
+                        "function": {"name": fname,
                                      "arguments": json.dumps(
-                                         args, ensure_ascii=False)}}]},
+                                         fargs, ensure_ascii=False)}}]},
                         "finish_reason": None}]}
                     n_calls += 1
                 else:
-                    log.warning("tool_call без <function=…> — пропускаю: %r",
+                    log.warning("tool_call не распознан (ни XML, ни JSON) — "
+                                "пропускаю: %r",
                                 block[:120])
             else:
                 i = buf.find(OPEN)
