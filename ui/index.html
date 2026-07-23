@@ -429,8 +429,13 @@
       </div>
       <div class="title">Проверка</div>
       <div class="item" id="btn-monitor">🔉 Прослушать этот микрофон</div>
+      <div class="title">Громкость прослушки <span id="mon-vol-val"></span></div>
       <input type="range" id="mon-vol" min="0" max="300" step="1"
-             title="Громкость прослушки себя (без AGC голос обычно тише — можно поднять выше 100%)"
+             title="Насколько громко прослушка играет в наушниках (на модель НЕ влияет)"
+             style="width:100%;margin:4px 0">
+      <div class="title">Усиление микрофона <span id="mic-gain-val"></span></div>
+      <input type="range" id="mic-gain" min="10" max="400" step="1"
+             title="Усиление голоса ДО распознавания — влияет и на то, что слышит модель, и на прослушку"
              style="width:100%;margin:4px 0">
     </div>
   </div>
@@ -604,7 +609,8 @@ let micLevel=0;
 let outDevice=localStorage.outId||'';                       // основной вывод TTS (напр. кабель)
 let dupDevice=localStorage.dupId||'';                       // дубль вывода (слышать самому)
 let ttsVolume=localStorage.ttsVol!=null?+localStorage.ttsVol:1;   // 0..1.5
-let monVolume=localStorage.monVol!=null?+localStorage.monVol:1;   // 0..3 (без AGC голос тише — потолок выше, чем у ttsVolume)
+let monVolume=localStorage.monVol!=null?+localStorage.monVol:1;   // 0..3 громкость прослушки (только уши)
+let micGain=localStorage.micGain!=null?+localStorage.micGain:1;   // 0.1..4 усиление ДО STT (и модель, и прослушка)
 let ttsVolNode=null, monGain=null, dupDest=null;
 const CABLE_RE=/cable|virtual|vb-?audio|voicemeeter|vac/i;   // виртуальные кабели
 
@@ -830,12 +836,20 @@ function bargeIn(){
 /* ---------- микрофон: захват -> int16 16k -> WS ---------- */
 const workletCode = `
 class Cap extends AudioWorkletProcessor{
-  constructor(){ super(); this.buf=[]; this.ratio=sampleRate/16000; this.acc=0; }
+  constructor(){ super(); this.buf=[]; this.ratio=sampleRate/16000;
+    this.acc=0; this.sum=0; this.cnt=0; }
   process(inputs){
     const ch=inputs[0][0]; if(!ch) return true;
-    // простое прореживание до 16k
-    for(let i=0;i<ch.length;i+=this.ratio){
-      this.buf.push(ch[Math.floor(i)|0]);
+    // даунсемпл до 16к с УСРЕДНЕНИЕМ (box-фильтр). Раньше просто брали
+    // каждый ~третий семпл как есть — даунсемпл без НЧ-фильтра даёт
+    // алиасинг: «жестяной/сдавленный» голос и лишний мусор для STT.
+    for(let i=0;i<ch.length;i++){
+      this.sum+=ch[i]; this.cnt++; this.acc++;
+      if(this.acc>=this.ratio){
+        this.acc-=this.ratio;
+        this.buf.push(this.sum/this.cnt);
+        this.sum=0; this.cnt=0;
+      }
     }
     if(this.buf.length>=1600){ // 100ms
       const out=new Int16Array(this.buf.length);
@@ -852,8 +866,17 @@ class Cap extends AudioWorkletProcessor{
 registerProcessor('cap',Cap);`;
 
 async function startMic(){
-  micStream = await navigator.mediaDevices.getUserMedia({
-    audio: selectedMic? {deviceId:{exact:selectedMic}} : true });
+  // 2026-07-23: раньше constraints не задавали, а у Chrome ПО УМОЛЧАНИЮ
+  // включены echoCancellation+noiseSuppression+autoGainControl. AGC и
+  // шумодав «сдавливают» голос (компрессия + артефакты) — именно это
+  // услышал владелец, когда прослушка стала играть те самые байты, что
+  // уходят в STT. Теперь: echoCancellation ВКЛ (обязателен — без него
+  // модель слышит собственный голос из колонок и отвечает сама себе),
+  // AGC и шумодав ВЫКЛ — вместо них ручной ползунок «Усиление микрофона».
+  const mc={echoCancellation:true, noiseSuppression:false,
+            autoGainControl:false};
+  if(selectedMic) mc.deviceId={exact:selectedMic};
+  micStream = await navigator.mediaDevices.getUserMedia({audio:mc});
   audioCtx = new AudioContext();
   // при АВТОстарте без клика Chrome может создать контекст suspended —
   // микрофон выглядит включённым, но глух. Будим сразу; если политика не
@@ -870,6 +893,13 @@ async function startMic(){
   const src = audioCtx.createMediaStreamSource(micStream);
   workletNode = new AudioWorkletNode(audioCtx,'cap');
   workletNode.port.onmessage = e=>{
+    if(micGain!==1){   // ручное усиление вместо AGC — до STT, значит
+      const g=new Int16Array(e.data);      // модель и прослушка слышат одно
+      for(let i=0;i<g.length;i++){
+        const v=g[i]*micGain;
+        g[i]=v>32767?32767:(v<-32768?-32768:v);
+      }
+    }
     if(ws && ws.readyState===1) ws.send(e.data);
     if(monOn) _playMonitorChunk(e.data);   // «что слышит модель» — те же байты
     // индикатор уровня: RMS чанка -> полоска в кнопке 🎧
@@ -976,10 +1006,13 @@ async function fillMicPop(){
     el.textContent='🎙 '+(d.label||('Микрофон '+(i+1)));
     el.onclick=()=>{selectedMic=d.deviceId;localStorage.micId=d.deviceId;
       fillMicPop(); if(micOn){stopMic();startMic();}
-      if(monOn){toggleMonitor().then(()=>toggleMonitor());}};
+      };
     $('#mic-devices').appendChild(el);
   });
   const mv=$('#mon-vol'); if(mv) mv.value=Math.round(monVolume*100);
+  const mg=$('#mic-gain'); if(mg) mg.value=Math.round(micGain*100);
+  const l1=$('#mon-vol-val'); if(l1) l1.textContent=Math.round(monVolume*100)+'%';
+  const l2=$('#mic-gain-val'); if(l2) l2.textContent=Math.round(micGain*100)+'%';
   fillSttEngines();
 }
 
@@ -1492,7 +1525,12 @@ $('#tts-vol').oninput = e=>{
 };
 $('#mon-vol').oninput = e=>{
   monVolume=e.target.value/100; localStorage.monVol=monVolume;
-  if(monGain) monGain.gain.setTargetAtTime(monVolume, monCtx.currentTime, .02);
+  const l=$('#mon-vol-val'); if(l) l.textContent=e.target.value+'%';
+  if(monGain && monCtx) monGain.gain.setTargetAtTime(monVolume, monCtx.currentTime, .02);
+};
+$('#mic-gain').oninput = e=>{
+  micGain=e.target.value/100; localStorage.micGain=micGain;
+  const l=$('#mic-gain-val'); if(l) l.textContent=e.target.value+'%';
 };
 $('#btn-clear').onclick = async()=>{
   await api('/api/dialog/clear',{});
