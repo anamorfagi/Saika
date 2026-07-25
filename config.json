@@ -5,10 +5,10 @@
     "auto_open_browser": true
   },
   "llm": {
-    "backend": "cloud",
+    "backend": "lmstudio",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "kimi-k3",
+    "model": "gemma-4-e4b-it",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
@@ -317,7 +317,7 @@
       "head_bob_max_deg": 6.0
     },
     "web": {
-      "model": "C:/AI/visual/Saika_v1.vrm",
+      "model": "visual/Saika_v1.vrm",
       "anims_dir": "models/avatar/anims",
       "outfits_dir": "models/avatar/outfits"
     }

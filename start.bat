@@ -76,9 +76,14 @@ where ollama >nul 2>&1 && (
 :: скрытый запуск (без окна консоли): раньше start /min плодил окно,
 :: которое приходилось закрывать руками. Если порт 8767 уже занят -
 :: HandsPC уже работает, второй не поднимаем. Логи -> logs\handspc.log
-if exist "%~dp0..\HandsPC\run.bat" (
+:: HandsPC переехал ВНУТРЬ проекта (2026-07-25): %~dp0HandsPC. Старое место
+:: (..\HandsPC, рядом с Саикой) поддерживаем как запасное — чтобы у тех, кто
+:: ещё не перенёс папку, всё продолжало работать без правок.
+set "HANDS=%~dp0HandsPC\run.bat"
+if not exist "%HANDS%" set "HANDS=%~dp0..\HandsPC\run.bat"
+if exist "%HANDS%" (
     netstat -ano | findstr ":8767 " | findstr "LISTENING" >nul 2>&1 || ^
-    powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%~dp0..\HandsPC\run.bat\" > \"%~dp0logs\handspc.log\" 2>&1'"
+    powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%HANDS%\" > \"%~dp0logs\handspc.log\" 2>&1'"
 )
 
 :: ---------- run with self-restart ----------

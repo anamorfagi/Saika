@@ -33,3 +33,10 @@ __pycache__/
 *.pyc
 Saika_portable.zip
 Saika_package_skipped.txt
+
+# HandsPC («руки»: веб-поиск и пр.) переехал внутрь проекта 2026-07-25.
+# Код (server.py, run.bat) пушим, а venv/логи — нет: venv run.bat пересоздаёт
+# сам на любой машине, если его нет или он «переехал».
+HandsPC/.venv/
+HandsPC/logs/
+HandsPC/__pycache__/
