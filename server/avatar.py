@@ -334,8 +334,16 @@ def _emit_web(slot: str):
 
 
 def _fire_slot(slot: str):
-    _emit_web(slot)
-    # внешняя программа-аватар: основной канал — MIDI; хоткеи — фолбэк
+    _emit_web(slot)      # свой рендер (ui/avatar.html) — основной канал
+    # ВНЕШНЯЯ программа-аватар (ВВА/Warudo/VMagicMirror) — с 2026-07-25 не
+    # нужна: у Сайки собственный рендер, жест уже ушёл строкой выше. Каналы
+    # MIDI и хоткеи оставлены в коде (вдруг понадобится вести чужую прогу
+    # параллельно), но по умолчанию ВЫКЛючены: avatar.gestures.external.
+    # Выключатель обязателен: без него отключение MIDI роняло бы код в
+    # фолбэк-хоткеи, а это НАСТОЯЩИЕ Ctrl+Alt+1.. в активное окно — куда бы
+    # они ни прилетели (браузер, игра, редактор).
+    if not CFG.get("avatar.gestures.external", False):
+        return
     if _midi_slot(slot):
         return
     names = CFG.get("avatar.gestures.slot_names", DEFAULT_SLOT_NAMES)
@@ -355,6 +363,8 @@ def _fire_slot(slot: str):
 
 def fire_camera_pose(n: int):
     """Поза камеры 1..3 (Ctrl+Shift+1..3) — переключение по контексту."""
+    if not CFG.get("avatar.gestures.external", False):
+        return               # см. _fire_slot: хоткеи — только для чужой проги
     combos = CFG.get("avatar.gestures.camera_pose_hotkeys",
                      DEFAULT_CAM_HOTKEYS)
     if not (1 <= n <= len(combos)):

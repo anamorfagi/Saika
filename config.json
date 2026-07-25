@@ -275,7 +275,7 @@
         "provoke": "good"
       },
       "midi": {
-        "enabled": true,
+        "enabled": false,
         "port_name": "loopMIDI",
         "notes": [
           60,
@@ -300,10 +300,11 @@
           "idle1",
           "idle2"
         ]
-      }
+      },
+      "external": false
     },
     "vmcp": {
-      "enabled": true,
+      "enabled": false,
       "host": "127.0.0.1",
       "port": 39539,
       "blend_map": {
