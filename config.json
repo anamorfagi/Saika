@@ -248,49 +248,12 @@
         "idle2",
         "idle1"
       ],
-      "word_to_motion_hotkeys": [
-        "ctrl+alt+1",
-        "ctrl+alt+2",
-        "ctrl+alt+3",
-        "ctrl+alt+4",
-        "ctrl+alt+5",
-        "ctrl+alt+6",
-        "ctrl+alt+7",
-        "ctrl+alt+8",
-        "ctrl+alt+9",
-        "ctrl+alt+0",
-        "ctrl+alt+-",
-        "ctrl+alt+="
-      ],
-      "camera_pose_hotkeys": [
-        "ctrl+shift+1",
-        "ctrl+shift+2",
-        "ctrl+shift+3"
-      ],
       "tone_map": {
         "hostile": "angry",
         "vulgar": "shaking",
         "flirt": "fun",
         "praise": "joy",
         "provoke": "good"
-      },
-      "midi": {
-        "enabled": false,
-        "port_name": "loopMIDI",
-        "notes": [
-          60,
-          61,
-          62,
-          63,
-          64,
-          65,
-          66,
-          67,
-          68,
-          69,
-          70,
-          71
-        ]
       },
       "idle": {
         "enabled": true,
@@ -300,22 +263,7 @@
           "idle1",
           "idle2"
         ]
-      },
-      "external": false
-    },
-    "vmcp": {
-      "enabled": false,
-      "host": "127.0.0.1",
-      "port": 39539,
-      "blend_map": {
-        "joy": "Joy",
-        "angry": "Angry",
-        "sorrow": "Sorrow",
-        "fun": "Fun"
-      },
-      "decay_s": 4.0,
-      "head_bob": true,
-      "head_bob_max_deg": 6.0
+      }
     },
     "web": {
       "model": "visual/Saika_v1.vrm",

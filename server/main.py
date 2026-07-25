@@ -1666,7 +1666,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                         AUDIO_LEVEL["level"] = min(
                             1.0, float(np.sqrt(np.mean(_a * _a))) * 4.0)
                         AUDIO_LEVEL["ts"] = time.time()
-                        avatar.on_audio_chunk(AUDIO_LEVEL["level"])
+                        # покачивание головой при речи считает сам веб-аватар
+                        # по реальному звуку (BroadcastChannel из index.html);
+                        # серверный канал в чужую прогу (VMC) удалён 2026-07-25
                     except Exception:
                         pass
                     out.put({"type": "audio_meta", "sr": sr})
