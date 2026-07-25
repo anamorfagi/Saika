@@ -51,6 +51,7 @@ from server.config import CFG
 
 log = logging.getLogger("saika.avatar")
 
+_re_anim = re.compile(r"^[a-z0-9_\-]{2,32}$")   # имена анимаций из библиотеки
 _LAST_FIRE = {"ts": 0.0}
 _VMC_LAST = {"ts": 0.0}
 _LAST_TOOL_FIRE = {"ts": 0.0}
@@ -85,6 +86,8 @@ ACTION_DESC = {
     "shaking": "покачивание головой (несогласие, неодобрение)",
     "clap": "аплодисменты, восторг",
     "reset": "нейтральная поза",
+    "idle1": "лёгкая живая анимация ожидания (переминание)",
+    "idle2": "другая анимация ожидания (потянуться/оглядеться)",
 }
 
 # Простые текстовые сигналы (не через tone.py — тот про допустимое ПОВЕДЕНИЕ
@@ -124,7 +127,125 @@ _AGREE_RE = re.compile(
 # флагом KEYEVENTF_SCANCODE: эмулирует реальное железное нажатие гораздо
 # точнее, чем keybd_event, и его подхватывают в том числе Raw Input/хуки,
 # которые голый VK-инжект пропускали.
-_VK = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10}
+_VK = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10,
+       # OEM-клавиши для слотов 11-12 (Ctrl+Alt+- и Ctrl+Alt+=), 2026-07-25
+       "-": 0xBD, "=": 0xBB}
+
+
+# ---------------- MIDI-канал (loopMIDI + winmm.dll, без внешних пакетов) ----
+# ПРОДОЛЖЕНИЕ 2026-07-25 (см. DEVBOARD): даже SendInput со scan-кодами
+# программа-аватар не принимает — Unity-приложения читают клавиатуру через
+# Raw Input и синтетический ввод отфильтровывают. Поэтому ОСНОВНОЙ канал
+# жестов теперь MIDI: ставится loopMIDI (виртуальный MIDI-порт), в самой
+# программе на вкладке «Слово в движение» назначение устройства меняется на
+# MIDI и каждому слоту назначается своя нота (программа сама слушает порт).
+# Мы шлём Note On/Off сырым winmm.dll (midiOutShortMsg) — надёжно, не
+# зависит от фокуса окна, раскладки и фильтров ввода. Хоткеи остаются
+# фолбэком, если MIDI выключен или порт не найден.
+_MIDI = {"h": None, "port": None}
+_MIDI_LOCK = threading.Lock()
+# нота для каждого слота по порядку slot_names: C4=60, C#4=61, ... A4=69
+DEFAULT_MIDI_NOTES = [60, 61, 62, 63, 64, 65, 66, 67, 68, 69]
+
+
+def _midi_ports():
+    """Имена всех MIDI-out устройств в системе (winmm)."""
+    import ctypes
+    import ctypes.wintypes as wt
+    winmm = ctypes.windll.winmm
+
+    class MIDIOUTCAPSW(ctypes.Structure):
+        _fields_ = [("wMid", wt.WORD), ("wPid", wt.WORD),
+                    ("vDriverVersion", ctypes.c_uint),
+                    ("szPname", ctypes.c_wchar * 32),
+                    ("wTechnology", wt.WORD), ("wVoices", wt.WORD),
+                    ("wNotes", wt.WORD), ("wChannelMask", wt.WORD),
+                    ("dwSupport", wt.DWORD)]
+
+    out = []
+    for i in range(winmm.midiOutGetNumDevs()):
+        caps = MIDIOUTCAPSW()
+        if winmm.midiOutGetDevCapsW(i, ctypes.byref(caps),
+                                    ctypes.sizeof(caps)) == 0:
+            out.append((i, caps.szPname))
+    return out
+
+
+def _midi_open():
+    """Открыть порт из конфига (по подстроке имени, без учёта регистра).
+    Держим открытым: открытие/закрытие на каждый жест дёргает драйвер."""
+    import ctypes
+    winmm = ctypes.windll.winmm
+    want = str(CFG.get("avatar.gestures.midi.port_name", "loopmidi")).lower()
+    with _MIDI_LOCK:
+        if _MIDI["h"] is not None:
+            return _MIDI["h"]
+        ports = _midi_ports()
+        pick = next((i for i, n in ports if want in n.lower()), None)
+        if pick is None:
+            log.warning("MIDI: порт с именем «%s» не найден (есть: %s) — "
+                        "жесты пойдут фолбэком через хоткеи", want,
+                        ", ".join(n for _, n in ports) or "ни одного")
+            return None
+        h = ctypes.c_void_p()
+        if winmm.midiOutOpen(ctypes.byref(h), pick, 0, 0, 0) != 0:
+            log.warning("MIDI: не открылся порт #%d — фолбэк на хоткеи", pick)
+            return None
+        _MIDI["h"], _MIDI["port"] = h, pick
+        log.info("MIDI: открыт порт «%s»", dict(ports)[pick])
+        return h
+
+
+def _midi_note(note: int, velocity: int = 100, hold_s: float = 0.05,
+               _retry: bool = True):
+    """Note On -> пауза -> Note Off (канал 1). True, если отправилось.
+
+    ВАЖНО (2026-07-25): midiOutShortMsg возвращает код ошибки, а не бросает
+    исключение. Если порт в loopMIDI пересоздали (пользователь нажал +/-),
+    старая ручка молча «отправляет в никуда» — Сайка писала «нота ушла», а
+    счётчик Total data стоял. Проверяем код возврата и на ошибке
+    переоткрываем порт и повторяем один раз."""
+    import ctypes
+    h = _midi_open()
+    if h is None:
+        return False
+    winmm = ctypes.windll.winmm
+    try:
+        rc1 = winmm.midiOutShortMsg(h, 0x90 | (velocity << 16) | (note << 8))
+        time.sleep(hold_s)
+        rc2 = winmm.midiOutShortMsg(h, 0x80 | (note << 8))
+        if rc1 == 0 and rc2 == 0:
+            return True
+        raise OSError(f"midiOutShortMsg вернул {rc1}/{rc2}")
+    except Exception as e:
+        log.warning("MIDI: нота %d не ушла (%s) — переоткрываю порт%s",
+                    note, e, " и повторяю" if _retry else "")
+        with _MIDI_LOCK:
+            try:
+                if _MIDI["h"] is not None:
+                    winmm.midiOutClose(_MIDI["h"])
+            except Exception:
+                pass
+            _MIDI["h"], _MIDI["port"] = None, None
+        return _midi_note(note, velocity, hold_s, _retry=False) \
+            if _retry else False
+
+
+def _midi_slot(slot: str) -> bool:
+    """Жест через MIDI-ноту. False -> вызывающий уходит в фолбэк (хоткеи)."""
+    if not CFG.get("avatar.gestures.midi.enabled", False):
+        return False
+    names = CFG.get("avatar.gestures.slot_names", DEFAULT_SLOT_NAMES)
+    notes = CFG.get("avatar.gestures.midi.notes", DEFAULT_MIDI_NOTES)
+    if slot not in names:
+        return False
+    idx = names.index(slot)
+    if idx >= len(notes):
+        return False
+    if _midi_note(int(notes[idx])):
+        log.info("жест «%s» -> MIDI-нота %d", slot, int(notes[idx]))
+        return True
+    return False
 
 _INPUT_KEYBOARD = 1
 _KEYEVENTF_SCANCODE = 0x0008
@@ -200,7 +321,23 @@ def _press_combo(combo: str):
         _send_key_event(vk, key_up=True)
 
 
+def _emit_web(slot: str):
+    """Событие в веб-аватар (ui/avatar.html, 2026-07-25): собственный
+    three-vrm рендер Сайки слушает /ws и отыгрывает жест сам — прямой канал
+    без MIDI и эмуляции ввода. Шлём ВСЕГДА (дёшево), даже если открытых
+    вкладок аватара нет."""
+    try:
+        from server.main import broadcast_event
+        broadcast_event({"type": "avatar_gesture", "gesture": slot})
+    except Exception:
+        pass
+
+
 def _fire_slot(slot: str):
+    _emit_web(slot)
+    # внешняя программа-аватар: основной канал — MIDI; хоткеи — фолбэк
+    if _midi_slot(slot):
+        return
     names = CFG.get("avatar.gestures.slot_names", DEFAULT_SLOT_NAMES)
     combos = CFG.get("avatar.gestures.word_to_motion_hotkeys",
                      DEFAULT_WORD_HOTKEYS)
@@ -418,6 +555,39 @@ def react(user_text: str, tone_cls: str | None = None):
         _vmc_slot(slot)
 
 
+# русские/вольные имена жестов -> слоты: маленькие модели пишут маркеры
+# как умеют ([жест:радость], [жест:похлопай]) — принимаем и это
+_NAME_ALIAS = {
+    "радость": "joy", "улыбка": "joy", "улыбнись": "joy", "счастье": "joy",
+    "злость": "angry", "злюсь": "angry", "гнев": "angry",
+    "грусть": "sorrow", "печаль": "sorrow", "сочувствие": "sorrow",
+    "весело": "fun", "игриво": "fun", "озорство": "fun",
+    "привет": "wave", "пока": "wave", "махать": "wave", "помаши": "wave",
+    "одобрение": "good", "хорошо": "good", "класс": "good",
+    "кивок": "nodding", "согласие": "nodding", "да": "nodding",
+    "несогласие": "shaking", "нет": "shaking",
+    "аплодисменты": "clap", "похлопай": "clap", "браво": "clap",
+    "нейтрально": "reset", "сброс": "reset",
+    "ожидание": "idle1", "потянуться": "idle2",
+    # стрим-набор (веб-аватар; во внешней программе сработают, только если
+    # заведёшь одноимённые слоты) — 2026-07-25
+    "вопрос": "ask", "указать": "point", "укажи": "point", "вот": "point",
+    "танец": "dance", "танцуй": "dance", "станцуй": "dance",
+    "смущение": "shy", "смущаюсь": "shy", "стесняюсь": "shy",
+    "кринж": "cringe", "ярость": "rage", "бешенство": "rage",
+    "милота": "cute", "мило": "cute",
+    "усталость": "tired", "устала": "tired",
+    # официальный VRMA-пак VRoid (models/avatar/anims, 2026-07-25):
+    # showcase/greet/peace/shoot/spin/pose/squat — файлы .vrma
+    "покажись": "showcase", "покрутись": "spin", "кружись": "spin",
+    "приветствие": "greet", "поздоровайся": "greet",
+    "пис": "peace", "виктори": "peace", "мир": "peace",
+    "выстрел": "shoot", "пиф-паф": "shoot",
+    "поза": "pose", "позируй": "pose",
+    "присед": "squat", "приседание": "squat", "присядь": "squat",
+}
+
+
 def fire_named(name: str) -> str:
     """Явный, ОСОЗНАННЫЙ вызов жеста/эмоции самой моделью через tool-call
     avatar_action (server/llm/tools.py) — в отличие от react() выше, тут не
@@ -429,7 +599,14 @@ def fire_named(name: str) -> str:
         return "аватар выключен в настройках — жест не отправлен"
     names = CFG.get("avatar.gestures.slot_names", DEFAULT_SLOT_NAMES)
     name = (name or "").strip().lower()
+    name = _NAME_ALIAS.get(name, name)
     if name not in names:
+        # не слот, но может быть анимацией из библиотеки веб-аватара
+        # (models/avatar/anims/<name>.vrma) — шлём событие, веб сам решит
+        if _re_anim.match(name):
+            _emit_web(name)
+            return (f"жест «{name}» отправлен веб-аватару (сработает, если "
+                    f"в библиотеке анимаций есть {name}.vrma)")
         return f"неизвестный жест «{name}», доступны: {', '.join(names)}"
     now = time.time()
     if now - _LAST_TOOL_FIRE["ts"] < 1.5:
@@ -448,6 +625,89 @@ def fire_named(name: str) -> str:
     return f"жест «{name}» отправлен аватару"
 
 
+# ---------------- фиджеты: живость в простое (2026-07-25) -------------------
+# Слоты 11-12 («idle2», «idle1» в программе) — анимации ожидания. Чтобы
+# аватар не стоял столбом между репликами, фоновый цикл изредка (случайный
+# интервал idle.min_s..max_s) отыгрывает одну из них — но только если
+# недавно не было «настоящего» жеста (не перебиваем реакцию на диалог).
+_IDLE_THREAD = {"started": False}
+
+
+def _idle_loop():
+    import random
+    while True:
+        lo = float(CFG.get("avatar.gestures.idle.min_s", 120))
+        hi = float(CFG.get("avatar.gestures.idle.max_s", 300))
+        time.sleep(random.uniform(lo, max(lo, hi)))
+        try:
+            if not CFG.get("avatar.enabled", False) \
+                    or not CFG.get("avatar.gestures.enabled", True) \
+                    or not CFG.get("avatar.gestures.idle.enabled", True):
+                continue
+            # свежий «настоящий» жест — пропускаем такт, живость не нужна
+            if time.time() - _LAST_FIRE["ts"] < 30:
+                continue
+            slots = CFG.get("avatar.gestures.idle.slots", ["idle1", "idle2"])
+            names = CFG.get("avatar.gestures.slot_names", DEFAULT_SLOT_NAMES)
+            slots = [s for s in slots if s in names]
+            if slots:
+                _fire_slot(random.choice(slots))
+        except Exception as e:
+            log.debug("idle-fidget: %s", e)
+
+
+_ASK_CUE = {"ts": 0.0}
+
+
+def question_cue():
+    """Реплика Сайки заканчивается «?» — наклон головы (жест ask) в
+    веб-аватаре (2026-07-25, co-speech: вопрос = наклон, как в ВВА).
+    Свой кулдаун, чтобы серия вопросов не превращалась в тик."""
+    now = time.time()
+    if now - _ASK_CUE["ts"] < 8:
+        return
+    _ASK_CUE["ts"] = now
+    _emit_web("ask")
+
+
+def list_outfits() -> list:
+    """Доступные наряды: «default» (базовая модель avatar.web.model) плюс
+    все *.vrm из models/avatar/outfits (см. main.py:_outfits_dir)."""
+    try:
+        from server.main import _outfits_dir
+        d = _outfits_dir()
+        names = sorted(p.stem for p in d.glob("*.vrm")) if d.exists() else []
+    except Exception:
+        names = []
+    return ["default"] + names
+
+
+def change_outfit(name: str) -> str:
+    """Сменить наряд аватара (2026-07-25): полная подмена VRM-модели в
+    браузере (не toggle одежды внутри одного файла — обычный экспорт из
+    VRoid Studio так не умеет). Каждый наряд — отдельный .vrm-файл в
+    models/avatar/outfits/<name>.vrm, «default» — исходная модель."""
+    name = (name or "").strip().lower()
+    avail = list_outfits()
+    if name not in avail:
+        return (f"такого наряда нет ({name}) — доступны: {', '.join(avail)}. "
+                "Новый наряд — экспортируй из VRoid Studio отдельным .vrm "
+                "и положи в models/avatar/outfits/")
+    try:
+        from server.main import broadcast_event
+        broadcast_event({"type": "avatar_outfit", "outfit": name})
+    except Exception as e:
+        return f"не получилось переключить: {e}"
+    return f"переоделась: {name}"
+
+
+def start_idle_fidgets():
+    if not _IDLE_THREAD["started"]:
+        _IDLE_THREAD["started"] = True
+        threading.Thread(target=_idle_loop, daemon=True).start()
+        log.info("avatar: фиджеты в простое запущены")
+
+
 def on_startup():
     """Один раз при старте сервера Sайки — «привет» жестом (wave) и сброс
     позы (reset), чтобы аватар не заставал следующую сессию в случайном
@@ -463,3 +723,4 @@ def on_startup():
         log.info("avatar: стартовое приветствие отправлено")
     except Exception as e:
         log.debug("avatar.on_startup: %s", e)
+    start_idle_fidgets()

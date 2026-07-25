@@ -23,7 +23,8 @@ _cache = {"t": 0.0, "schemas": [], "checking": False, "fail_until": 0.0}
 # пользователя — смешно, но нельзя).
 IMPULSE_MODE = {"on": False}
 _IMPULSE_SAFE = {"close_browser", "shutdown_self",
-                 "devboard_read", "devboard_add", "avatar_action"}
+                 "devboard_read", "devboard_add", "avatar_action",
+                 "change_outfit"}
 
 # ЛОКАЛЬНЫЕ инструменты Сайки (не через HandsPC): дев-доска — чтобы она могла
 # свериться со своей историей разработки и дописывать в блокнот сама.
@@ -124,6 +125,55 @@ def _hotkey_schemas():
 
 _HOTKEY_NAMES = {"bind_create", "bind_list", "bind_delete"}
 
+# Библиотека анимаций веб-аватара (server/anim_hub.py, 2026-07-25)
+_ANIM_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "anim_search",
+        "description": ("Найти готовые VRMA-анимации для своего аватара на "
+                        "GitHub (танцы, эмоции, позы). Возвращает нумерованный "
+                        "список для anim_download."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string",
+                      "description": "что искать: dance, greeting, emote…"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "anim_download",
+        "description": ("Скачать анимацию по номеру из результата anim_search "
+                        "в свою библиотеку жестов. После скачивания жест "
+                        "доступен как [жест:имя] и через avatar_action."),
+        "parameters": {"type": "object", "properties": {
+            "num": {"type": "integer", "description": "номер из anim_search"},
+            "name": {"type": "string",
+                     "description": "своё имя жеста (латиницей, опц.)"}},
+            "required": ["num"]}}},
+    {"type": "function", "function": {
+        "name": "anim_from_url",
+        "description": ("Разобрать ЛЮБУЮ веб-страницу и найти на ней ссылки "
+                        "на .vrma-анимации (или скачать, если url — сам "
+                        ".vrma файл). Связка: найди страницу через "
+                        "web_search/open_page -> передай её адрес сюда -> "
+                        "скачай номер через anim_download."),
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "адрес страницы/файла"},
+            "name": {"type": "string",
+                     "description": "своё имя жеста (для прямого файла)"}},
+            "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "anim_list",
+        "description": "Показать анимации, уже скачанные в библиотеку жестов.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "anim_hints",
+        "description": ("Показать проверенные прямые ссылки на источники "
+                        "VRMA-анимаций (VRoid Hub, BOOTH и др.) — вызывай, "
+                        "если anim_search ничего не нашёл (это обычное дело: "
+                        "GitHub ищет репозитории по имени, а не по содержимому). "
+                        "Из результата — либо скажи ссылку владельцу, либо "
+                        "сразу передай в anim_from_url."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+]
+_ANIM_NAMES = {"anim_search", "anim_download", "anim_from_url", "anim_list", "anim_hints"}
+
 # АВАТАР (2026-07-23): даёт модели САМОЙ решать, когда показать эмоцию/жест
 # на VRM-аватаре — по контексту разговора, а не только когда её прямо
 # попросили «улыбнись»/«станцуй». В отличие от хоткеев/файлов это НЕ
@@ -148,6 +198,26 @@ def _avatar_schema():
             "gesture": {"type": "string", "enum": gestures,
                         "description": "имя жеста/эмоции"}},
             "required": ["gesture"]}}}
+
+
+def _outfit_schema():
+    """Смена наряда (2026-07-25) — список нарядов динамический: «default»
+    плюс все .vrm из models/avatar/outfits/. Пока владелец не положил туда
+    ничего своего, доступен только default — это ожидаемо, не баг."""
+    from server import avatar
+    names = avatar.list_outfits()
+    return {"type": "function", "function": {
+        "name": "change_outfit",
+        "description": ("Переодеть свой VRM-аватар целиком (другая модель "
+                        "с другой одеждой) — доступно: " + ", ".join(names) +
+                        ". Зови по смыслу разговора (попросили переодеться, "
+                        "сама решила к случаю), не изменяет ничего на "
+                        "компьютере владельца — только картинку своего же "
+                        "аватара."),
+        "parameters": {"type": "object", "properties": {
+            "outfit": {"type": "string", "enum": names,
+                       "description": "имя наряда из списка"}},
+            "required": ["outfit"]}}}
 
 # МАСТЕРСКАЯ (2026-07-23): сильная модель (Kimi и т.п.) умеет не только
 # болтать — может сверстать страницу, нарисовать SVG, написать скрипт.
@@ -224,6 +294,8 @@ LAST_USER = {"text": ""}
 # модели, не зависит от её дисциплины.
 import re as _re_guard
 _MUTATING_INTENT = {
+    # скачивание файла на диск — только по явной просьбе про анимации
+    "anim_download": r"аним|скача|загруз|жест|танц|движен|vrma",
     "bind_create":  r"бинд|хоткей|горяч|клавиш|назнач|повес|привяж|закреп|на пробел|на клавиш",
     "bind_delete":  r"бинд|хоткей|горяч|клавиш|удали|сними|убер|отвяж",
     "fs_write":     r"файл|запиши|сохран|созда|впиши|запис|блокнот|txt|документ",
@@ -348,6 +420,16 @@ def schemas() -> list:
             local = local + [_avatar_schema()]
         except Exception as e:
             log.debug("avatar_schema недоступна: %s", e)
+        # библиотека анимаций веб-аватара: поиск/скачивание .vrma с GitHub
+        # (просьба владельца 2026-07-25: «не ползать по прогам»)
+        local = local + list(_ANIM_SCHEMAS)
+        # смена наряда (2026-07-25) — показываем всегда, даже если пока
+        # доступен только «default»: список сам вырастет, когда владелец
+        # добавит .vrm в models/avatar/outfits/
+        try:
+            local = local + [_outfit_schema()]
+        except Exception as e:
+            log.debug("outfit_schema недоступна: %s", e)
     # хоткеи по умолчанию ВЫКЛючены (2026-07-23): abliterated-модель дважды
     # навесила разрушительные бинды без просьбы (пробел→localhost, F8→Alt+F4
     # закрыла приложения). Инструмент не показываем модели вообще, пока
@@ -494,6 +576,32 @@ def call(name: str, arguments) -> str:
         except Exception as e:
             log.exception("avatar_action")
             return f"аватар споткнулся: {e}"
+    if name == "change_outfit":
+        import json as _json
+        from server import avatar
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        try:
+            return avatar.change_outfit(str((a or {}).get("outfit", "")))
+        except Exception as e:
+            log.exception("change_outfit")
+            return f"переодевание споткнулось: {e}"
+    if name in _ANIM_NAMES:
+        import json as _json
+        from server import anim_hub
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        if name == "anim_search":
+            return anim_hub.search((a or {}).get("query", ""))
+        if name == "anim_download":
+            return anim_hub.download((a or {}).get("num"),
+                                     (a or {}).get("name", ""))
+        if name == "anim_from_url":
+            return anim_hub.from_url((a or {}).get("url", ""),
+                                     (a or {}).get("name", ""))
+        if name == "anim_hints":
+            return anim_hub.hints()
+        return anim_hub.list_local()
     if name in _HOTKEY_NAMES:
         import json as _json
         from server import hotkeys

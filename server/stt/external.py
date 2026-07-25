@@ -125,11 +125,30 @@ class ExternalEngine(STTEngine):
     def transcribe(self, pcm16, sample_rate):
         import requests
         self.load()
-        r = requests.post(
-            self._url(f"/transcribe?sr={sample_rate}"),
-            data=np.asarray(pcm16, dtype=np.int16).tobytes(),
-            headers={"Content-Type": "application/octet-stream"},
-            timeout=self.cfg.get("timeout_s", 180))
+        try:
+            r = requests.post(
+                self._url(f"/transcribe?sr={sample_rate}"),
+                data=np.asarray(pcm16, dtype=np.int16).tobytes(),
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=self.cfg.get("timeout_s", 45))
+        except requests.exceptions.RequestException as e:
+            # ЛОКАЛЬНЫЙ таймаут/обрыв — это НЕ «huggingface не отвечает»
+            # (2026-07-25: Read timed out к 127.0.0.1 классифицировался как
+            # network, Беймакс советовал «проверь VPN», а зависший воркер
+            # никто не перезапускал — network-категория чинится «ожиданием»).
+            # Смотрим /health: реально грузится — честный 'loading'; иначе —
+            # «воркер завис», формулировка без сетевых слов, чтобы classify
+            # дал unknown и _repair перезапустил воркер (unload+load).
+            h = self._health()
+            if h and (h.get("loading") or not h.get("model_loaded")):
+                raise RuntimeError(
+                    f"{self.name}: модель ещё загружается (первая закачка "
+                    f"может идти десятки минут) — воркер живой, работаю на "
+                    f"запасном")
+            raise RuntimeError(
+                f"{self.name}: воркер завис на локальном порту "
+                f"{self.cfg.get('port', 8766)} (не успел за "
+                f"{self.cfg.get('timeout_s', 45)}с) — перезапускаю его") from e
         r.raise_for_status()
         data = r.json()
         if data.get("loading"):

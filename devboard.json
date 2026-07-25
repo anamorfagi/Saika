@@ -1,5 +1,5 @@
 {
-  "updated": "2026-07-23T20:40:00",
+  "updated": "2026-07-25T15:34:00",
   "items": [
     {
       "id": "s01",
@@ -432,344 +432,41 @@
       "note": "расширить file_hands за пределы files.roots (сейчас жёстко заперт одной папкой) + нужен справочник коллег имя->почта для адресации; продолжение пункта про скрипты почты",
       "auto": false,
       "ts": "2026-07-23"
+    },
+    {
+      "id": "922dc8f5",
+      "col": "planned",
+      "text": "Интерфейс на UE 5.8: полный редизайн + ААА-персонаж",
+      "note": "Качество персонажа — уровень Arknights: Endfield или MetaHuman-реализм; объёмный (3D) интерфейс. Этапами: сначала UE-оболочка поверх живого сервера (WebSocket /ws, порт 8765), персонаж и анимации потом. Связка через официальный Unreal MCP (127.0.0.1:8000/mcp).",
+      "auto": false,
+      "ts": "2026-07-23"
+    },
+    {
+      "id": "84679b73",
+      "col": "planned",
+      "text": "Один билд как игра: Сайка со встроенной LLM",
+      "note": "Финальная цель UE5-ветки: упаковать всё в standalone-билд — встроенная (дообученная) модель под весь функционал + память Сайки. Встраивание LLM в UE реально через llama.cpp-плагин (GGUF уже освоен в LocalLM).",
+      "auto": false,
+      "ts": "2026-07-23"
+    },
+    {
+      "id": "07b5c2eb",
+      "col": "planned",
+      "text": "Дообучить модель под интерфейс и Windows 11",
+      "note": "LoRA/SFT на своих логах tool-вызовов (данные уже копятся: ratings, история диалогов, training/dataset) — цель: 6-10B модель, которая отлично работает именно с интерфейсом Сайки и логикой Win11. Смыкается с пунктом «модель 6-10B с ролями + tool calling».",
+      "auto": false,
+      "ts": "2026-07-23"
+    },
+    {
+      "id": "d301899b",
+      "col": "planned",
+      "text": "Сайка-соведущая: контент и заработок",
+      "note": "Направление-цель: помощница, которая вместе с владельцем зарабатывает — обучающий и весёлый контент (стримы/ролики). База уже есть: аватар VRM + дубль звука в OBS + идея твитч-коннектора. Доход — на железо под будущие мощности.",
+      "auto": false,
+      "ts": "2026-07-23"
     }
   ],
   "log": [
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
     {
       "ts": "2026-07-23T10:00:34",
       "text": "⚠ stt: работаю на faster_whisper",
@@ -1434,6 +1131,341 @@
       "ts": "2026-07-23T20:40:00",
       "text": "📋 план: поиск файлов по всему рабочему ПК + отправка коллегам на почту (справочник имя->email)",
       "kind": "note"
+    },
+    {
+      "ts": "2026-07-25T12:33:54",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:33:57",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:33:58",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:58:37",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:58:37",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:58:39",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T12:59:05",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:05",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:07",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T12:59:11",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:11",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:13",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T12:59:33",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:35",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T12:59:47",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:47",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:49",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T12:59:58",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T12:59:58",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:00",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:00:10",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:10",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:12",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:00:21",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:21",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:23",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:00:28",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:28",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:30",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:00:39",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:39",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:41",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:00:57",
+      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:57",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:00:59",
+      "text": "✓ stt.groq_whisper: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:04:32",
+      "text": "⚠ stt: работаю на whispercpp",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:04:40",
+      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:04:42",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:04:42",
+      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:04:42",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:00",
+      "text": "✓ stt.tone: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:05:00",
+      "text": "✓ stt.tone: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:05:00",
+      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:00",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:00",
+      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:17",
+      "text": "✓ stt.tone: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:05:17",
+      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:17",
+      "text": "✓ stt.tone: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:05:17",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:17",
+      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:17",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:43",
+      "text": "✓ stt.tone: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:05:43",
+      "text": "✓ stt.tone: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-25T13:05:51",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:05:51",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:15:54",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:15:54",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:30:58",
+      "text": "⚠ stt.voxtral: переключаюсь на рабочий движок; как появится сеть — докачаю модель сама",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:30:58",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:33:58",
+      "text": "⚠ stt.voxtral: переключаюсь на рабочий движок; как появится сеть — докачаю модель сама",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:33:58",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:36:58",
+      "text": "⚠ stt.voxtral: переключаюсь на рабочий движок; как появится сеть — докачаю модель сама",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:36:58",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:39:58",
+      "text": "⚠ stt.voxtral: переключаюсь на рабочий движок; как появится сеть — докачаю модель сама",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T13:39:58",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-25T15:34:00",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
+      "kind": "problem"
     }
   ],
   "bugs": {
@@ -1457,9 +1489,9 @@
     },
     "stt": {
       "text": "основной движок недоступен",
-      "count": 1852,
+      "count": 1878,
       "resolved": false,
-      "last": "2026-07-23T18:00"
+      "last": "2026-07-25T13:39"
     },
     "browser": {
       "text": "browser",
@@ -1468,16 +1500,16 @@
       "last": "2026-07-23T00:21"
     },
     "stt.voxtral": {
-      "text": "«voxtral» упал с незнакомой мне ошибкой.",
-      "count": 4,
+      "text": "Похоже, что-то с сетью, брат: «voxtral» не скачивается — huggingface.co не отвечает. Проверь интернет или VPN.",
+      "count": 10,
       "resolved": false,
-      "last": "2026-07-23T09:54"
+      "last": "2026-07-25T13:39"
     },
     "stt.tone": {
       "text": "«tone» получил данные не того формата — это моя внутренняя несовместимость, не твоя вина.",
-      "count": 22,
+      "count": 28,
       "resolved": true,
-      "last": "2026-07-23T10:00"
+      "last": "2026-07-25T13:05"
     },
     "llm.guard": {
       "text": "генерация зависла: таймаут генерации (180с)",
@@ -1487,15 +1519,21 @@
     },
     "llm.silence": {
       "text": "модель промолчала: модель вернула пустой ответ без ошибки — чаще всего это переполненное окно контекста или зависший prefill; попробуй 🧹 новый диалог или перезагрузи модель ⏏/⬇",
-      "count": 4,
+      "count": 5,
       "resolved": false,
-      "last": "2026-07-23T18:25"
+      "last": "2026-07-25T15:34"
     },
     "stt.gigaam": {
       "text": "«gigaam» упал с незнакомой мне ошибкой.",
       "count": 2,
       "resolved": true,
       "last": "2026-07-23T18:00"
+    },
+    "stt.groq_whisper": {
+      "text": "«groq_whisper» упал с незнакомой мне ошибкой.",
+      "count": 11,
+      "resolved": true,
+      "last": "2026-07-25T13:00"
     }
   }
 }

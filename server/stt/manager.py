@@ -19,6 +19,38 @@ from server import diagnostics
 
 log = logging.getLogger("saika.stt")
 
+# ---------------- фильтр whisper-галлюцинаций (2026-07-25) ----------------
+# Whisper-семейство (особенно whispercpp/medium на CPU) на тишине, дыхании
+# и шуме уверенно «слышит» типовые фразы из своих обучающих субтитров:
+# «Смотрите на наш канал!», «Спасибо за внимание», «*смех*», «Продолжение
+# следует» и т.п. Сайка отвечала на них как на реальную речь — реальный
+# эпизод в чате 2026-07-25 13:04. Фильтруем ДО отправки в диалог; список
+# расширяем в config -> stt.junk_phrases.
+_JUNK_DEFAULT = [
+    "смотрите на наш канал", "подписывайтесь на канал", "подпишись на канал",
+    "спасибо за внимание", "спасибо за просмотр", "до новых встреч",
+    "продолжение следует", "субтитры сделал", "субтитры создавал",
+    "редактор субтитров", "корректор", "добро пожаловать на канал",
+    "ставьте лайки", "с вами был", "всем пока",
+]
+
+
+def _is_junk(text: str) -> bool:
+    low = (text or "").lower().strip(" .,!?…*«»\"'-")
+    if not low:
+        return True
+    # реплики целиком в звёздочках/скобках — «*смех*», «(музыка)»
+    raw = (text or "").strip()
+    if raw and raw[0] in "*([" and raw[-1] in "*)]":
+        return True
+    junk = CFG.get("stt.junk_phrases", []) or []
+    for phrase in list(junk) + _JUNK_DEFAULT:
+        p = str(phrase).lower().strip()
+        # галлюцинация = фраза-штамп и почти ничего кроме неё
+        if p and p in low and len(low) <= len(p) + 12:
+            return True
+    return False
+
 
 class VadSegmenter:
     """Энергетический VAD с адаптацией под шумный микрофон (2026-07-23).
@@ -135,10 +167,47 @@ class STTManager:
         return CFG.get("stt.engine", "faster_whisper")
 
     def set_engine(self, name):
+        if name in ("", "none", "off"):   # «ничего не выбрано» — слух выкл
+            CFG.set("stt.engine", "none")
+            self.vad.reset()
+            return
         if name not in ALL_ENGINES:
             raise ValueError(f"Нет такого движка: {name}")
+        prev = self.current_name
         CFG.set("stt.engine", name)
         self.vad.reset()
+        # РУЧНОЙ ВЫБОР = НОВЫЙ ШАНС (2026-07-25): раньше клик по сломанному
+        # движку внешне «ничего не делал» — health='broken' молча выкидывал
+        # его из _healthy_chain, и слух продолжал жить на запасном без
+        # какого-либо объяснения. Человек кликнул осознанно — сбрасываем
+        # чёрную метку и греем движок в фоне; если он всё ещё мёртв, первая
+        # же фраза честно пометит его заново и сообщит причину.
+        if self.health.get(name) == "broken":
+            self.health[name] = "unknown"
+            self.last_error.pop(name, None)
+            self.last_diag.pop(name, None)
+        self._notified_fallback = None
+        threading.Thread(target=self._warm, args=(name, prev),
+                         daemon=True).start()
+
+    def _warm(self, name, prev=None):
+        """Фоновый прогрев выбранного движка + АВТОВЫГРУЗКА прежнего
+        (2026-07-25, просьба владельца: не держать два слуха в памяти —
+        каждый Whisper/GigaAM это гигабайты ОЗУ/VRAM). Ошибки прогрева
+        уйдут обычным путём через load_engine."""
+        if prev and prev != name:
+            try:
+                with self.lock:   # не выдёргивать модель посреди транскрипции
+                    self.unload_engine(prev)
+                log.info("STT: прежний движок %s выгружен из памяти "
+                         "(смена на %s)", prev, name)
+            except Exception as e:
+                log.warning("STT: не выгрузился прежний движок %s: %s",
+                            prev, e)
+        try:
+            self.load_engine(name)
+        except Exception as e:
+            log.info("STT %s: прогрев после выбора не удался: %s", name, e)
 
     def _get(self, name):
         if name not in self.instances:
@@ -154,6 +223,11 @@ class STTManager:
     # ---------- пайплайн ----------
     def process_chunk(self, pcm16: np.ndarray) -> list[dict]:
         """Вернёт [{'text':..., 'engine':...}] за готовые фразы."""
+        # состояние «ничего не выбрано» (2026-07-25): после жёсткой разгрузки
+        # слух ВЫКЛЮЧЕН совсем — без этого первая же фраза лениво подгружала
+        # текущий движок обратно, и кнопка выглядела неработающей
+        if self.current_name in ("", "none", "off"):
+            return []
         sr = CFG.get("stt.sample_rate", 16000)
         results = []
         for name in self._healthy_chain():
@@ -178,10 +252,21 @@ class STTManager:
                 else:
                     self._notified_fallback = None
                 self.health[name] = "ok"
-                return results
+                return self._drop_junk(results)
             except Exception as e:
                 self._mark_broken(name, e)
-        return results
+        return self._drop_junk(results)
+
+    @staticmethod
+    def _drop_junk(results):
+        kept = []
+        for r in results:
+            if _is_junk(r.get("text", "")):
+                log.info("STT: отфильтрована галлюцинация %s: %r",
+                         r.get("engine"), r.get("text"))
+            else:
+                kept.append(r)
+        return kept
 
     def flush(self) -> list[dict]:
         name = self.current_name
@@ -206,7 +291,7 @@ class STTManager:
                         break
                     except Exception as e:
                         self._mark_broken(n, e)
-        return out
+        return self._drop_junk(out)
 
     # ---------- ручная загрузка/выгрузка (кнопки в UI) ----------
     def load_engine(self, name):
@@ -281,6 +366,18 @@ class STTManager:
             d = diagnostics.classify("stt." + name, str(e))
             self.last_error[name] = d["human"]
             log.warning("STT %s: починка не удалась (%s)", name, e)
+            # ЭСКАЛАЦИЯ (2026-07-25): шаблонная перезагрузка не помогла —
+            # Беймакс не сдаётся, а зовёт консилиум (ai_consult, облачная
+            # модель разбирает симптом + хвост лога и говорит, что делать).
+            # У consult свой кулдаун и проверка ключа — вызов дешёвый.
+            try:
+                from server import ai_consult
+                from server.main import broadcast_event
+                ai_consult.consult_async(
+                    f"STT-движок «{name}» не запускается, самопочинка не "
+                    f"помогла. Ошибка: {e}", broadcast_event)
+            except Exception as ce:
+                log.debug("консилиум по stt.%s не позвался: %s", name, ce)
 
     def status(self):
         loaded = {}

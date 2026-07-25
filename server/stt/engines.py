@@ -134,7 +134,23 @@ class GigaAMEngine(STTEngine):
         self.load()
         path = _to_wav_tempfile(pcm16, sample_rate)
         try:
-            result = self.model.transcribe(path)
+            try:
+                result = self.model.transcribe(path)
+            except Exception as e:
+                # длинный сегмент (2026-07-23: «Too long wav file, use
+                # 'transcribe_longform' method») — не роняем движок, а
+                # честно распознаём длинной дорожкой и склеиваем куски
+                if "long" not in str(e).lower():
+                    raise
+                chunks = self.model.transcribe_longform(path)
+                parts = []
+                for c in (chunks or []):
+                    t = (c.get("transcription") if isinstance(c, dict)
+                         else getattr(c, "transcription",
+                                      getattr(c, "text", str(c))))
+                    if t:
+                        parts.append(str(t).strip())
+                return " ".join(parts).strip()
             # v3 может вернуть объект с .text или строку
             return getattr(result, "text", result if isinstance(result, str) else str(result)).strip()
         finally:
@@ -286,7 +302,11 @@ class ToneEngine(STTEngine):
         while len(self._buf) >= self.FRAME:
             frame = self._buf[:self.FRAME]
             self._buf = self._buf[self.FRAME:]
-            new_phrases, self.state = self.pipeline.forward(frame, self.state)
+            # T-one требует dtype int32 («Incorrect dtype of 'audio_chunk':
+            # expected np.int32, but got int16», 2026-07-25) — буфер держим
+            # компактным int16, конвертируем только кадр на входе в пайплайн
+            new_phrases, self.state = self.pipeline.forward(
+                frame.astype(np.int32), self.state)
             phrases += [getattr(p, "text", str(p)).strip()
                         for p in (new_phrases or []) if p]
         return phrases
@@ -304,7 +324,8 @@ class ToneEngine(STTEngine):
             while len(self._buf) >= self.FRAME:
                 frame = self._buf[:self.FRAME]
                 self._buf = self._buf[self.FRAME:]
-                new_phrases, self.state = self.pipeline.forward(frame, self.state)
+                new_phrases, self.state = self.pipeline.forward(
+                    frame.astype(np.int32), self.state)
                 phrases += [getattr(p, "text", str(p)).strip()
                             for p in (new_phrases or []) if p]
         self._buf = np.empty(0, dtype=np.int16)
@@ -317,7 +338,7 @@ class ToneEngine(STTEngine):
     def transcribe(self, pcm16, sample_rate):
         self.load()
         self.state = None
-        result = self.pipeline.forward_offline(pcm16)
+        result = self.pipeline.forward_offline(pcm16.astype(np.int32))
         if isinstance(result, list):
             return " ".join(getattr(p, "text", str(p)) for p in result).strip()
         return getattr(result, "text", str(result)).strip()

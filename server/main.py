@@ -129,6 +129,102 @@ def index():
                         headers={"Cache-Control": "no-store"})
 
 
+# ---------- собственный веб-аватар (three-vrm, 2026-07-25) ----------
+@app.get("/avatar")
+def avatar_page():
+    return FileResponse(ROOT / "ui" / "avatar.html",
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/vendor/{fname}")
+def vendor_asset(fname: str):
+    """JS-библиотеки рендера (three.js и др.) из ui/vendor — офлайн."""
+    if "/" in fname or "\\" in fname or ".." in fname:
+        return JSONResponse({"error": "bad name"}, status_code=400)
+    p = ROOT / "ui" / "vendor" / fname
+    if not p.exists() or p.suffix != ".js":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, media_type="application/javascript",
+                        headers={"Cache-Control": "max-age=3600"})
+
+
+def _avatar_model_path():
+    from pathlib import Path as _P
+    raw = CFG.get("avatar.web.model", "models/avatar/model.vrm")
+    p = _P(raw)
+    return p if p.is_absolute() else (ROOT / raw)
+
+
+@app.get("/avatar/model.vrm")
+def avatar_model():
+    p = _avatar_model_path()
+    if not p.exists():
+        return JSONResponse(
+            {"error": f"нет модели: {p} — укажи путь в avatar.web.model"},
+            status_code=404)
+    return FileResponse(p, media_type="model/gltf-binary")
+
+
+def _anims_dir():
+    from pathlib import Path as _P
+    raw = CFG.get("avatar.web.anims_dir", "models/avatar/anims")
+    p = _P(raw)
+    return p if p.is_absolute() else (ROOT / raw)
+
+
+@app.get("/avatar/anims")
+def avatar_anims():
+    """Библиотека анимаций: список *.vrma. Имя файла = имя жеста — новый
+    файл в папке автоматически становится жестом, доступным Сайке."""
+    d = _anims_dir()
+    if not d.exists():
+        return []
+    return sorted(f.name for f in d.glob("*.vrma"))
+
+
+@app.get("/avatar/anims/{fname}")
+def avatar_anim_file(fname: str):
+    if "/" in fname or "\\" in fname or ".." in fname:
+        return JSONResponse({"error": "bad name"}, status_code=400)
+    p = _anims_dir() / fname
+    if not p.exists() or p.suffix.lower() != ".vrma":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, media_type="model/gltf-binary")
+
+
+def _outfits_dir():
+    """Наряды (2026-07-25): смена одежды через ПОЛНОЦЕННУЮ подмену VRM-файла
+    целиком (не toggle мешей — обычный экспорт из VRoid Studio не хранит
+    несколько нарядов в одном файле). Кладём каждый наряд отдельным .vrm в
+    эту папку — имя файла = имя наряда, avatar.html подгружает его вместо
+    базовой модели по команде change_outfit."""
+    from pathlib import Path as _P
+    raw = CFG.get("avatar.web.outfits_dir", "models/avatar/outfits")
+    p = raw if isinstance(raw, _P) else _P(raw)
+    p = p if p.is_absolute() else (ROOT / raw)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+@app.get("/avatar/outfits")
+def avatar_outfits():
+    """Список нарядов: *.vrm из models/avatar/outfits (имя без расширения).
+    «default» — всегда доступен, это базовая модель из avatar.web.model."""
+    d = _outfits_dir()
+    names = sorted(f.stem for f in d.glob("*.vrm")) if d.exists() else []
+    return {"outfits": ["default"] + names}
+
+
+@app.get("/avatar/outfits/{fname}")
+def avatar_outfit_file(fname: str):
+    if "/" in fname or "\\" in fname or ".." in fname:
+        return JSONResponse({"error": "bad name"}, status_code=400)
+    p = _outfits_dir() / fname
+    if not p.exists() or p.suffix.lower() != ".vrm":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, media_type="model/gltf-binary")
+
+
 @app.get("/baymax/{fname}")
 def baymax_asset(fname: str):
     """Маленькие гифки Беймакса по настроению (ui/baymax/*.gif|png). Отдаём
@@ -278,6 +374,43 @@ def _strip_markdown(text: str) -> str:
     cleaned = _MD_STRIP_RE.sub("", text)
     cleaned = re.sub(r'\*', '', cleaned)   # одиночные звёздочки-огрызки
     return re.sub(r'[ \t]{2,}', ' ', cleaned).strip()
+
+
+# --------- текстовый протокол жестов для маленьких моделей (2026-07-25) -----
+# Мелкие/квантованные модели часто НЕ умеют tool-calls (или пишут их кривым
+# JSON-текстом — см. чёрный список llm.tools_broken). Жесты аватара для них
+# гарантируем текстовым маркером: модель пишет в ответе [жест:joy] (или
+# [эмоция: радость]) — сервер исполняет жест ДЕТЕРМИНИРОВАННО кодом и
+# вырезает маркер из озвучки/текста. Работает с любой моделью, которая
+# способна напечатать квадратные скобки.
+_GESTURE_MARK_RE = re.compile(
+    r'[\[({]\s*(?:жест|эмоция|gesture|emote)\s*[:=\-]?\s*'
+    r'([a-zа-яё0-9_]+)\s*[\])}]', re.I)
+# ОБОРВАННЫЙ маркер (генерация кончилась на «[жест:good» без скобки,
+# 2026-07-25 — озвучка честно читала «жест гуд» вслух). Вырезаем хвост,
+# жест из него по возможности исполняем.
+_GESTURE_TAIL_RE = re.compile(
+    r'[\[({]\s*(?:жест|эмоция|gesture|emote)\s*[:=\-]?\s*'
+    r'([a-zа-яё0-9_]*)\s*$', re.I)
+
+
+def _apply_gesture_marks(text: str, fire: bool = True) -> str:
+    """Найти маркеры [жест:имя], исполнить (fire=True) и вырезать из текста."""
+    if not text or not ("[" in text or "(" in text or "{" in text):
+        return text
+
+    def _sub(m):
+        if fire:
+            try:
+                r = avatar.fire_named(m.group(1))
+                log.info("жест-маркер %r -> %s", m.group(0), r)
+            except Exception as e:
+                log.debug("жест-маркер %r: %s", m.group(0), e)
+        return " "
+
+    out = _GESTURE_MARK_RE.sub(_sub, text)
+    out = _GESTURE_TAIL_RE.sub(_sub, out)   # оборванный маркер в конце
+    return re.sub(r'[ \t]{2,}', ' ', out).strip()
 
 
 def _diagnose_silence(backend: str, model: str, generated_tokens: int) -> str:
@@ -468,6 +601,64 @@ async def stt_model(payload: dict):
         return {"ok": True}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/panic_unload")
+async def panic_unload():
+    """«ЖЁСТКАЯ РАЗГРУЗКА» (2026-07-25, просьба владельца): выгрузить ВСЁ
+    тяжёлое из памяти разом — все STT-движки (включая внешние воркеры,
+    им terminate), все TTS-движки, все LLM у Ollama/LM Studio, CUDA-кэш.
+    Сама Сайка (сервер, веб-UI, память, диалог) остаётся работать — после
+    разгрузки нужное подгружается по порядку руками или лениво при первой
+    фразе. Спасение, когда ОЗУ/VRAM забиты и непонятно кем."""
+    def _do():
+        freed, failed = [], []
+        for n in list(stt.instances):
+            try:
+                stt.unload_engine(n)
+                freed.append("слух:" + n)
+            except Exception as e:
+                failed.append(f"слух:{n} ({e})")
+        for n in list(tts.engines):
+            try:
+                tts.unload_engine(n)
+                freed.append("голос:" + n)
+            except Exception as e:
+                failed.append(f"голос:{n} ({e})")
+        try:
+            # пустая «оставляемая» пара не совпадёт ни с чем -> выгрузит все
+            for b, m in llm.unload_others("", ""):
+                failed.append(f"LLM:{b}/{m}")
+            freed.append("LLM: все локальные")
+        except Exception as e:
+            failed.append(f"LLM ({e})")
+        try:
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                freed.append("CUDA-кэш")
+        except Exception:
+            pass
+        # состояние «ничего не выбрано»: иначе первая же фраза/озвучка лениво
+        # подгружает модели обратно, и разгрузка выглядит неработающей
+        try:
+            stt.set_engine("none")
+            CFG.set("tts.enabled", False)
+            freed.append("слух и озвучка выключены до ручного выбора")
+        except Exception:
+            pass
+        msg = "🧹 Жёсткая разгрузка: выгрузила " + ", ".join(freed or ["ничего"])
+        if failed:
+            msg += ". НЕ поддались: " + ", ".join(failed) + \
+                   " — их добивай через диспетчер задач"
+        msg += ". Сама я работаю; подгружай нужное по порядку — кликом " \
+               "по движку или кнопкой ⬇."
+        log.info("panic_unload: freed=%s failed=%s", freed, failed)
+        broadcast_event({"type": "baymax", "mood": "meh", "text": msg})
+    await asyncio.get_event_loop().run_in_executor(None, _do)
+    return {"ok": True}
 
 
 @app.post("/api/tts/model")
@@ -1487,7 +1678,18 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     tts_thread.start()
 
     def speak(sentence):
-        tts_q.put(sentence)
+        # текстовые жест-маркеры исполняем здесь: через speak() проходят ВСЕ
+        # реплики (стрим, повтор без инструментов, финальный хвост) — жест
+        # гарантированно сработает даже у модели без tool-calls
+        sentence = _apply_gesture_marks(sentence)
+        if sentence:
+            # вопрос -> наклон головы у веб-аватара (co-speech, 2026-07-25)
+            if sentence.rstrip().endswith("?"):
+                try:
+                    avatar.question_cue()
+                except Exception:
+                    pass
+            tts_q.put(sentence)
 
     used_llm = {}
 
@@ -1605,7 +1807,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         # намерения ИСПОЛНЯЕМ по-настоящему: close_browser — закрыть окно;
         # web_search/web_research/open_page/fetch_page — реальный вызов +
         # короткая суммаризация словами; shutdown — только пометка.
-        _raw = "".join(full_reply)
+        # жест-маркеры уже исполнены в speak() — из текста для чата/памяти
+        # просто вырезаем (fire=False, чтобы не отыграть жест дважды)
+        _raw = _apply_gesture_marks("".join(full_reply), fire=False)
         # Harmony (gpt-oss): «commentary to=web_search json{...}». Имя ловим
         # ЛЕНИВО ([a-z_]+?), иначе приклеенный «json» без пробела съедается
         # в имя («to=web_searchjson{» давало несуществующий инструмент

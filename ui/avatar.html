@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<!-- =========================================================================
+СОБСТВЕННЫЙ VRM-АВАТАР САЙКИ (2026-07-25) — без сторонних программ.
+
+Рендер: three.js + @pixiv/three-vrm (официальная библиотека pixiv, лежит в
+ui/vendor — работает офлайн). Физика волос/юбки — родные spring bones из
+VRM-файла, three-vrm симулирует их сама (vrm.update).
+
+Управление — напрямую от Сайки, никакого MIDI/хоткеев/фильтров ввода:
+- жесты/эмоции: websocket /ws, событие {"type":"avatar_gesture","gesture":x}
+  (шлёт server/avatar.py при КАЖДОМ жесте — tool-call, маркер, тон, фиджет);
+- липсинк + покачивание головы: /api/audio_level (реальный RMS озвучки TTS).
+
+Прозрачность: фон страницы прозрачный (alpha). В OBS добавь Browser-источник
+на http://127.0.0.1:8765/avatar — фон будет прозрачным сам. Отдельным окном
+браузера фон можно задать параметром ?bg=101318 (hex) или ?bg=green.
+Параметры: ?cam=full|bust (кадр), ?bg=..., ?scale=1.0
+
+Структура анимаций (2026-07-25, по образцу того, как это устроено у Warudo):
+3 слоя — IDLE (basePose) / OVERLAY (аддитивные добавки: кив, биты, взгляд,
+наклон-на-вопрос) / TRANSIENT (одноразовые GESTURES{} и .vrma-клипы). Все
+переходы между позами — мягкие (экспоненциальное сглаживание в setRot/expr),
+без «щелчков» при смене или окончании жеста. Подробности — в комментарии
+прямо над функциями setRot/expr ниже по файлу.
+========================================================================== -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Сайка — аватар</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:transparent}
+  #hint{position:fixed;left:10px;bottom:8px;color:#8a93a5;opacity:.8;
+    font:12px system-ui;background:rgba(15,17,21,.55);padding:4px 8px;
+    border-radius:6px;transition:opacity .5s}
+  #hint.gone{opacity:0}
+</style>
+<script type="importmap">
+{"imports":{
+  "three": "/vendor/three.module.js",
+  "three/addons/loaders/GLTFLoader.js": "/vendor/GLTFLoader.js",
+  "/utils/BufferGeometryUtils.js": "/vendor/BufferGeometryUtils.js",
+  "@pixiv/three-vrm": "/vendor/three-vrm.module.js",
+  "@pixiv/three-vrm-animation": "/vendor/three-vrm-animation.module.js"
+}}
+</script>
+</head>
+<body>
+<div id="hint">загружаю модель…</div>
+<script>
+/* любые ошибки скрипта/модулей — на экран, а не молча в консоль */
+addEventListener('error', e=>{ const h=document.getElementById('hint');
+  if(h){ h.classList.remove('gone');
+         h.textContent='⚠ '+(e.message||('не загрузился '+(e.target&&e.target.src||''))); }}, true);
+addEventListener('unhandledrejection', e=>{ const h=document.getElementById('hint');
+  if(h){ h.classList.remove('gone'); h.textContent='⚠ '+e.reason; }});
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation';
+
+const qs = new URLSearchParams(location.search);
+const hint = document.getElementById('hint');
+
+/* ---------- сцена ---------- */
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const bg = qs.get('bg');
+if (bg) renderer.setClearColor(bg.match(/^[0-9a-f]{6}$/i) ? '#'+bg : bg, 1);
+else renderer.setClearAlpha(0);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(28, innerWidth/innerHeight, .1, 30);
+const camMode = qs.get('cam') || 'full';
+function placeCamera(){
+  if (camMode === 'bust'){ camera.position.set(0, 1.35, 1.35); camera.lookAt(0, 1.3, 0); }
+  else { camera.position.set(0, 1.05, 2.6); camera.lookAt(0, 0.95, 0); }
+}
+placeCamera();
+addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+/* ---------- позиционирование мышью (2026-07-25) ----------
+   ЛКМ-драг — двигать модель (вверх/вниз/в стороны), колесо — приблизить/
+   отдалить, ПКМ-драг — вертикаль камеры. Запоминается в localStorage. */
+let view = {x:0, y:0, z:0, zoom:1};
+try{ view = Object.assign(view, JSON.parse(localStorage.saika_av_view||'{}')); }catch(e){}
+function saveView(){ try{ localStorage.saika_av_view=JSON.stringify(view); }catch(e){} }
+function applyView(){
+  if (vrm) vrm.scene.position.set(view.x, view.y, view.z);
+  camera.zoom = view.zoom; camera.updateProjectionMatrix();
+}
+let drag = null;
+addEventListener('mousedown', e=>{ drag={b:e.button, x:e.clientX, y:e.clientY}; });
+addEventListener('contextmenu', e=>e.preventDefault());
+addEventListener('mouseup', ()=>{ drag=null; saveView(); });
+addEventListener('mousemove', e=>{
+  if(!drag) return;
+  const k = 2.2/(innerHeight*view.zoom);      // пиксели -> метры сцены
+  if (drag.b===0){ view.x += (e.clientX-drag.x)*k; view.y -= (e.clientY-drag.y)*k; }
+  else { camera.position.y += (e.clientY-drag.y)*k; }
+  drag.x=e.clientX; drag.y=e.clientY; applyView();
+});
+addEventListener('wheel', e=>{ view.zoom = Math.min(4, Math.max(0.35,
+  view.zoom * (e.deltaY<0 ? 1.08 : 0.925))); applyView(); saveView(); }, {passive:true});
+addEventListener('dblclick', ()=>{ view={x:0,y:0,z:0,zoom:1}; applyView(); saveView(); });
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(.6,1.6,1.2); scene.add(key);
+const rim = new THREE.DirectionalLight(0xbfd4ff, 0.5);  rim.position.set(-.8,1.2,-.9); scene.add(rim);
+
+/* ---------- загрузка VRM (+ смена наряда, 2026-07-25) ----------
+   Наряд = отдельный .vrm целиком (VRoid обычным экспортом не хранит
+   несколько нарядов в одном файле) — так что «переодевание» это ПОЛНАЯ
+   пересборка сцены: убираем старую vrm.scene (VRMUtils.deepDispose — чтобы
+   не копить геометрию/текстуры в памяти при частых сменах), грузим новую,
+   заново собираем mixer и библиотеку .vrma (клипы привязаны к конкретному
+   инстансу humanoid, старые для новой модели не подходят). */
+let vrm = null, mixer = null, currentOutfit = 'default', loadingModel = false;
+const loader = new GLTFLoader();
+loader.register(p => new VRMLoaderPlugin(p));
+loader.register(p => new VRMAnimationLoaderPlugin(p));
+function loadModel(url, label){
+  if (loadingModel) return;           // не грузить второй раз поверх первой
+  loadingModel = true;
+  hint.classList.remove('gone'); hint.textContent = 'загружаю '+(label||'модель')+'…';
+  loader.load(url, gltf => {
+    if (vrm){ scene.remove(vrm.scene); try{ VRMUtils.deepDispose(vrm.scene); }catch(e){} }
+    for (const k in animLib) delete animLib[k];   // клипы старой модели не годятся
+    active = null; animAction = null;             // жест/клип старой модели не продолжаем
+    vrm = gltf.userData.vrm;
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    VRMUtils.removeUnnecessaryJoints(gltf.scene);
+    VRMUtils.rotateVRM0(vrm);          // VRM0.0 смотрит в -Z — разворачиваем
+    scene.add(vrm.scene);
+    mixer = new THREE.AnimationMixer(vrm.scene);
+    applyView();                       // сохранённая позиция/зум
+    const s = parseFloat(qs.get('scale')||'1'); if (s!==1) vrm.scene.scale.setScalar(s);
+    hint.textContent = 'Сайка на месте';
+    setTimeout(()=>hint.classList.add('gone'), 1500);
+    loadingModel = false;
+    loadAnimLibrary();
+  }, p => { if(p.total) hint.textContent = 'загружаю '+(label||'модель')+'… '+Math.round(p.loaded/p.total*100)+'%'; },
+     e => { loadingModel = false;
+       hint.classList.remove('gone');
+       hint.textContent = 'модель не загрузилась: '+url+' ('+e.message+')'; });
+}
+function loadOutfit(name){
+  name = (name||'default').toLowerCase();
+  if (name === currentOutfit) return;
+  currentOutfit = name;
+  loadModel(name === 'default' ? '/avatar/model.vrm'
+                                : '/avatar/outfits/'+encodeURIComponent(name)+'.vrm',
+            'наряд «'+name+'»');
+}
+loadModel('/avatar/model.vrm');
+
+/* ---------- БИБЛИОТЕКА АНИМАЦИЙ (.vrma) ----------
+   Файлы кладутся в models/avatar/anims/*.vrma (сервер отдаёт список).
+   Имя файла = имя анимации: wave.vrma перекрывает процедурный wave,
+   dance.vrma становится новым жестом «dance» — Сайка может звать его через
+   avatar_action или маркером [жест:dance] без единой правки кода. */
+const animLib = {};        // name -> THREE.AnimationClip
+let animAction = null;     // текущее проигрываемое действие
+async function loadAnimLibrary(){
+  try{
+    const names = await (await fetch('/avatar/anims')).json();
+    for (const n of names){
+      try{
+        const g = await loader.loadAsync('/avatar/anims/'+encodeURIComponent(n));
+        const va = g.userData.vrmAnimations && g.userData.vrmAnimations[0];
+        if (va){ animLib[n.replace(/\.vrma$/i,'').toLowerCase()] =
+                   createVRMAnimationClip(va, vrm); }
+      }catch(e){ console.warn('anim', n, e); }
+    }
+    const ks = Object.keys(animLib);
+    console.log('Библиотека анимаций:', ks.join(', '));
+    // видимая диагностика (2026-07-25): показываем, что реально загрузилось,
+    // прямо на странице — консоль у владельца не всегда открыта
+    flash(ks.length ? ('анимации: '+ks.join(', ')) : 'анимации: пусто (файлы не загрузились)', 5000);
+  }catch(e){ flash('библиотека анимаций не прочиталась: '+e, 6000); }
+}
+/* показать текст в #hint на время */
+let flashTimer = null;
+function flash(msg, ms){
+  hint.classList.remove('gone'); hint.textContent = msg;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(()=>hint.classList.add('gone'), ms||2000);
+}
+function playClip(name){
+  const clip = animLib[name];
+  if (!clip || !mixer) return false;
+  if (animAction) animAction.fadeOut(0.3);
+  animAction = mixer.clipAction(clip);
+  animAction.reset().setLoop(THREE.LoopOnce).fadeIn(0.2).play();
+  animAction.clampWhenFinished = false;
+  flash('▶ '+name+' ('+clip.duration.toFixed(1)+'с)', 1800);
+  setTimeout(()=>{ if(animAction){animAction.fadeOut(0.4); animAction=null;} },
+             clip.duration*1000 - 200);
+  return true;
+}
+/* РУЧНОЙ ТЕСТ (2026-07-25): клавиши прямо на странице аватара, мимо всей
+   цепочки ЛЛМ/сервера — чтобы сразу понять, где обрыв, если жесты «молчат»:
+   A — следующая скачанная .vrma-анимация, G — следующий процедурный жест */
+let _ai = 0, _gi = 0;
+addEventListener('keydown', e=>{
+  if (e.key==='a' || e.key==='A' || e.key==='ф' || e.key==='Ф'){
+    const ks = Object.keys(animLib);
+    if (!ks.length){ flash('библиотека пуста — нечего играть', 2500); return; }
+    play(ks[_ai++ % ks.length]);
+  } else if (e.key==='g' || e.key==='G' || e.key==='п' || e.key==='П'){
+    const ks = Object.keys(GESTURES);
+    const n = ks[_gi++ % ks.length];
+    flash('жест: '+n, 1500); play(n);
+  }
+});
+
+/* ---------- утилиты позы: setRot/expr — МЯГКИЕ (2026-07-25) ----------
+   Раньше setRot/expr писали значение мгновенно (.rotation.set / setValue) —
+   смена или конец жеста были «щелчком». Теперь это низкочастотный фильтр:
+   каждый кадр значение подтягивается к цели на долю ROT_K/EXPR_K (считаются
+   из dt в loop(), время сходимости ~90-110мс). Работает без снапшотов,
+   потому что idle (basePose) пишет кость ПЕРВОЙ каждый кадр — переходу
+   всегда есть «откуда» тянуться, что бы ни включилось поверх. */
+const R = THREE.MathUtils.degToRad;
+function bone(name){ return vrm && vrm.humanoid ? vrm.humanoid.getNormalizedBoneNode(name) : null; }
+let ROT_K = 1, EXPR_K = 1;      // пересчитываются каждый кадр в loop() из dt
+function setRot(name, x, y, z){
+  const b = bone(name); if (!b) return;
+  if (ROT_K >= 0.999){ b.rotation.set(x, y, z); return; }
+  b.rotation.set(b.rotation.x + (x-b.rotation.x)*ROT_K,
+                 b.rotation.y + (y-b.rotation.y)*ROT_K,
+                 b.rotation.z + (z-b.rotation.z)*ROT_K);
+}
+// точечная версия для мест, где меняется только одна ось (пальцы) —
+// напрямую на bone-объекте, а не по имени (уже вызван bone() снаружи)
+function blendAxis(b, axis, v){ if (!b) return; b.rotation[axis] += (v-b.rotation[axis])*ROT_K; }
+// АДДИТИВНЫЙ оверлей поверх сглаженной базы (фикс 2026-07-25): раз setRot
+// теперь фильтр (тянет к цели на ROT_K за кадр), прямое `+= v` каждый кадр
+// НЕ рассасывается и копится до v/ROT_K (~6-кратно!) — из-за этого голова
+// «выкручивалась» при сдвиге модели и моталась на отводах взгляда.
+// addAx добавляет v*ROT_K: равновесие ровно base+v, переход мягкий.
+const addAx = (b, axis, v)=>{ if (b) b.rotation[axis] += v*ROT_K; };
+// эмоции жестов (happy/angry/sad/relaxed) сглаживаются так же, а те, что
+// текущий жест БОЛЬШЕ не трогает — сами угасают в 0 (декей-проход в loop);
+// липсинг (aa/ih/ou) и моргание уже сглажены собственной огибающей — их
+// пишем мгновенно, чтобы не задваивать фильтрацию
+const GESTURE_EXPRS = ['happy','angry','sad','relaxed'];
+const INSTANT_EXPRS = ['aa','ih','ou','blink','blinkLeft','blinkRight'];
+const exprCur = {}; let exprTouched = new Set();
+function expr(name, v){
+  if (GESTURE_EXPRS.includes(name)) exprTouched.add(name);
+  const cur = exprCur[name] || 0;
+  const nv = INSTANT_EXPRS.includes(name) ? v : cur + (v-cur)*EXPR_K;
+  exprCur[name] = nv;
+  try{ vrm.expressionManager.setValue(name, nv); }catch(e){}
+}
+// плавные помощники
+const ease = t => t<0 ? 0 : t>1 ? 1 : t*t*(3-2*t);
+const pulse = (t, at, w) => Math.max(0, 1 - Math.abs(t-at)/w);   // треугольный имп.
+
+/* ---------- ЖИВОЕ ТЕЛО (2026-07-25, по механикам аниматоров) ----------
+   1) ПЕРЕНОС ВЕСА: живой человек не качается синусоидой — он раз в
+      6-20 секунд плавно МЕНЯЕТ СТОЙКУ (вес на другую ногу, разворот
+      корпуса, наклон головы) и держит её. Стойка — случайная цель,
+      переход — с ease-in/out ~0.9с.
+   2) Дыхание/микрокачание — поверх стойки, малой амплитудой.
+   3) Голова частично следует за взглядом (см. блок взгляда ниже). */
+let stance = {a:{wx:0,hy:0,sy:0,ht:0,hp:0}, b:{wx:0,hy:0,sy:0,ht:0,hp:0},
+              t0:0, next:4};
+function pickStance(t){
+  stance.a = sampleStance(t);
+  stance.b = {wx:(Math.random()*2-1)*R(4),   // вес: крен таза
+              hy:(Math.random()*2-1)*R(9),   // разворот таза
+              sy:(Math.random()*2-1)*R(6),   // разворот корпуса
+              ht:(Math.random()*2-1)*R(6),   // наклон головы
+              hp:(Math.random()*2-1)*R(3)};  // кив головы
+  stance.t0 = t; stance.next = t + 6 + Math.random()*14;
+}
+function sampleStance(t){
+  const p = ease((t-stance.t0)/0.9), a=stance.a, b=stance.b, o={};
+  for (const k in a) o[k] = a[k]+(b[k]-a[k])*p;
+  return o;
+}
+function basePose(t, amp){
+  if (t > stance.next) pickStance(t);
+  const s = sampleStance(t);
+  // РУКИ (2026-07-25, «как робот» — фикс): у живого человека руки не
+  // прямые по швам — локти чуть согнуты ВПЕРЁД, кисти развёрнуты к бедру,
+  // плечи слегка вперёд, левая/правая несимметричны и медленно дрейфуют
+  const dL = Math.sin(t*0.37)*0.012, dR = Math.sin(t*0.29+2)*0.012;
+  setRot('leftUpperArm',  R(6)+dL, R(4),  R(66) + Math.sin(t*1.1)*0.03 - s.wx*0.5);
+  setRot('rightUpperArm', R(8)+dR,-R(4), -R(64) - Math.sin(t*1.1+1)*0.03 - s.wx*0.5);
+  setRot('leftLowerArm',  -R(14)+dL*2, R(6),  R(6));   // локоть согнут вперёд
+  setRot('rightLowerArm', -R(18)+dR*2,-R(6), -R(6));
+  setRot('leftHand',  R(5), 0,  R(10));                // кисть расслаблена
+  setRot('rightHand', R(5), 0, -R(12));
+  setRot('leftShoulder', 0, 0,  R(3));
+  setRot('rightShoulder',0, 0, -R(3));
+  // пальцы слегка подогнуты (раскрытая «лопата» — главный признак робота)
+  // blendAxis — не .set() напрямую, иначе пальцы «щёлкают» при переходе
+  // idle <-> жест, где пальцы задействованы (например point)
+  for (const side of ['left','right']){
+    const sign = side==='left' ? 1 : -1;
+    for (const f of ['Index','Middle','Ring','Little'])
+      ['Proximal','Intermediate','Distal'].forEach((seg,i)=>{
+        blendAxis(bone(side+f+seg), 'z', sign*R(12 + i*6));
+      });
+    const th = bone(side+'ThumbProximal') || bone(side+'ThumbMetacarpal');
+    blendAxis(th, 'y', sign*R(10));
+  }
+  // ЗАМИРАНИЕ (2026-07-25, «дерево на ветру» — фикс): живой человек
+  // держит стойку почти НЕПОДВИЖНО, движется только дыхание; смена позы —
+  // дискретная (pickStance), а не вечное качание. Синусы урезаны втрое.
+  setRot('hips', 0, s.hy + Math.sin(t*0.23)*0.005, s.wx + Math.sin(t*0.45)*0.004);
+  setRot('spine', Math.sin(t*0.8)*0.006 + amp*0.45, s.sy, -s.wx*0.6);
+  setRot('chest', amp*0.8, s.sy*0.4, 0);
+  setRot('neck', s.hp*0.5, -s.hy*0.5, 0);      // голова компенсирует корпус
+  setRot('head', s.hp + Math.sin(t*0.35+1)*0.008, -s.sy*0.4, s.ht);
+}
+
+/* ---------- жесты: процедурные мини-анимации ---------- */
+/* каждый жест = функция(p) где p:0..1 — прогресс; возвращать нечего,
+   она докручивает кости/выражения ПОВЕРХ basePose */
+const GESTURES = {
+  joy:     {dur:2.6, fn:p=>{ expr('happy', ease(p*3)* (1-ease((p-0.75)*4)));
+             setRot('head', -R(6)*Math.sin(p*Math.PI), 0, R(4)*Math.sin(p*Math.PI*2)); }},
+  angry:   {dur:2.6, fn:p=>{ expr('angry', ease(p*3)*(1-ease((p-0.75)*4)));
+             setRot('head', R(4)*Math.sin(p*Math.PI), 0, 0); }},
+  sorrow:  {dur:3.0, fn:p=>{ expr('sad', ease(p*3)*(1-ease((p-0.8)*5)));
+             setRot('head', R(10)*Math.sin(p*Math.PI), 0, 0);
+             setRot('spine', R(4)*Math.sin(p*Math.PI), 0, 0); }},
+  fun:     {dur:2.4, fn:p=>{ expr('relaxed', ease(p*3)*(1-ease((p-0.75)*4)));
+             expr('blinkLeft', pulse(p, .45, .18));
+             setRot('head', 0, 0, R(9)*Math.sin(p*Math.PI)); }},
+  wave:    {dur:2.6, fn:p=>{ const a = ease(p*2.5)*(1-ease((p-0.8)*5));
+             setRot('rightUpperArm', 0, 0, -R(68)+R(115)*a);
+             setRot('rightLowerArm', 0, R(20)*a, R(35)*a + R(28)*a*Math.sin(p*22));
+             expr('happy', a*0.6); }},
+  good:    {dur:2.2, fn:p=>{ const a = ease(p*3)*(1-ease((p-0.7)*4));
+             setRot('head', R(11)*Math.sin(p*Math.PI*1.5)*a, 0, 0);
+             expr('happy', a*0.45); }},
+  nodding: {dur:1.8, fn:p=>{ setRot('head', R(13)*Math.abs(Math.sin(p*Math.PI*2)), 0, 0); }},
+  shaking: {dur:1.8, fn:p=>{ setRot('head', 0, R(14)*Math.sin(p*Math.PI*3), 0); }},
+  clap:    {dur:2.8, fn:p=>{ const a = ease(p*3)*(1-ease((p-0.8)*6));
+             const c = Math.abs(Math.sin(p*Math.PI*5));         // хлопки
+             setRot('leftUpperArm', -R(45)*a, R(25)*a,  R(68)-R(48)*a);
+             setRot('rightUpperArm',-R(45)*a,-R(25)*a, -R(68)+R(48)*a);
+             setRot('leftLowerArm', 0,  R(55)*a - R(12)*c*a, 0);
+             setRot('rightLowerArm',0, -R(55)*a + R(12)*c*a, 0);
+             expr('happy', a*0.7); }},
+  idle1:   {dur:3.4, fn:p=>{ const a=Math.sin(p*Math.PI);        // переминание
+             setRot('hips', 0, 0, R(4)*Math.sin(p*Math.PI*2));
+             setRot('spine', 0, R(6)*a, R(3)*Math.sin(p*Math.PI*2)); }},
+  idle2:   {dur:3.6, fn:p=>{ const a=ease(p*2.2)*(1-ease((p-0.72)*4));  // потянуться
+             setRot('leftUpperArm', -R(30)*a, 0,  R(68)-R(100)*a);
+             setRot('rightUpperArm',-R(30)*a, 0, -R(68)+R(100)*a);
+             setRot('spine', -R(6)*a, 0, 0); setRot('head', -R(8)*a, 0, 0);
+             expr('relaxed', a*0.5); }},
+  reset:   {dur:0.6, fn:p=>{}},
+  /* --- стрим-набор реакций (2026-07-25): первая версия процедурно,
+         потом любую можно перекрыть файлом models/avatar/anims/<имя>.vrma --- */
+  dance:   {dur:5.0, fn:p=>{ const b=p*Math.PI*8;      // простые «качели»
+             setRot('hips', 0, R(10)*Math.sin(b*0.5), R(6)*Math.sin(b));
+             setRot('spine', R(4)*Math.sin(b+1), R(8)*Math.sin(b*0.5), 0);
+             setRot('leftUpperArm', -R(35)*Math.abs(Math.sin(b*0.5)), 0,  R(68)-R(70)*Math.abs(Math.sin(b*0.5+1)));
+             setRot('rightUpperArm',-R(35)*Math.abs(Math.sin(b*0.5+Math.PI)), 0, -R(68)+R(70)*Math.abs(Math.sin(b*0.5+2)));
+             setRot('head', 0, 0, R(8)*Math.sin(b));
+             expr('happy', 0.6); }},
+  shy:     {dur:3.4, fn:p=>{ const a=ease(p*2.5)*(1-ease((p-0.75)*4));  // смущение
+             setRot('head', R(14)*a, R(18)*a, 0);
+             setRot('spine', R(5)*a, R(8)*a, 0);
+             setRot('leftUpperArm', 0, 0, R(68)-R(25)*a);
+             setRot('leftLowerArm', -R(70)*a, R(40)*a, 0);   // ручка к лицу
+             expr('sad', a*0.3); expr('happy', a*0.35); }},
+  cringe:  {dur:3.0, fn:p=>{ const a=ease(p*3)*(1-ease((p-0.75)*4));
+             setRot('spine', -R(9)*a, R(6)*a, 0);            // отпрянула
+             setRot('head', -R(6)*a, R(14)*a, R(5)*a);
+             setRot('leftUpperArm', -R(20)*a, 0, R(68)-R(15)*a);
+             expr('angry', a*0.35); expr('sad', a*0.3); }},
+  rage:    {dur:3.0, fn:p=>{ const a=ease(p*4)*(1-ease((p-0.8)*5));
+             expr('angry', a);
+             setRot('head', R(6)*a, 0, R(3)*Math.sin(p*Math.PI*10)*a);  // трясётся
+             setRot('leftUpperArm', 0, 0,  R(68)-R(20)*a);
+             setRot('rightUpperArm',0, 0, -R(68)+R(20)*a);
+             setRot('leftLowerArm',  -R(60)*a, 0, 0);        // кулачки сжаты
+             setRot('rightLowerArm', -R(60)*a, 0, 0);
+             setRot('spine', R(4)*a, 0, 0); }},
+  cute:    {dur:3.2, fn:p=>{ const a=ease(p*2.5)*(1-ease((p-0.75)*4));  // милота
+             setRot('head', R(4)*a, 0, R(14)*a);             // наклон головы
+             setRot('leftUpperArm', -R(30)*a, R(30)*a,  R(68)-R(35)*a);
+             setRot('rightUpperArm',-R(30)*a,-R(30)*a, -R(68)+R(35)*a);
+             setRot('leftLowerArm',  -R(80)*a, R(30)*a, 0);  // ручки вместе
+             setRot('rightLowerArm', -R(80)*a,-R(30)*a, 0);
+             expr('happy', a*0.9); }},
+  /* --- разговорные жесты (co-speech, 2026-07-25) ---
+     «ask» отсюда убрана — теперь это отдельный OVERLAY-слой (askCue в
+     play()/loop()), потому что наклон-на-вопрос не должен занимать общий
+     слот `active` и блокировать другие жесты/биты во время речи. */
+  point:   {dur:2.6, fn:p=>{ const a=ease(p*3)*(1-ease((p-0.78)*5));     // «вот!»
+             // правая рука вперёд, указательный вытянут, остальные в кулак
+             setRot('rightUpperArm', -R(62)*a, -R(12)*a, -R(64)+R(52)*a);
+             setRot('rightLowerArm', -R(10)*a, -R(18)*a, 0);
+             setRot('rightHand', 0, 0, -R(4));
+             for (const f of ['Middle','Ring','Little'])
+               ['Proximal','Intermediate','Distal'].forEach((seg,i)=>{
+                 blendAxis(bone('right'+f+seg), 'z', -R(70+i*8)*a); });
+             blendAxis(bone('rightIndexProximal'), 'z', -R(2));
+             blendAxis(bone('rightIndexIntermediate'), 'z', -R(2));
+             setRot('head', R(2)*a, -R(4)*a, 0);
+             expr('happy', a*0.3); }},
+  tired:   {dur:4.0, fn:p=>{ const a=ease(p*2)*(1-ease((p-0.8)*5));     // усталость
+             setRot('spine', R(10)*a, 0, 0);                 // ссутулилась
+             setRot('head', R(16)*a, 0, R(4)*Math.sin(p*Math.PI*2)*a);
+             setRot('leftUpperArm', 0, 0,  R(72));
+             setRot('rightUpperArm',0, 0, -R(72));
+             expr('relaxed', a*0.6); expr('sad', a*0.25); }},
+};
+let active = null, activeT0 = 0;
+let askCue = {t0: -9};   // OVERLAY «наклон на вопрос» — независимый слот, см. loop()
+function play(name){
+  name = (name||'').toLowerCase();
+  if (!vrm) return;
+  if (playClip(name)) { active = null; return; }   // .vrma в приоритете
+  if (name === 'ask'){ askCue.t0 = performance.now()/1000; return; }  // оверлей, active не занимает
+  const g = GESTURES[name];
+  if (!g) return;
+  active = g; activeT0 = performance.now()/1000;   // старые эмоции сами угаснут (декей в loop)
+}
+
+/* ---------- связь с Сайкой ---------- */
+function connectWS(){
+  const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
+  ws.onmessage = ev => { try{
+    const m = JSON.parse(ev.data);
+    if (m.type === 'avatar_gesture'){ flash('жест от Сайки: '+m.gesture, 1500); play(m.gesture); }
+    else if (m.type === 'avatar_outfit') loadOutfit(m.outfit);
+  }catch(e){} };
+  ws.onclose = ()=> setTimeout(connectWS, 2000);   // сервер перезапустили — переподключаемся
+  ws.onerror = ()=> ws.close();
+}
+connectWS();
+
+/* липсинк: реальный уровень TTS-звука -> рот 'aa' + лёгкий кив головы */
+let audioLevel = 0, audioTs = 0, bcTs = 0;
+/* основной источник — BroadcastChannel из главной страницы UI: там уровень
+   снимается AnalyserNode'ом с РЕАЛЬНО играющего звука (идеальная синхра).
+   Серверный опрос ниже — фолбэк, если аватар открыт отдельным окном/OBS
+   без главной страницы (тогда синхра приблизительная). */
+if ('BroadcastChannel' in window){
+  new BroadcastChannel('saika-tts-level').onmessage = e=>{
+    bcTs = performance.now();
+    audioLevel = Math.min(1, (e.data||0)*4);
+    if (audioLevel > 0.02) audioTs = bcTs;
+  };
+}
+async function pollAudio(){
+  if (performance.now() - bcTs < 600){   // живой канал точнее — не мешаем
+    setTimeout(pollAudio, 300); return; }
+  try{
+    // эндпоинт отдаёт ГОЛОЕ число текстом («0.123»), не JSON — парсим float
+    const r = parseFloat(await (await fetch('/api/audio_level')).text());
+    audioLevel = isNaN(r) ? 0 : r;
+    if (audioLevel > 0.02) audioTs = performance.now();
+  }catch(e){}
+  setTimeout(pollAudio, 66);          // ~15 Гц, как VMCP head-bob
+}
+pollAudio();
+
+/* ---------- ЗРИТЕЛЬНОЕ ВНИМАНИЕ ----------
+   Взгляд живёт по правилам аниматоров: ~70-80%% времени на «зрителе»
+   (камере) с САККАДАМИ — микропрыжками глаз каждые 0.5-3с; изредка —
+   осознанный отвод взгляда в сторону/вниз на секунду-полторы (задумалась);
+   при крупном переводе взгляда — моргание (так делают люди). Во время
+   речи взгляд почти не уходит от зрителя. three-vrm сам доворачивает
+   глаза на цель (vrm.lookAt.target). */
+const gazeTarget = new THREE.Object3D(); scene.add(gazeTarget);
+let gaze = {ox:0, oy:0, next:0};
+// сглаженный взгляд ДЛЯ ГОЛОВЫ: глаза прыгают мгновенно (саккады так и
+// работают), а вот голова догоняет плавно — иначе микроповороты выглядят
+// дёрганьем (замечание владельца 2026-07-25)
+let gs = {ox:0, oy:0};
+function updateGaze(t, talking, dt){
+  const k = 1 - Math.exp(-(dt||0.016)*3.2);      // ~0.3с догона
+  gs.ox += (gaze.ox - gs.ox)*k;
+  gs.oy += (gaze.oy - gs.oy)*k;
+  if (t > gaze.next){
+    // основной режим — СЛЕДИТЬ ЗА ЗРИТЕЛЕМ; отвод взгляда — редкое событие
+    // (в основном глазами, голова почти не участвует — см. клампы ниже)
+    const big = Math.random() < (talking ? 0.05 : 0.12);
+    if (big){                                   // отвод взгляда
+      gaze.ox = (Math.random()*2-1)*0.55; gaze.oy = -0.05-Math.random()*0.25;
+      gaze.next = t + 0.8 + Math.random()*1.4;
+      if (blinkT < 0) blinkT = 0;               // моргнуть на переводе
+    } else {                                    // саккада вокруг зрителя
+      gaze.ox = (Math.random()*2-1)*0.10; gaze.oy = (Math.random()*2-1)*0.07;
+      gaze.next = t + 0.5 + Math.random()*2.4;
+    }
+  }
+  gazeTarget.position.set(camera.position.x + gaze.ox,
+                          camera.position.y + gaze.oy, camera.position.z);
+  // ДОВОРОТ НА ЗРИТЕЛЯ ПРИ ПЕРЕМЕЩЕНИИ (2026-07-25): когда модель оттянута
+  // мышью в сторону (view.x/y), камера остаётся на месте — голова частично
+  // доворачивается на «съеденный» угол, остаток добирают глаза (lookAt).
+  // РАМКИ ФИЗИКИ: у человека комфортный поворот головы ~30-40°, дальше он
+  // разворачивает корпус — поэтому компенсацию жёстко клампим, даже если
+  // модель утащили на край экрана, шея не «выкручивается».
+  const clamp = THREE.MathUtils.clamp;
+  const camDist = 2.5 / Math.max(0.35, view.zoom);
+  const panYaw   = clamp(Math.atan2(view.x, camDist), -R(35), R(35));
+  // знак: модель ОПУЩЕНА (view.y<0) -> panPitch>0 -> отрицательный rotation.x
+  // ниже = лицо ВВЕРХ (проверено владельцем 2026-07-25: было зеркально)
+  const panPitch = clamp(Math.atan2(-view.y, camDist), -R(18), R(18));
+  // голова следует за взглядом ЧУТЬ-ЧУТЬ: большие отводы взгляда — работа
+  // ГЛАЗ (человек косится, а не крутит шеей); вклад головы клампим узко,
+  // глаза доворачивают остаток сами. Всё — через addAx (аддитив поверх
+  // сглаженной базы, без накопления).
+  const hx = clamp(gs.ox, -0.16, 0.16), hy = clamp(gs.oy, -0.12, 0.12);
+  addAx(bone('neck'), 'y', -hx*0.18 - panYaw*0.4);
+  addAx(bone('neck'), 'x', panPitch*0.2);       // вертикаль: шея тоже работает
+  const h = bone('head');
+  addAx(h, 'x', -hy*0.14 + panPitch*0.3);       // подъём лица — умеренный
+  addAx(h, 'y', -hx*0.06 - panYaw*0.3);
+  // «ХОЧУ ОСТАТЬСЯ В КАДРЕ» (2026-07-25, просьба владельца): при сильном
+  // сдвиге модель подключает КОРПУС — опущена вниз: прогибается и тянет
+  // лицо вверх; утащена вбок: чуть наклоняется к центру кадра
+  addAx(bone('spine'), 'x', panPitch*0.18);
+  addAx(bone('spine'), 'z', -panYaw*0.18);
+  addAx(bone('chest'), 'x', panPitch*0.1);
+  // ВЕРХНИЕ ПОЗИЦИИ: модель поднята в кадре — милый наклон головы к плечу
+  // (к тому, что ближе к центру кадра; по центру — к правому)
+  const up = Math.max(0, Math.atan2(view.y, camDist));
+  if (up > 0.02){
+    const side = view.x > 0.02 ? -1 : 1;
+    addAx(h, 'z', side*Math.min(up*1.1, R(13)));
+    addAx(bone('neck'), 'z', side*Math.min(up*0.5, R(6)));
+  }
+}
+
+/* ---------- моргание (с двойными) ---------- */
+let nextBlink = 2 + Math.random()*3, blinkT = -1;
+
+/* ---------- главный цикл ---------- */
+const clock = new THREE.Clock();
+let talkPhase = 0, mouth = 0;
+let beat = {t0:-9, next:0, side:'right'};   // бит-жесты при речи
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  if (vrm){
+    // сглаживание позы/эмоций считаем из реального dt (см. блок setRot/expr
+    // выше по файлу — это и есть «мягкие переходы»)
+    ROT_K  = 1 - Math.exp(-dt*11);
+    EXPR_K = 1 - Math.exp(-dt*9);
+    exprTouched.clear();
+
+    const breath = Math.sin(t*1.7)*0.5+0.5;       // дыхание 0..1
+    if (!animAction) basePose(t, breath*0.04);    // .vrma играет — не мешаем
+    if (mixer) mixer.update(dt);
+
+    // TRANSIENT: активный именной жест поверх базы (один слот). Раньше
+    // на конце жеста эмоции сбрасывались мгновенно — теперь просто
+    // отпускаем слот, а декей-проход ниже сам плавно угасит то, что жест
+    // держал (happy/angry/sad/relaxed), если новый жест их не подхватил
+    if (active){
+      const p = (performance.now()/1000 - activeT0) / active.dur;
+      if (p >= 1) active = null;
+      else active.fn(p);
+    }
+
+    // ---- липсинк v2 (2026-07-25): не «рот по громкости», а подобие речи --
+    // 1) сглаживание: атака быстрая (~70мс), закрытие мягкое (~150мс);
+    // 2) слоговая модуляция: рот ПУЛЬСИРУЕТ ~5-7 раз/с, как при слогах,
+    //    а не висит открытым; 3) смесь гласных форм aa/ih/ou — губы живут.
+    // теперь уровень — с РЕАЛЬНОГО звука (BroadcastChannel), в нём уже есть
+    // естественные слоговые провалы; искусственная пульсация поверх давала
+    // «кривой» рот — оставляем еле заметную вариацию формы, а огибающую
+    // берём как есть. Кивки при речи — АДДИТИВНО к позе (setRot её
+    // перезаписывал -> голова дёргалась на границах реплик).
+    const talking = performance.now() - audioTs < 300;
+    // чувствительность: RMS реального звука тихий (~0.05-0.2), поэтому
+    // усиление большое + сжатие сверху (sqrt), чтобы тихие звуки открывали
+    // рот заметно, а громкие не упирались в максимум
+    const target = talking ? Math.min(0.95, Math.sqrt(audioLevel*4.5)) : 0;
+    const spd = target > mouth ? 20 : 10;             // атака/спад
+    mouth += (target - mouth) * (1 - Math.exp(-dt*spd));
+    if (mouth > 0.015){
+      talkPhase += dt*9;
+      expr('aa', mouth * (0.8 + 0.2*Math.sin(talkPhase*1.3)));
+      expr('ih', mouth * 0.18 * (0.5+0.5*Math.sin(talkPhase*0.9+1.3)));
+      expr('ou', mouth * 0.12 * (0.5+0.5*Math.sin(talkPhase*0.6+2.6)));
+      if (!active && !animAction){   // OVERLAY: кив+биты не спорят с .vrma-клипом
+        const amp = R(1.2) + mouth*R(2.2);            // мягкий кив, аддитивно
+        const h = bone('head');
+        addAx(h, 'x', amp*Math.sin(talkPhase*0.5));
+        addAx(h, 'y', amp*0.35*Math.sin(talkPhase*0.31+1));
+        // БИТ-ЖЕСТИКУЛЯЦИЯ (co-speech beats): при речи люди слегка
+        // «отбивают» фразы кистями — раз в 2-5с короткий импульс предплечья
+        if (t > beat.next){ beat.t0 = t; beat.side = Math.random()<0.6 ? 'right':'left';
+                            beat.next = t + 2 + Math.random()*3; }
+        const bp = (t - beat.t0)/0.55;
+        if (bp >= 0 && bp < 1){
+          const ba = Math.sin(bp*Math.PI)*R(9)*(0.6+mouth*0.6);
+          const la = bone(beat.side+'LowerArm');
+          addAx(la, 'x', -ba); addAx(la, 'y', (beat.side==='right'?-1:1)*ba*0.5);
+          addAx(bone(beat.side+'Hand'), 'x', ba*0.7);
+        }
+      }
+    } else { expr('aa',0); expr('ih',0); expr('ou',0); }
+
+    // OVERLAY: наклон головы на вопрос (askCue/play() выше) — свой
+    // независимый слой, аддитивно; работает ДАЖЕ поверх активного
+    // transient-жеста или .vrma-клипа, и не спорит с битами/кивом речи
+    const askP = (t - askCue.t0) / 2.2;
+    if (askP >= 0 && askP < 1){
+      const a = Math.sin(askP*Math.PI);              // плавно туда и обратно
+      const h = bone('head');
+      addAx(h, 'x', R(3)*a); addAx(h, 'y', R(6)*a); addAx(h, 'z', R(12)*a);
+      const n = bone('neck');
+      addAx(n, 'y', R(4)*a); addAx(n, 'z', R(4)*a);
+      addAx(bone('rightShoulder'), 'z', -R(4)*a);
+    }
+
+    // взгляд (после позы и жестов — доворачивает голову поверх)
+    updateGaze(t, talking, dt);
+    if (vrm.lookAt && vrm.lookAt.target !== gazeTarget)
+      vrm.lookAt.target = gazeTarget;
+
+    // фоновая микромимика: нейтральное лицо мертвит — держим едва заметный
+    // «тонус» доброжелательности, слегка гуляющий по времени
+    if (!active && !talking)
+      expr('happy', 0.06 + 0.05*Math.sin(t*0.13) + 0.03*Math.sin(t*0.041));
+
+    // ДЕКЕЙ: эмоции жестов, которые в этом кадре никто не трогал (жест
+    // сменился или закончился) — сами плавно угасают в 0, без «щелчка»
+    GESTURE_EXPRS.forEach(n => { if (!exprTouched.has(n)) expr(n, 0); });
+
+    // моргание (иногда двойное — живее)
+    blinkT >= 0 ? blinkT += dt : null;
+    if (blinkT < 0 && t > nextBlink){ blinkT = 0; }
+    if (blinkT >= 0){
+      expr('blink', Math.sin(Math.min(blinkT/0.12,1)*Math.PI));
+      if (blinkT > 0.14){ blinkT = -1; expr('blink',0);
+        nextBlink = Math.random() < 0.2 ? t + 0.22    // двойное моргание
+                                        : t + 2 + Math.random()*4; }
+    }
+
+    vrm.update(dt);            // spring bones: физика волос/юбки — здесь
+  }
+  renderer.render(scene, camera);
+}
+loop();
+</script>
+</body>
+</html>
