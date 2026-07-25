@@ -270,5 +270,34 @@
       "anims_dir": "models/avatar/anims",
       "outfits_dir": "models/avatar/outfits"
     }
+  },
+  "vision": {
+    "enabled": true,
+    "tools": true,
+    "monitor": 0,
+    "camera_index": 0,
+    "camera_w": 1280,
+    "camera_h": 720,
+    "camera_probe": 4,
+    "max_side": 1280,
+    "jpeg_quality": 80,
+    "screen_order": [
+      "dxcam",
+      "dxcam_winrt",
+      "windows_capture",
+      "mss"
+    ],
+    "scene_threshold": 6,
+    "debounce": 2,
+    "min_interval_s": 45,
+    "watch_hz": 2,
+    "watch_source": "screen",
+    "impulse_cooldown_s": 120,
+    "window_blocklist": [],
+    "swap_rb": false,
+    "camera_idle_release_s": 60,
+    "default_source": "screen",
+    "preview_fps": 10,
+    "preview_max_s": 600
   }
 }

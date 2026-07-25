@@ -5,7 +5,45 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
+# 2026-07-25: машинные настройки живут ОТДЕЛЬНО от общего конфига.
+# ПРИЧИНА (стоила времени на каждом синке между домом и работой):
+# config.json лежит в git, поэтому после `git pull` на второй машине
+# прилетали чужие backend/model/движок слуха/устройство вывода, и их
+# приходилось возвращать руками. Теперь всё машинно-специфичное дублируется
+# в config.local.json, который в .gitignore — он накладывается ПОВЕРХ
+# config.json при загрузке и переживает любой pull.
+LOCAL_PATH = ROOT / "config.local.json"
 _lock = threading.Lock()
+
+# Что считается «настройкой этой машины». Пути указываются как в CFG.get.
+LOCAL_KEYS = (
+    "llm.backend", "llm.model",
+    "stt.engine",
+    "tts.engine", "tts.output_device", "tts.output_device_dup",
+    "mic.device",
+    "vision.monitor", "vision.camera_index",
+    "messengers.pc_name",
+    "files.roots",
+    "hotkeys.enabled",
+)
+
+
+def _dig(node, path, default=None):
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return default
+        node = node[key]
+    return node
+
+
+def _plant(node, path, value):
+    keys = path.split(".")
+    for key in keys[:-1]:
+        node = node.setdefault(key, {})
+    node[keys[-1]] = value
+
+
+_MISSING = object()
 
 
 class Config:
@@ -15,13 +53,47 @@ class Config:
 
     def load(self):
         with _lock:
-            self._data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            # накладываем машинный слой: он главнее общего
+            if LOCAL_PATH.exists():
+                try:
+                    local = json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+                except Exception as e:
+                    print(f"[!] config.local.json битый ({e}) — игнорирую")
+                    local = {}
+                for path in LOCAL_KEYS:
+                    val = _dig(local, path, _MISSING)
+                    if val is not _MISSING:
+                        _plant(data, path, val)
+            self._data = data
 
     def save(self):
         with _lock:
             CONFIG_PATH.write_text(
                 json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            self._save_local()
+
+    def _save_local(self):
+        """Слепок машинных настроек рядом, в файл вне git. Пишем ТОЛЬКО те
+        ключи, что реально есть в конфиге, — чтобы не плодить пустышки."""
+        local = {}
+        for path in LOCAL_KEYS:
+            val = _dig(self._data, path, _MISSING)
+            if val is not _MISSING:
+                _plant(local, path, val)
+        if not local:
+            return
+        local["_comment"] = ("Настройки ЭТОЙ машины. Файл в .gitignore и "
+                             "накладывается поверх config.json, поэтому "
+                             "переживает git pull. Правится сам, когда "
+                             "меняешь модель/движок/устройство в интерфейсе.")
+        try:
+            LOCAL_PATH.write_text(
+                json.dumps(local, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except Exception as e:
+            print(f"[!] не смогла записать config.local.json: {e}")
 
     def get(self, path, default=None):
         node = self._data

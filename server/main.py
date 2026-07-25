@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from server.config import CFG, ROOT, resolve
@@ -774,6 +774,84 @@ def set_control(payload: dict):
     return {"ok": True, "control_enabled": on}
 
 
+# ------------------------------- зрение -------------------------------
+@app.get("/api/vision/state")
+def vision_state():
+    try:
+        from server import vision
+        return vision.state()
+    except Exception as e:
+        return {"enabled": False, "error": str(e), "monitors": [],
+                "cameras": [], "watch_on": False}
+
+
+@app.post("/api/vision/set")
+def vision_set(payload: dict):
+    """Кнопка 👁 в шапке и её меню: тумблер глаз, выбор дисплея/камеры,
+    режим наблюдения. Наблюдение включается ТОЛЬКО отсюда — сама Сайка
+    его не запускает."""
+    from server import vision
+    if "enabled" in payload:
+        vision.set_enabled(bool(payload["enabled"]))
+    if payload.get("monitor") is not None:
+        CFG.set("vision.monitor", int(payload["monitor"]))
+    if payload.get("camera") is not None:
+        cam = int(payload["camera"])
+        CFG.set("vision.camera_index", cam)
+        # переключили камеру или выключили — прошлую отпускаем сразу, чтобы
+        # не горела лампочка на устройстве, которым уже не пользуемся
+        vision.camera_stop()
+        if cam >= 0:
+            # пробуем сразу: список DirectShow полон виртуальных устройств,
+            # которые перечисляются всегда, а открываются далеко не всегда.
+            # Лучше сказать об этом в момент выбора, чем показать чёрный
+            # прямоугольник и оставить владельца гадать.
+            vision.test_camera(cam, force=True)
+    if payload.get("source"):
+        CFG.set("vision.watch_source", str(payload["source"]))
+    if "watch" in payload:
+        if payload["watch"]:
+            vision.watch_start(_vision_watch_cb,
+                               payload.get("source"))
+        else:
+            vision.watch_stop()
+    return vision.state()
+
+
+@app.post("/api/vision/shot")
+def vision_shot(payload: dict):
+    """Пробный кадр для интерфейса: проверить, что захват вообще живой,
+    не спрашивая Сайку. Возвращает data-url, UI показывает превью."""
+    from server import vision
+    if not vision.enabled():
+        return {"ok": False, "error": "глаза выключены"}
+    try:
+        img = vision.grab(payload.get("source") or "screen")
+        return {"ok": True, "image": vision.to_data_url(img, max_side=640,
+                                                        quality=70),
+                "source": vision.state()["last_source"]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/vision/mjpeg")
+def vision_mjpeg(source: str = "camera"):
+    """Живое окно вебки/экрана прямо в интерфейсе. Обычный <img src> в
+    браузере понимает multipart/x-mixed-replace как видео — ни WebRTC, ни
+    единой новой зависимости. Пока окно открыто, камера считается нужной и
+    не гаснет по простою; закрыл — через минуту сама отпустится."""
+    from fastapi.responses import StreamingResponse
+    from server import vision
+    if not vision.enabled():
+        raise HTTPException(status_code=409, detail="глаза выключены")
+    if source.startswith("cam") and not vision.camera_enabled():
+        raise HTTPException(status_code=409, detail="камера выключена")
+    return StreamingResponse(
+        vision.mjpeg(source),
+        media_type="multipart/x-mixed-replace; boundary=saikaframe",
+        headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/dialog/clear")
 def dialog_clear():
     """Начать диалог с чистого листа: старые сообщения не идут в контекст
@@ -1293,7 +1371,45 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         dyn_parts.append(
             "### Твоя память по теме (используй естественно, не цитируй "
             "дословно):\n" + mem_context)
-    if image:
+    # ЗРЕНИЕ (2026-07-25): человек попросил посмотреть — сервер сам делает
+    # кадр и кладёт его в ЭТОТ ЖЕ запрос как обычную картинку. Почему так,
+    # а не инструментом look_screen: работает с ЛЮБОЙ моделью, включая те,
+    # что не умеют tool-calls (у нас таких большинство, см. llm.tools_broken).
+    # Предохранители (тумблер 👁, чёрный список окон, намерение) — в vision.py.
+    _looked = False
+    # Внутренний импульс зрения уже несёт кадр и говорит про экран — если
+    # прогнать его текст через auto_look, она схватит ВТОРОЙ кадр на ровном
+    # месте. Метка ставится в _vision_watch_cb.
+    if image is None and "[[vision-impulse]]" not in (user_text or ""):
+        try:
+            from server import capabilities as _caps_v
+            from server import vision as _vis
+            _url, _note = _vis.auto_look(user_text)
+            if _url and _caps_v.vision(CFG.get("llm.model", "")) is False:
+                # за рулём слепая болтушка — одалживаем глаза у vision-модели
+                # парка (тот же приём, что для OCR присланных картинок ниже)
+                out.put({"type": "tool", "name": "зрение",
+                         "args": "смотрю чужими глазами"})
+                _desc = _vis._describe(_url, "Опиши подробно, что на кадре: "
+                                             "что происходит, что открыто, "
+                                             "что бросается в глаза.")
+                _url = None
+                _note = (("### Ты посмотрела своими глазами, но твоя текущая "
+                          "модель БЕЗ зрения — кадр разобрала vision-модель "
+                          "из парка. Вот что на нём:\n" + _desc[:3000] +
+                          "\n\nГовори так, будто видела сама, своими "
+                          "словами. Не выдумывай того, чего в описании нет.")
+                         if _desc else
+                         "### Ты пыталась посмотреть, но разобрать кадр "
+                         "некому: ни текущая модель, ни одна модель в парке "
+                         "не умеет смотреть на картинки. Скажи честно.")
+            if _note:
+                dyn_parts.append(_note)
+            if _url:
+                image, _looked = _url, True
+        except Exception as e:
+            log.debug("зрение пропущено: %s", e)
+    if image and not _looked:
         LAST_IMAGE["data"], LAST_IMAGE["ts"] = image, time.time()
         from server import capabilities as caps
         if caps.vision(CFG.get("llm.model", "")) is False:
@@ -1407,6 +1523,15 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         r"\b(найди|загугл\w*|погугл\w*|поищ\w*|глянь в (инете|сети)|"
         r"что нового в мире)\b", user_text, re.I))
     _no_tools = False
+    try:
+        # 2026-07-25: этот путь ходит в браузер МИМО tools.call(), поэтому
+        # предохранитель импульса надо проверять здесь отдельно — иначе он
+        # на внутреннюю мысль открывает окно и лезет в интернет.
+        from server.llm import tools as _tls_guard
+        if _tls_guard.IMPULSE_MODE.get("on"):
+            _search_intent = False
+    except Exception:
+        pass
     try:
         if _search_intent:
             _cur_model = CFG.get("llm.model", "")
@@ -2124,7 +2249,9 @@ def _impulse_ready(key, cooldown_s):
     return bool(EVENT_CLIENTS)
 
 
-def _fire_impulse(key, text):
+def _fire_impulse(key, text, image=None):
+    """image (2026-07-25) — для импульса зрения: Сайка сама заметила, что
+    картинка изменилась, и говорит по кадру, а не по таймеру."""
     IMPULSE_LAST[key] = time.time()
     out = next(iter(EVENT_CLIENTS))
     log.info("Импульс %s: запускаю внутренний монолог", key)
@@ -2134,7 +2261,7 @@ def _fire_impulse(key, text):
         from server.llm import tools as _tls
         _tls.IMPULSE_MODE["on"] = True
         try:
-            run_dialog(text, out, threading.Event())
+            run_dialog(text, out, threading.Event(), image=image)
         finally:
             _tls.IMPULSE_MODE["on"] = False
 
@@ -2234,6 +2361,45 @@ def _impulse_tick():
                     "словом «...» и всё."))
     except Exception as e:
         log.debug("impulse browser: %s", e)
+
+
+def _vision_watch_cb(url, source, note):
+    """Режим наблюдения заметил смену картинки. Сайка получает это как
+    ВНУТРЕННИЙ импульс — то есть говорит по своей воле, а не отвечает.
+    Кулдаун отдельный и щедрый: комментировать каждое переключение окна
+    это не живость, а надоедливость.
+
+    vision.watch_speaks=false — наблюдение работает молча (видно в логах и
+    в счётчике реакций), но вслух Сайка ничего не говорит."""
+    if not CFG.get("vision.watch_speaks", True):
+        log.info("Наблюдение: смена картинки на %s (молча)", source)
+        return
+    cd = float(CFG.get("vision.impulse_cooldown_s", 120))
+    if not _impulse_ready("vision", cd):
+        return
+    try:
+        from server import capabilities as _caps_v
+        from server import vision as _vis
+        img = url
+        if _caps_v.vision(CFG.get("llm.model", "")) is False:
+            desc = _vis._describe(url, "Опиши коротко, что изменилось "
+                                       "и что сейчас на кадре.")
+            if not desc:
+                return          # смотреть некому — молча пропускаем тик
+            img = None
+            note = ("### Ты в режиме наблюдения заметила, что картинка "
+                    "изменилась. Твоя модель без зрения, кадр разобрала "
+                    "vision-модель парка:\n" + desc[:2000] +
+                    "\n\nСкажи коротко и по-своему, что думаешь.")
+        where = "экране" if str(source).startswith("screen") else "камере"
+        _fire_impulse("vision", note + f"\n(ты смотришь на {where} сама, "
+                      "тебя никто не спрашивал — реплика должна быть "
+                      "КОРОТКОЙ, одна-две фразы, и на этом всё. Ничего не "
+                      "ищи, никуда не лезь, ничего не открывай: это просто "
+                      "твоё наблюдение вслух.) [[vision-impulse]]",
+                      image=img)
+    except Exception as e:
+        log.debug("импульс зрения: %s", e)
 
 
 def _impulse_loop():

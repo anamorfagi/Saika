@@ -86,6 +86,19 @@ if exist "%HANDS%" (
     powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%HANDS%\" > \"%~dp0logs\handspc.log\" 2>&1'"
 )
 
+:: ---------- top up per-feature dependencies ----------
+:: 2026-07-25. first_run.py runs ONCE, so anything added to the project
+:: later stays without its libraries on an already-configured machine -
+:: painfully so on the second PC, where code arrives via git but pip was
+:: never run. The check costs milliseconds (find_spec, no import); if
+:: everything is present it exits silently. It never fails the start:
+:: no internet means Saika still boots, just without that feature.
+:: NOTE: ASCII only in .bat files - cmd parses them in the OEM codepage
+:: and Cyrillic here splits command lines apart.
+if exist ".venv\Scripts\python.exe" (
+    "%VPY%" setup\ensure_features.py
+)
+
 :: ---------- run with self-restart ----------
 set RESTARTS=0
 :run

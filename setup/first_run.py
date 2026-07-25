@@ -307,6 +307,17 @@ def s_voice():
     return True
 
 
+def s_vision():
+    """Глаза: захват экрана и вебки (2026-07-25). Всё open source.
+    Необязательный шаг: не встанет — Сайка живёт слепой, но живёт."""
+    ok = pip("install", "opencv-python==4.13.0.92", "mss")
+    # быстрые бэкенды отдельной командой: падение одного колеса не должно
+    # утаскивать обязательную часть
+    if not pip("install", "dxcam[cv2]", "windows-capture", "pygrabber"):
+        print("[~] быстрые бэкенды захвата не встали — останется mss")
+    return ok
+
+
 def s_doctor():
     sys.path.insert(0, str(ROOT))
     from setup.doctor import run_checks
@@ -342,6 +353,8 @@ def main():
          s_cuda_dlls, required=False)
     step(st, "ffmpeg", "ffmpeg", s_ffmpeg, required=False)
     step(st, "ollama", "LLM-бэкенд (Ollama / LM Studio)", s_ollama,
+         required=False)
+    step(st, "vision", "Глаза: захват экрана и вебки", s_vision,
          required=False)
     step(st, "voice", "Подготовка голоса Сайки", s_voice)
     step(st, "doctor", "Финальная проверка", s_doctor, required=False)

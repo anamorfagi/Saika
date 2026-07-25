@@ -75,13 +75,14 @@
     box-shadow:var(--tile-sh)}
 
   /* ═════════ ШАПКА ═════════ */
-  /* z-index (2026-07-25): шапке нужен СВОЙ слой над содержимым — иначе её
-     выпадающие панели (⬆ git-пуш) прятались за сообщениями чата. 45 — выше
-     чата и дев-доски (40), но ниже модалок/шторок (50/60/70), чтобы те
-     по-прежнему перекрывали шапку целиком. */
   header{display:flex;align-items:center;gap:10px;flex:none;height:50px;
     padding:0 12px 0 16px;border-radius:16px;background:var(--tile-hi);
-    box-shadow:var(--tile-sh-lo);position:relative;z-index:45}
+    box-shadow:var(--tile-sh-lo);
+    /* 2026-07-25: без этого меню 👁 и ⬆ открывались ПОД стеклом чата.
+       backdrop-filter у плиток создаёт контекст наложения, и они рисуются
+       поверх шапки, хотя лежат ниже по DOM. z-index внутри .pop не
+       спасает — он действует внутри контекста шапки, а не над плитками. */
+    position:relative;z-index:40}
   header .name{font-weight:600;font-size:14.5px;letter-spacing:.01em}
   header .name::after{content:'локальный агент';margin-left:9px;font-weight:400;
     font-size:11px;color:var(--dim)}
@@ -191,14 +192,15 @@
     letter-spacing:.16em;text-transform:uppercase}
 
   /* ═════════ ЭКВАЛАЙЗЕР + НИЖНИЙ ДОК ═════════ */
-  /* 2026-07-25: было margin-bottom:-14px — эквалайзер на 2/3 заезжал под
-     нижний док (#bar, z-index:2) и читался как обрезанная лишняя полоса.
-     Теперь висит целиком в промежутке между окнами: без фона, без скругления
-     и без обрезки — видны только столбики и зелёная полоса готовности. */
-  #eq{height:22px;flex:none;display:flex;align-items:flex-end;
-    justify-content:center;gap:2px;padding:3px 18px 0;
-    background:transparent;overflow:visible;position:relative;
-    margin-bottom:0;box-shadow:none;z-index:1}
+  /* Полоска голоса — БЕЗ своей стеклянной плитки (2026-07-25): отдельная
+     стекляшка между рабочей областью и доком читалась как пустая панель.
+     Теперь это просто волна на фоне, вплотную к доку. */
+  #eq{height:20px;flex:none;display:flex;align-items:flex-end;
+    justify-content:center;gap:3px;padding:0 18px 4px;
+    background:none!important;border:0!important;box-shadow:none!important;
+    backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+    border-radius:0;overflow:visible;position:relative;
+    margin-bottom:-8px;z-index:1}
   #eq::after{content:'';position:absolute;left:18%;right:18%;bottom:2px;height:2px;
     border-radius:2px;pointer-events:none;opacity:0;
     transition:opacity .35s,background .35s;
@@ -210,12 +212,11 @@
     background:linear-gradient(180deg,var(--accent2),var(--accent));
     opacity:.85;transition:height .07s linear;position:relative;z-index:1;
     box-shadow:0 0 6px rgba(145,132,217,.5)}
-  #eq .eqscore{position:absolute;right:14px;bottom:5px;font-size:10.5px;
-    font-weight:700;z-index:2;pointer-events:none}
+  #eq .eqscore{display:none}   /* 2026-07-25: цифра качества озвучки убрана */
 
   #bar{display:flex;align-items:center;gap:8px;flex:none;
     padding:10px 12px;border-radius:20px;background:var(--tile-hi);
-    box-shadow:var(--tile-sh-lo);position:relative;z-index:2}
+    box-shadow:var(--tile-sh-lo);position:relative;z-index:40}
   #input{flex:1;min-width:80px;background:rgba(255,255,255,.05);
     border:1px solid rgba(255,255,255,.10);color:var(--text);
     border-radius:var(--r-ctl);padding:11px 16px;font:13.5px/1.4 inherit;
@@ -533,7 +534,7 @@
     #btn-send{order:11}
     .chip{max-width:150px;height:38px}
     .iconbtn{width:38px;height:38px;font-size:16px}
-    #eq{height:18px;margin-bottom:-12px}
+    #eq{height:16px;margin-bottom:-8px}
     .pop{min-width:min(300px,calc(100vw - 32px));
       max-height:min(66vh,calc(100dvh - 150px))}
   }
@@ -3024,6 +3025,244 @@ eqFrame();
   applyLang(document.body);
   mo.observe(document.body, {childList:true, subtree:true});
   applyMob();
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   ГЛАЗА САЙКИ — кнопка 👁 в шапке и её меню (2026-07-25)
+
+   Тут только интерфейс. Вся логика и все предохранители — на сервере
+   (server/vision.py): тумблер, чёрный список окон, намерение в фразе.
+   Наблюдение включается ТОЛЬКО отсюда, руками владельца: это единственный
+   режим, где Сайка смотрит на экран без просьбы.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (url, body) => {
+    try{
+      const r = await fetch(url, body === undefined ? {} : {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body)});
+      return await r.json();
+    }catch(e){ return {error:String(e)}; }
+  };
+
+  // ── кнопка в шапке, рядом с остальными действиями ──
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap';
+  wrap.style.order = '6';
+  wrap.innerHTML =
+    '<button class="iconbtn" id="btn-eyes" title="Глаза: экран и камера">👁</button>' +
+    '<div class="pop top" id="pop-eyes" style="min-width:290px">' +
+      '<div class="title">Глаза</div>' +
+      '<div class="item" id="eyes-toggle"><span id="eyes-ic">👁</span>' +
+        '<span class="mname" id="eyes-label">…</span>' +
+        '<span class="st" id="eyes-backend"></span></div>' +
+      '<div class="title">Дисплей</div><div id="eyes-monitors"></div>' +
+      '<div class="title">Камера</div><div id="eyes-cameras"></div>' +
+      '<div class="title">Наблюдение — сама смотрит и комментирует</div>' +
+      '<div class="item" id="eyes-watch"><span id="eyes-watch-ic">🌙</span>' +
+        '<span class="mname" id="eyes-watch-label">выключено</span>' +
+        '<span class="st" id="eyes-watch-n"></span></div>' +
+      '<div style="font-size:11px;color:var(--dim);padding:2px 11px 8px;' +
+        'line-height:1.5">Реагирует, только когда картинка реально ' +
+        'изменилась. Окна из чёрного списка (банк, пароли) не снимаются ' +
+        'никогда.</div>' +
+      '<div class="title">Живое окно</div>' +
+      '<div class="item" id="eyes-live"><span id="eyes-live-ic">📹</span>' +
+        '<span class="mname" id="eyes-live-label">Показать, что видит камера</span></div>' +
+      '<img id="eyes-stream" style="display:none;width:100%;border-radius:12px;' +
+        'margin:6px 0;border:1px solid var(--border);background:#000">' +
+      '<div class="title">Проверка</div>' +
+      '<div class="item" id="eyes-shot">📷 <span class="mname">Пробный кадр</span></div>' +
+      '<div class="item" id="eyes-retest">🔄 <span class="mname">Перепроверить камеру</span></div>' +
+      '<img id="eyes-preview" style="display:none;width:100%;border-radius:12px;' +
+        'margin:6px 0;border:1px solid var(--border)">' +
+      '<div id="eyes-err" style="font-size:11px;color:var(--err);' +
+        'padding:0 11px 8px;white-space:normal;word-break:break-word"></div>' +
+    '</div>';
+
+  const header = document.querySelector('header');
+  header.insertBefore(wrap, $id('btn-board') || header.lastChild);
+
+  const btn = $id('btn-eyes'), pop = $id('pop-eyes');
+  let ST = {};
+
+  // ── закрытие по клику мимо, как у остальных меню ──
+  btn.onclick = e => {
+    e.stopPropagation();
+    const show = !pop.classList.contains('show');
+    document.querySelectorAll('.pop.show').forEach(p => p.classList.remove('show'));
+    if(show){ pop.classList.add('show'); refresh(); }
+    else closeMenu();
+  };
+  pop.onclick = e => e.stopPropagation();
+  function closeMenu(){ pop.classList.remove('show'); liveStop(); }
+  document.addEventListener('click', closeMenu);
+
+  function paint(){
+    const on = !!ST.enabled;
+    btn.textContent = on ? '👁' : '🚫';
+    btn.style.opacity = on ? '1' : '.55';
+    btn.classList.toggle('active', on);
+    btn.title = on ? 'Глаза включены — экран и камера'
+                   : 'Глаза выключены — Сайка не видит';
+    $id('eyes-label').textContent = on ? 'Глаза включены' : 'Глаза выключены';
+    $id('eyes-ic').textContent = on ? '👁' : '🚫';
+    $id('eyes-toggle').classList.toggle('sel', on);
+    const b = $id('eyes-backend');
+    b.textContent = ST.screen_backend || (on ? 'захват не проверен' : '');
+    b.className = 'st' + (ST.screen_backend ? ' ok' : '');
+
+    const w = !!ST.watch_on;
+    $id('eyes-watch-ic').textContent = w ? '🔴' : '🌙';
+    $id('eyes-watch-label').textContent = w
+      ? ('смотрит: ' + (ST.watch_src || '').replace('screen','экран')
+                                           .replace('camera','камера'))
+      : 'выключено';
+    $id('eyes-watch').classList.toggle('sel', w);
+    $id('eyes-watch-n').textContent = ST.watch_events
+      ? (ST.watch_events + ' реакц.') : '';
+
+    // список дисплеев
+    const mons = $id('eyes-monitors'); mons.innerHTML = '';
+    (ST.monitors || []).forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'item' + (m.id === ST.monitor ? ' sel' : '');
+      el.innerHTML = '🖥 <span class="mname">' + m.name + '</span>' +
+        '<span class="st">' + (m.w ? m.w + '×' + m.h : '') + '</span>';
+      el.onclick = () => set({monitor: m.id});
+      mons.appendChild(el);
+    });
+    if(!(ST.monitors || []).length)
+      mons.innerHTML = '<div class="title">дисплеи не найдены</div>';
+
+    // список камер. Первым пунктом — выключатель: у вебки горит лампочка,
+    // и «выбрать другую» это не то же самое, что «не смотреть вовсе».
+    const cams = $id('eyes-cameras'); cams.innerHTML = '';
+    const off = document.createElement('div');
+    // fallback на camera_index: если сервер ещё не перезапущен, поля
+    // camera_on в ответе нет, и без этого «выключено» залипало навсегда
+    const camOff = (ST.camera_on === undefined)
+      ? !(Number(ST.camera_index) >= 0) : !ST.camera_on;
+    off.className = 'item' + (camOff ? ' sel' : '');
+    off.innerHTML = '🚫 <span class="mname">Камера выключена</span>' +
+      (camOff ? '<span class="st">только экран</span>' : '');
+    off.onclick = () => set({camera: -1});
+    cams.appendChild(off);
+    // Список DirectShow полон виртуальных устройств (Meta Quest Link, OBS,
+    // NVIDIA Broadcast): они перечисляются всегда, но открываются только
+    // когда их программа запущена. Помечаем то, что уже пробовали.
+    const probe = ST.camera_probe || {};
+    (ST.cameras || []).forEach(c => {
+      const el = document.createElement('div');
+      const on = !camOff && c.id === ST.camera_index;
+      const pr = probe[String(c.id)];
+      let tag = '';
+      if(pr && pr.black)       tag = '<span class="st" style="color:var(--warn)">чёрный кадр</span>';
+      else if(on && ST.camera_live) tag = '<span class="st ok">● снимает</span>';
+      else if(pr && pr.ok)     tag = '<span class="st ok">рабочая</span>';
+      else if(pr && !pr.ok)    tag = '<span class="st bad">недоступна</span>';
+      el.className = 'item' + (on ? ' sel' : '');
+      el.style.opacity = (pr && !pr.ok) ? '.55' : '';
+      el.innerHTML = '📸 <span class="mname">' + c.name + '</span>' + tag;
+      el.title = (pr && !pr.ok) ? pr.error : '';
+      el.onclick = () => set({camera: c.id});
+      cams.appendChild(el);
+    });
+    if(!(ST.cameras || []).length)
+      cams.insertAdjacentHTML('beforeend',
+        '<div class="title">камеры не найдены — подключи и открой меню заново</div>');
+
+    // «не установлено» — это не ошибка захвата, а инструкция. Показываем
+    // её жёлтым и отдельно от красных ошибок (2026-07-25).
+    const hint = ST.hint || '';
+    const cur = (ST.camera_probe || {})[String(ST.camera_index)];
+    const camMsg = (!camOff && cur && (!cur.ok || cur.black))
+      ? ('камера «' + ((ST.cameras || []).find(c => c.id === ST.camera_index)
+          || {name: ST.camera_index}).name + '»: ' + cur.error)
+      : '';
+    const err = [ST.error, camMsg, ST.screen_err, ST.cam_err]
+      .filter(Boolean).filter(x => x !== hint).join(' · ');
+    const box = $id('eyes-err');
+    if(hint){
+      box.style.color = 'var(--warn)';
+      box.textContent = '⚠ ' + hint;
+    }else{
+      box.style.color = 'var(--err)';
+      box.textContent = err || '';
+    }
+  }
+
+  async function refresh(){ ST = await api('/api/vision/state'); paint(); }
+  async function set(payload){
+    if(payload.camera !== undefined) liveStop();   // источник сменился
+    ST = await api('/api/vision/set', payload);
+    paint();
+    const pr = (ST.camera_probe || {})[String(payload.camera)];
+    if(payload.camera !== undefined && payload.camera >= 0
+       && (!pr || pr.ok)) liveStart();
+  }
+
+  $id('eyes-toggle').onclick = () => set({enabled: !ST.enabled});
+  $id('eyes-watch').onclick = () => set({
+    watch: !ST.watch_on,
+    source: (ST.watch_src || 'screen').startsWith('cam') ? 'camera' : 'screen'
+  });
+  // Живое окно: обычный <img> на multipart-поток. Гасим его при закрытии
+  // меню и при выключении камеры — иначе поток держал бы вебку открытой
+  // (и её лампочку зажжённой) всё время работы Сайки.
+  let liveOn = false, liveSrc = 'camera';
+  function liveStop(){
+    liveOn = false;
+    const im = $id('eyes-stream');
+    im.removeAttribute('src'); im.style.display = 'none';
+    $id('eyes-live-ic').textContent = '📹';
+    $id('eyes-live-label').textContent = 'Показать, что видит камера';
+    $id('eyes-live').classList.remove('sel');
+  }
+  function liveStart(){
+    const src = liveSrc = ST.camera_on ? 'camera' : 'screen';
+    const im = $id('eyes-stream');
+    im.src = '/api/vision/mjpeg?source=' + src + '&t=' + Date.now();
+    im.style.display = 'block';
+    im.onerror = () => { $id('eyes-err').textContent =
+      'поток не пошёл — проверь, включены ли глаза и выбранная камера';
+      liveStop(); };
+    liveOn = true;
+    $id('eyes-live-ic').textContent = '⏹';
+    $id('eyes-live-label').textContent =
+      'Скрыть окно (' + (src === 'camera' ? 'камера' : 'экран') + ')';
+    $id('eyes-live').classList.add('sel');
+  }
+  $id('eyes-live').onclick = () => liveOn ? liveStop() : liveStart();
+  // источник вроде Iriun оживает, когда запускают приложение на телефоне —
+  // тогда прошлая проба уже неверна, надо уметь спросить заново
+  $id('eyes-retest').onclick = async () => {
+    $id('eyes-err').textContent = 'проверяю…';
+    liveStop();
+    await set({camera: ST.camera_index});
+  };
+
+  $id('eyes-shot').onclick = async () => {
+    const img = $id('eyes-preview');
+    $id('eyes-err').textContent = 'снимаю…';
+    const src = liveOn ? liveSrc
+      : ((ST.watch_src || 'screen').startsWith('cam') && ST.camera_on
+         ? 'camera' : 'screen');
+    const r = await api('/api/vision/shot', {source: src});
+    if(r.ok){
+      img.src = r.image; img.style.display = 'block';
+      $id('eyes-err').textContent = '';
+      refresh();
+    }else{
+      img.style.display = 'none';
+      $id('eyes-err').textContent = r.error || 'не получилось';
+    }
+  };
+
+  // первый опрос — тихо, чтобы кнопка сразу показывала правду
+  refresh();
 })();
 </script>
 </body>

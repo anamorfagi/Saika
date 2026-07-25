@@ -309,6 +309,18 @@ _MUTATING_INTENT = {
     "workshop_create": r"сдела|созда|сгенери|нарису|сверста|сайт|страниц|"
                        r"макет|визуализ|график|картинк|svg|html|напиши код|"
                        r"скрипт|программ",
+    # ЗРЕНИЕ (2026-07-25). Захват экрана ничего не МЕНЯЕТ на машине, но
+    # ЧИТАЕТ приватное: переписку, пароли, банк. Поэтому под тем же замком,
+    # что запись файлов — смотреть только по явной просьбе человека. Второй
+    # замок (чёрный список окон + тумблер 👁) живёт в server/vision.py.
+    "look_screen": r"экран|монитор|скрин|десктоп|рабоч\w+ стол|посмотр|"
+                   r"погляд|глян|взглян|смотр|видишь|окно|что у меня|"
+                   # «проверь, получилось?» — человек просит убедиться в
+                   # результате работы, а убедиться можно только посмотрев
+                   r"провер|получил|результат|сработал|вышло|как там|"
+                   r"открыл|запустил|работает ли",
+    "look_camera": r"камер|вебк|webcam|объектив|посмотр|погляд|глян|"
+                   r"взглян|смотр|видишь|на меня|комнат|выгляж",
 }
 
 
@@ -440,6 +452,15 @@ def schemas() -> list:
     # мастерская — только сильным (сайты/SVG/скрипты в workshop/)
     if tier == "full" and CFG.get("tools.workshop", True):
         local = local + [_WORKSHOP_SCHEMA]
+    # глаза: экран и вебки. Намеренно БЕЗ gating по tier — но основной путь
+    # зрения не здесь, а в main.py (vision.auto_look подкладывает кадр в
+    # запрос сам), потому что большинство наших моделей не умеет tool-calls.
+    if CFG.get("vision.enabled", True) and CFG.get("vision.tools", True):
+        try:
+            from server import vision as _vision
+            local = local + list(_vision.SCHEMAS)
+        except Exception as e:
+            log.debug("vision-схемы недоступны: %s", e)
     # файловые руки (рабочая папка files.roots) — только сильным моделям;
     # если у HandsPC вдруг есть инструменты с теми же именами, он главнее
     if tier == "full" and CFG.get("files.enabled", True):
@@ -450,7 +471,16 @@ def schemas() -> list:
                       if s["function"]["name"] not in hands_names]
         except Exception as e:
             log.debug("file_hands недоступен: %s", e)
-    return local + hands
+    out = local + hands
+    # ИМПУЛЬС (2026-07-25, живой инцидент): раньше опасные инструменты
+    # ОТДАВАЛИСЬ модели, а блокировались уже при вызове — в call(). Но у
+    # поиска в main.py есть свой обходной путь мимо call(), и Сайка на
+    # внутреннем импульсе открыла окно браузера и загуглила себя, хотя её
+    # никто не просил. Правильнее не давать соблазна: в импульсе модель
+    # видит ТОЛЬКО то, что ей и так разрешено (своё окно, дев-доска, тело).
+    if IMPULSE_MODE.get("on"):
+        out = [x for x in out if x["function"]["name"] in _IMPULSE_SAFE]
+    return out
 
 
 def _local_call(name: str, arguments) -> str:
@@ -563,6 +593,13 @@ def call(name: str, arguments) -> str:
         except Exception as e:
             log.exception("workshop_create")
             return f"мастерская споткнулась: {e}"
+    if name in ("look_screen", "look_camera"):
+        try:
+            from server import vision as _vision
+            return _vision.call(name, arguments)
+        except Exception as e:
+            log.exception("%s", name)
+            return f"зрение споткнулось: {e}"
     if name == "shutdown_self":
         if not CFG.get("idle.allow_self_shutdown", True):
             return "самовыключение отключено в настройках"
