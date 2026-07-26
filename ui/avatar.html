@@ -29,7 +29,13 @@ VRM-файла, three-vrm симулирует их сама (vrm.update).
 <title>Сайка — аватар</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:transparent}
-  #hint{position:fixed;left:10px;bottom:8px;color:#8a93a5;opacity:.8;
+  #flat{position:fixed;inset:0;display:none;align-items:flex-end;
+  justify-content:center;pointer-events:none;overflow:hidden}
+#flat.on{display:flex}
+#flat img{max-width:100%;max-height:100%;object-fit:contain;
+  transform-origin:50% 100%;will-change:transform;
+  filter:drop-shadow(0 12px 40px rgba(0,0,0,.5))}
+#hint{position:fixed;left:10px;bottom:8px;color:#8a93a5;opacity:.8;
     font:12px system-ui;background:rgba(15,17,21,.55);padding:4px 8px;
     border-radius:6px;transition:opacity .5s}
   #hint.gone{opacity:0}
@@ -46,6 +52,10 @@ VRM-файла, three-vrm симулирует их сама (vrm.update).
 </head>
 <body>
 <div id="hint">загружаю модель…</div>
+<!-- 2D-АВАТАР (2026-07-26). Библиотека теперь держит и плоские модели, а
+     three.js их не рисует. Спрайт живёт отдельным слоем поверх сцены: пока
+     надета 3D-модель, слой просто скрыт и ничего не стоит. -->
+<div id="flat"><img id="flat-img" alt=""></div>
 <script>
 /* любые ошибки скрипта/модулей — на экран, а не молча в консоль */
 addEventListener('error', e=>{ const h=document.getElementById('hint');
@@ -123,8 +133,11 @@ let vrm = null, mixer = null, currentOutfit = 'default', loadingModel = false;
 const loader = new GLTFLoader();
 loader.register(p => new VRMLoaderPlugin(p));
 loader.register(p => new VRMAnimationLoaderPlugin(p));
-function loadModel(url, label){
-  if (loadingModel) return;           // не грузить второй раз поверх первой
+function loadModel(url, label, force){
+  // force — смена модели из библиотеки: она может прийти, пока ещё грузится
+  // предыдущая, и тогда замок молча съедал бы запрос (человек выбирает
+  // модель за моделью, а на экране всё та же).
+  if (loadingModel && !force) return;
   loadingModel = true;
   hint.classList.remove('gone'); hint.textContent = 'загружаю '+(label||'модель')+'…';
   loader.load(url, gltf => {
@@ -137,6 +150,7 @@ function loadModel(url, label){
     VRMUtils.rotateVRM0(vrm);          // VRM0.0 смотрит в -Z — разворачиваем
     scene.add(vrm.scene);
     mixer = new THREE.AnimationMixer(vrm.scene);
+    calibrateArms();                   // куда у ЭТОЙ модели опускаются руки
     applyView();                       // сохранённая позиция/зум
     const s = parseFloat(qs.get('scale')||'1'); if (s!==1) vrm.scene.scale.setScalar(s);
     hint.textContent = 'Сайка на месте';
@@ -152,11 +166,70 @@ function loadOutfit(name){
   name = (name||'default').toLowerCase();
   if (name === currentOutfit) return;
   currentOutfit = name;
-  loadModel(name === 'default' ? '/avatar/model.vrm'
-                                : '/avatar/outfits/'+encodeURIComponent(name)+'.vrm',
-            'наряд «'+name+'»');
+  // базовой модели анти-кэш нужен по той же причине, что и при смене
+  // модели: адрес один, файл за ним разный
+  loadModel(name === 'default'
+              ? '/avatar/model.vrm?v='+Date.now()
+              : '/avatar/outfits/'+encodeURIComponent(name)+'.vrm',
+            'наряд «'+name+'»', true);
 }
-loadModel('/avatar/model.vrm');
+/* ---------- ЧТО СЕЙЧАС НАДЕТО: 3D или 2D (2026-07-26) ----------
+   Библиотека аватаров держит и плоские модели. Спрашиваем сервер, кто
+   надет, и включаем соответствующий путь. 3D работает ровно как раньше —
+   ни строчки его логики не тронуто. */
+const flat = document.getElementById('flat');
+const flatImg = document.getElementById('flat-img');
+let mode = '3d', flatCfg = {sway: 1, breath: 1};
+
+async function applyCurrent(){
+  let cur = null;
+  try{ cur = await (await fetch('/api/avatar/current')).json(); }
+  catch(e){ cur = null; }
+  const st = (cur && cur.settings) || {};
+  flatCfg.sway = st['avatar.2d.sway'] != null ? +st['avatar.2d.sway'] : 1;
+  flatCfg.breath = st['avatar.2d.breath'] != null ? +st['avatar.2d.breath'] : 1;
+  const want = (cur && cur.kind) || '3d';
+  // ?v= — у модели один и тот же адрес, а файл за ним меняется; без метки
+  // браузер показывал бы прежнюю из кэша
+  const bust = '?v=' + Date.now();
+  if (want === '2d'){
+    mode = '2d';
+    flat.classList.add('on');
+    renderer.domElement.style.display = 'none';
+    // ?v= — чтобы после смены модели браузер не показал прежнюю из кэша
+    flatImg.src = '/avatar/sprite' + bust;
+    hint.textContent = 'Сайка на месте (2D)';
+    setTimeout(()=>hint.classList.add('gone'), 1200);
+  } else {
+    mode = '3d';
+    flat.classList.remove('on');
+    renderer.domElement.style.display = '';
+    // сменили базовую модель — наряд «default» снова актуален, иначе
+    // loadOutfit('default') решил бы, что менять нечего
+    currentOutfit = 'default';
+    loadModel('/avatar/model.vrm' + bust, (cur && cur.name) || 'модель', true);
+  }
+}
+applyCurrent();
+
+/* Процедурная «физика» плоского аватара. Настоящей симуляции костей у
+   картинки быть не может — есть один спрайт. Но дыхание в покое и отклик
+   на собственный голос дают ровно тот эффект живости, ради которого
+   физику и просят: она перестаёт быть наклейкой. */
+let flatPhase = 0;
+function flatTick(dt){
+  if (mode !== '2d') return;
+  flatPhase += dt;
+  const lvl = audioLevel || 0;
+  const breath = Math.sin(flatPhase * 1.1) * 0.006 * flatCfg.breath;
+  const talk = Math.sin(flatPhase * 9.5) * lvl * 0.012 * flatCfg.sway;
+  const lean = Math.sin(flatPhase * 0.55) * 0.7 * flatCfg.sway
+             + lvl * 1.4 * flatCfg.sway;
+  const rise = -lvl * 6 * flatCfg.sway;
+  flatImg.style.transform =
+    'translateY(' + rise.toFixed(2) + 'px) rotate(' + lean.toFixed(2) + 'deg)' +
+    ' scale(' + (1 + breath + talk).toFixed(4) + ')';
+}
 
 /* ---------- БИБЛИОТЕКА АНИМАЦИЙ (.vrma) ----------
    Файлы кладутся в models/avatar/anims/*.vrma (сервер отдаёт список).
@@ -228,7 +301,47 @@ addEventListener('keydown', e=>{
 const R = THREE.MathUtils.degToRad;
 function bone(name){ return vrm && vrm.humanoid ? vrm.humanoid.getNormalizedBoneNode(name) : null; }
 let ROT_K = 1, EXPR_K = 1;      // пересчитываются каждый кадр в loop() из dt
+
+/* ЗНАК ПОВОРОТА РУК (2026-07-26, живой баг: «у нескольких моделей руки
+   вверх»). Вся поза рук строится поворотом плеча по Z: +66° опускает левую
+   руку из T-позы, -64° правую. На нашей исходной модели это верно, но у
+   части чужих VRM нормализованный риг собран с другой ориентацией оси, и
+   тот же поворот УВОДИТ РУКИ ВВЕРХ. Гадать по версии VRM бесполезно —
+   встречается и там и там.
+
+   Поэтому не гадаем, а МЕРЯЕМ: после загрузки пробно поворачиваем плечо и
+   смотрим, куда уехала кисть. Уехала выше плеча — значит знак обратный, и
+   дальше все повороты рук у ЭТОЙ модели идут с минусом. Одна проба на
+   загрузку, дальше бесплатно. */
+let armSign = 1;
+const ARM_Z = /(UpperArm|LowerArm|Hand)$/;
+function calibrateArms(){
+  armSign = 1;
+  if (!vrm || !vrm.humanoid) return;
+  const ua = bone('leftUpperArm');
+  if (!ua) return;
+  const save = ua.rotation.z;
+  ua.rotation.z = R(66);
+  try{
+    vrm.humanoid.update();
+    vrm.scene.updateWorldMatrix(true, true);
+    const rawU = vrm.humanoid.getRawBoneNode('leftUpperArm');
+    const rawH = vrm.humanoid.getRawBoneNode('leftHand')
+              || vrm.humanoid.getRawBoneNode('leftLowerArm');
+    if (rawU && rawH){
+      const a = new THREE.Vector3(), b = new THREE.Vector3();
+      rawU.getWorldPosition(a); rawH.getWorldPosition(b);
+      // кисть выше плеча — рука задрана, значит наш плюс для неё минус
+      if (b.y > a.y + 0.01) armSign = -1;
+    }
+  }catch(e){ /* риг без сырых костей — оставляем как есть */ }
+  ua.rotation.z = save;
+  try{ vrm.humanoid.update(); }catch(e){}
+  if (armSign < 0) console.log('avatar: у модели обратный знак поворота рук');
+}
+
 function setRot(name, x, y, z){
+  if (armSign < 0 && ARM_Z.test(name)) z = -z;
   const b = bone(name); if (!b) return;
   if (ROT_K >= 0.999){ b.rotation.set(x, y, z); return; }
   b.rotation.set(b.rotation.x + (x-b.rotation.x)*ROT_K,
@@ -431,6 +544,13 @@ function play(name){
   active = g; activeT0 = performance.now()/1000;   // старые эмоции сами угаснут (декей в loop)
 }
 
+/* Клик внутри окна аватара — сообщаем главной странице, чтобы она закрыла
+   свои выпадающие меню. Из iframe события мыши наружу не всплывают. */
+addEventListener('pointerdown', ()=>{
+  try{ if (parent !== window) parent.postMessage({saika:'pointerdown'}, '*'); }
+  catch(e){}
+}, true);
+
 /* ---------- связь с Сайкой ---------- */
 function connectWS(){
   const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
@@ -438,6 +558,12 @@ function connectWS(){
     const m = JSON.parse(ev.data);
     if (m.type === 'avatar_gesture'){ flash('жест от Сайки: '+m.gesture, 1500); play(m.gesture); }
     else if (m.type === 'avatar_outfit') loadOutfit(m.outfit);
+    // сменили модель или покрутили ручки в панели — перечитываем, что надето
+    else if (m.type === 'avatar_reload') applyCurrent();
+    else if (m.type === 'avatar_settings'){
+      if (m['avatar.2d.sway'] != null) flatCfg.sway = +m['avatar.2d.sway'];
+      if (m['avatar.2d.breath'] != null) flatCfg.breath = +m['avatar.2d.breath'];
+    }
   }catch(e){} };
   ws.onclose = ()=> setTimeout(connectWS, 2000);   // сервер перезапустили — переподключаемся
   ws.onerror = ()=> ws.close();
@@ -655,6 +781,7 @@ function loop(){
 
     vrm.update(dt);            // spring bones: физика волос/юбки — здесь
   }
+  flatTick(dt);
   renderer.render(scene, camera);
 }
 loop();

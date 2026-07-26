@@ -1,5 +1,5 @@
 {
-  "updated": "2026-07-26T01:54:25",
+  "updated": "2026-07-26T22:10:54",
   "items": [
     {
       "id": "s01",
@@ -651,186 +651,6 @@
     }
   ],
   "log": [
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:34",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
     {
       "ts": "2026-07-23T10:00:35",
       "text": "⚠ stt: работаю на faster_whisper",
@@ -1650,14 +1470,194 @@
       "ts": "2026-07-26T01:54:25",
       "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T18:42:02",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T18:56:10",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:01:15",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:01:37",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:02:00",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:05:59",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:06:05",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:06:09",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:06:15",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:06:48",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:06:56",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:07:33",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:07:57",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:08:01",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:08:16",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:08:45",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:08:49",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:09:17",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:09:44",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:09:53",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:10:04",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:10:13",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:10:20",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:26:17",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:26:38",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:29:53",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:32:33",
+      "text": "⚠ llm: выключила ей инструменты; ответы станут вдвое быстрее, поиск и руки возьмёт на себя сервер",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:36:12",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:37:01",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T19:37:27",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T21:56:48",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T21:57:04",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T22:03:36",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T22:04:25",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T22:10:36",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-26T22:10:54",
+      "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "основной бэкенд не ответил: 429 от https://api.moonshot.ai/v1: {\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}",
-      "count": 78,
+      "text": "основной бэкенд не ответил: 403 от https://models.github.ai/inference: {\"error\":{\"code\":\"no_access\",\"message\":\"No access to model: openai/gpt-4.1-mini\",\"details\":\"No access to model: openai/gpt-4.1-mini\"}}\n",
+      "count": 113,
       "resolved": false,
-      "last": "2026-07-23T19:24"
+      "last": "2026-07-26T22:10"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
@@ -1718,6 +1718,12 @@
       "count": 11,
       "resolved": true,
       "last": "2026-07-25T13:00"
+    },
+    "tts.omni": {
+      "text": "«omni» упал с незнакомой мне ошибкой.",
+      "count": 1,
+      "resolved": false,
+      "last": "2026-07-26T18:42"
     }
   }
 }

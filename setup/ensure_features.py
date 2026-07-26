@@ -57,6 +57,35 @@ FEATURES = {
         "extra_modules": ["dxcam", "windows_capture", "pygrabber"],
         "extra_pip": ["dxcam[cv2]", "windows-capture", "pygrabber"],
     },
+    "piper": {
+        "title": "Голос Piper (офлайн, MIT)",
+        # onnxruntime, а не torch — ставится за секунды и не тянет CUDA.
+        # Русские голоса качаются при первом запуске в models/piper.
+        "core_modules": ["piper"],
+        "core_pip": ["piper-tts"],
+        "extra_modules": [],
+        "extra_pip": [],
+    },
+    "pc": {
+        "title": "Руки в Windows: программы, окна, звук, вкладки",
+        # Окна и запуск программ работают на голом ctypes — без единой
+        # зависимости. Здесь только то, без чего часть команд деградирует:
+        # keyboard нужен вкладкам браузера, pycaw — точному проценту
+        # громкости (без него остаётся «громче/тише» клавишами).
+        "core_modules": [],
+        "core_pip": [],
+        "extra_modules": ["keyboard", "pycaw"],
+        "extra_pip": ["keyboard", "pycaw"],
+    },
+    "phone": {
+        "title": "Доступ с телефона (QR)",
+        # Без qrcode всё работает, просто адрес придётся набирать руками —
+        # поэтому библиотека в extra, а не в core.
+        "core_modules": [],
+        "core_pip": [],
+        "extra_modules": ["qrcode"],
+        "extra_pip": ["qrcode"],
+    },
     "pdf": {
         "title": "Чтение PDF-чертежей",
         "core_modules": ["fitz"],

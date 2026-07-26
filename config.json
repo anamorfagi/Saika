@@ -1,8 +1,9 @@
 {
   "server": {
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "port": 8765,
-    "auto_open_browser": true
+    "auto_open_browser": true,
+    "token": "DRbZ5FaL"
   },
   "llm": {
     "backend": "lmstudio",
@@ -14,14 +15,57 @@
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "kimi",
-      "base_url": "https://api.moonshot.ai/v1",
-      "model": "kimi-k3"
+      "provider": "mistral",
+      "base_url": "https://api.mistral.ai/v1",
+      "model": "mistral-medium-3-5"
     },
     "tools_broken": [
+      "gemma-4-e4b-it",
       "google/gemma-4-12b-qat",
       "llama3.2:latest",
       "zai-org/glm-4.6v-flash"
+    ],
+    "sampling": {
+      "enabled": false,
+      "preset": "off",
+      "top_p": 0.95,
+      "top_k": 40,
+      "min_p": 0.05,
+      "typical_p": 1.0,
+      "repeat_penalty": 1.0,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0,
+      "xtc_probability": 0.0,
+      "xtc_threshold": 0.1,
+      "dry_multiplier": 0.0,
+      "dry_base": 1.75,
+      "dry_allowed_length": 2,
+      "dynatemp_range": 0.0,
+      "dynatemp_exponent": 1.0,
+      "stop": [],
+      "seed": -1
+    },
+    "cloud_saved": [
+      {
+        "provider": "github",
+        "base_url": "https://models.github.ai/inference",
+        "model": "openai/gpt-4.1-mini"
+      },
+      {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai/v1",
+        "model": "mistral-medium-3-5"
+      },
+      {
+        "provider": "gigachat",
+        "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
+        "model": "GigaChat-2-Pro"
+      },
+      {
+        "provider": "kimi",
+        "base_url": "https://api.moonshot.ai/v1",
+        "model": "kimi-k3"
+      }
     ]
   },
   "tools": {
@@ -112,6 +156,7 @@
     "voice_ref_text": "Я проснулась раньше будильника, когда комната всё ещё была укутана синим рассветом. Несколько секунд я просто слушала своё дыхание и ощущала тихую тяжесть грядущего дня. Раньше утра пугали меня, слишком много ожиданий, слишком много незавершённых мыслей. Теперь они кажутся чистыми страницами. Я сварила кофе, наблюдая, как поднимается пар, словно что-то живое, и улыбнулась этому маленькому ритуалу. Снаружи город медленно просыпался, притворяясь спокойным. Я надела куртку и вышла в холодный воздух, позволяя ему прояснить голову. Я не знаю точно, куда иду, и, к моему удивлению, это больше не тревожит. Я поняла, что движение вперёд не всегда требует идеального плана. Иногда достаточно доверять собственным шагам, даже если они не уверены.",
     "fallback_order": [
       "qwen3",
+      "piper",
       "silero",
       "edge"
     ],
@@ -124,12 +169,43 @@
       "optimize": true
     },
     "silero": {
-      "speaker": "xenia",
-      "sample_rate": 48000
+      "model": "v5_cis_base",
+      "speaker": "",
+      "sample_rate": 48000,
+      "_note": "v5_cis_base — MIT. Прежний v4_ru под CC-BY-NC: коммерческое использование запрещено."
     },
     "edge": {
       "voice": "ru-RU-SvetlanaNeural"
-    }
+    },
+    "piper": {
+      "voice": "irina"
+    },
+    "xtts": {
+      "language": "ru",
+      "sample_rate": 24000
+    },
+    "f5ru": {
+      "port": 8771,
+      "venv": ".venv_f5",
+      "setup": "setup/install_f5.bat"
+    },
+    "hidden": [
+      "xtts",
+      "f5ru"
+    ],
+    "_hidden_note": "xtts и f5ru требуют СВОЕГО venv: coqui-tts и F5-TTS пиннут старые transformers/numpy и в общем окружении ломают Qwen3-TTS (та же грабля, что с Voxtral). Убирать из hidden только после setup/install_xtts.bat или install_f5.bat.",
+    "omni": {
+      "port": 8772,
+      "venv": ".venv_omni",
+      "worker": "workers/omnivoice_worker.py",
+      "setup": "setup/install_omnivoice.bat",
+      "model": "k2-fsa/OmniVoice",
+      "language": "ru",
+      "steps": 16,
+      "timeout_s": 120
+    },
+    "emotion": true,
+    "emotion_instruct": ""
   },
   "memory": {
     "db_path": "data/saika_memory.db",
@@ -266,9 +342,10 @@
       }
     },
     "web": {
-      "model": "visual/Saika_v1.vrm",
+      "model": "models/avatar/library/blueandorangebear.vrm",
       "anims_dir": "models/avatar/anims",
-      "outfits_dir": "models/avatar/outfits"
+      "outfits_dir": "models/avatar/outfits",
+      "kind": "3d"
     }
   },
   "vision": {
@@ -298,6 +375,28 @@
     "camera_idle_release_s": 60,
     "default_source": "screen",
     "preview_fps": 10,
-    "preview_max_s": 600
+    "preview_max_s": 600,
+    "camera_autofallback": true,
+    "watch_speaks": true
+  },
+  "lore": {
+    "path": "data/lorebook.json",
+    "depth": 4,
+    "max_entries": 6
+  },
+  "prompt": {
+    "order": [
+      "lore",
+      "memory",
+      "devboard",
+      "search",
+      "image",
+      "vision",
+      "tone",
+      "tools",
+      "browser",
+      "other",
+      "notes"
+    ]
   }
 }

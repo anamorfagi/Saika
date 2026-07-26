@@ -65,6 +65,82 @@ def _cloud() -> dict:
             "model": c.get("model", ""), "key": key}
 
 
+# ─────────────── СПИСОК НАСТРОЕННЫХ ОБЛАЧНЫХ МОДЕЛЕЙ ───────────────
+# 2026-07-26, жалоба владельца: «добавил GigaChat, потом Mistral, потом
+# GitHub Models — а модели куда-то исчезли». Ничего не исчезало: слот
+# llm.cloud.{provider,base_url,model} ОДИН, и каждое «Сохранить и включить»
+# затирало предыдущее. Ключи-то хранились по-провайдерно и уцелели, а вот
+# сама пара адрес+модель — нет. Теперь настроенные облачные модели копятся
+# списком и показываются в общем перечне наравне с локальными, между ними
+# можно переключаться кликом.
+_CLOUD_SAVED = "llm.cloud_saved"
+
+
+def cloud_saved() -> list[dict]:
+    """Все настроенные облачные модели. Текущую подмешиваем сюда же —
+    так в список попадают и те, что настроены до появления реестра."""
+    out, seen = [], set()
+    for e in (CFG.get(_CLOUD_SAVED, []) or []):
+        if not isinstance(e, dict):
+            continue
+        key = ((e.get("base_url") or "").rstrip("/"), e.get("model") or "")
+        if not key[1] or key in seen:
+            continue
+        seen.add(key)
+        out.append({"provider": e.get("provider", ""),
+                    "base_url": key[0], "model": key[1]})
+    c = CFG.get("llm.cloud", {}) or {}
+    key = ((c.get("base_url") or "").rstrip("/"), c.get("model") or "")
+    if key[1] and key not in seen:
+        out.append({"provider": c.get("provider", ""),
+                    "base_url": key[0], "model": key[1]})
+    return out
+
+
+def remember_cloud(provider: str, base_url: str, model: str):
+    """Запомнить настроенную облачную модель (без ключа — он в secrets)."""
+    if not model:
+        return
+    base = (base_url or "").rstrip("/")
+    rest = [e for e in cloud_saved()
+            if not (e["base_url"] == base and e["model"] == model)]
+    # свежая — первой: чаще всего человек только что её и настраивал
+    CFG.set(_CLOUD_SAVED, [{"provider": provider or "", "base_url": base,
+                            "model": model}] + rest[:19])
+
+
+def forget_cloud(model: str, base_url: str | None = None) -> str:
+    """Убрать облачную модель из списка (крестик ✕ в перечне моделей).
+    Ключ провайдера НЕ трогаем: у одного провайдера моделей много."""
+    base = (base_url or "").rstrip("/")
+    rest = [e for e in cloud_saved()
+            if e["model"] != model or (base and e["base_url"] != base)]
+    CFG.set(_CLOUD_SAVED, rest)
+    # выкинули ту, что сейчас активна — переезжаем на первую оставшуюся,
+    # иначе бэкенд «cloud» остался бы указывать в пустоту
+    c = CFG.get("llm.cloud", {}) or {}
+    if c.get("model") == model:
+        if rest:
+            use_cloud(rest[0]["model"], rest[0]["base_url"])
+        else:
+            CFG.set("llm.cloud.enabled", False)
+    return f"«{model}» убрана из списка облачных моделей"
+
+
+def use_cloud(model: str, base_url: str | None = None) -> dict:
+    """Сделать эту облачную модель текущей: подставить её адрес и
+    провайдера (а значит и её ключ из secrets.json)."""
+    base = (base_url or "").rstrip("/")
+    for e in cloud_saved():
+        if e["model"] == model and (not base or e["base_url"] == base):
+            CFG.set("llm.cloud.provider", e["provider"])
+            CFG.set("llm.cloud.base_url", e["base_url"])
+            CFG.set("llm.cloud.model", e["model"])
+            CFG.set("llm.cloud.enabled", True)
+            return e
+    return {}
+
+
 def save_cloud_key(key: str, provider: str | None = None):
     """Пишем/обновляем API-ключ в secrets.json (не трогая остальное).
     Ключ кладётся в слот СВОЕГО провайдера (cloud_keys[provider]) — у
@@ -136,10 +212,17 @@ def list_models() -> list[dict]:
                                  "reasoning": True}})
     except Exception as e:
         log.debug("locallm unavailable: %s", e)
-    # облачная модель (если включена) — показываем как выбираемую
-    c = _cloud()
-    if c["enabled"] and c["model"]:
-        out.append({"backend": "cloud", "name": c["model"], "size": None})
+    # ОБЛАЧНЫЕ: показываем ВСЕ настроенные, а не только активную. Раньше в
+    # списке была одна — та, что записана в llm.cloud прямо сейчас, — и
+    # выглядело это так, будто прежние «куда-то исчезли».
+    c = CFG.get("llm.cloud", {}) or {}
+    cur = ((c.get("base_url") or "").rstrip("/"), c.get("model") or "")
+    for e in cloud_saved():
+        out.append({"backend": "cloud", "name": e["model"], "size": None,
+                    "provider": e["provider"], "base_url": e["base_url"],
+                    "current": (e["base_url"], e["model"]) == cur,
+                    "caps": {"vision": False, "tools": True,
+                             "reasoning": False}})
     return out
 
 
@@ -519,6 +602,8 @@ def _stream_ollama(messages, model, temperature, tools=None, image=None):
             payload["options"]["num_predict"] = mt
     if tools:
         payload["tools"] = tools
+    # продвинутый сэмплинг: у Ollama он живёт в options и без XTC/DRY
+    payload["options"].update(_sampling_fields(_SAMPLING_OLLAMA))
     # think=false выключает «размышления» у reasoning-моделей (qwen3 и др.) —
     # это главный пожиратель секунд перед ответом. Модель без поддержки think
     # может ответить 400 — тогда повторяем без параметра.
@@ -604,13 +689,76 @@ def _stream_locallm(messages, model, temperature, tools=None, image=None):
                               messages, model, temperature, tools, image)
 
 
+# ─────────────────── GigaChat: токен вместо ключа ───────────────────
+# Единственный провайдер в нашем списке, где «вставь API-ключ» не работает
+# как у всех: Сбер выдаёт Authorization key, который надо МЕНЯТЬ на
+# access-токен, живущий 30 минут. Зато это единственный вариант для человека
+# из России без VPN, без карты и без зарубежного телефона — ради этого стоит
+# держать отдельную ветку.
+_GIGA_OAUTH = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+_giga = {"token": "", "exp": 0.0, "verify": True}
+
+
+def _is_gigachat(base_url: str) -> bool:
+    # Сбер развёл два адреса на один и тот же API: старый
+    # gigachat.devices.sberbank.ru и новый api.giga.chat (его теперь
+    # показывают в кабинете). Оба ходят через один OAuth и одинаково не
+    # терпят системное сообщение в середине — распознаём оба.
+    u = (base_url or "").lower()
+    return "gigachat.devices.sberbank.ru" in u or "api.giga.chat" in u
+
+
+def _gigachat_token(auth_key: str) -> str:
+    """Access-токен Сбера. Кэшируем до истечения минус минута запаса."""
+    import uuid
+    if _giga["token"] and time.time() < _giga["exp"] - 60:
+        return _giga["token"]
+    body = {"scope": CFG.get("llm.cloud.giga_scope", "GIGACHAT_API_PERS")}
+    headers = {"Authorization": "Basic " + auth_key.strip(),
+               "RqUID": str(uuid.uuid4()),
+               "Content-Type": "application/x-www-form-urlencoded"}
+    last = None
+    # Сбер отдаёт сертификат, подписанный российским УЦ: в системном
+    # хранилище Windows его может не быть, и requests падает на проверке.
+    # Сначала пробуем честно, потом без проверки — с громким предупреждением
+    # в лог, чтобы это не выглядело нормой.
+    for verify in ([True, False] if _giga["verify"] else [False]):
+        try:
+            r = requests.post(_GIGA_OAUTH, headers=headers, data=body,
+                              timeout=20, verify=verify)
+            r.raise_for_status()
+            j = r.json()
+            _giga["token"] = j.get("access_token", "")
+            # expires_at приходит в миллисекундах
+            exp = float(j.get("expires_at", 0) or 0)
+            _giga["exp"] = exp / 1000.0 if exp > 1e11 else (
+                time.time() + (exp or 1800))
+            _giga["verify"] = verify
+            if not verify:
+                log.warning("GigaChat: TLS-сертификат Сбера не проверяется "
+                            "(нет российского корневого УЦ в системе). "
+                            "Поставь сертификаты Минцифры, чтобы убрать это.")
+            log.info("GigaChat: токен получен, живёт %.0f мин",
+                     max(0, (_giga["exp"] - time.time()) / 60))
+            return _giga["token"]
+        except Exception as e:
+            last = e
+    raise LLMError(f"GigaChat не отдал токен: {last}. Проверь Authorization "
+                   f"key в меню модели → Онлайн (это длинная base64-строка "
+                   f"из кабинета Сбера, а не Client Secret отдельно).")
+
+
 def _stream_cloud(messages, model, temperature, tools=None, image=None):
-    """Онлайн-модель по API-ключу (OpenRouter/OpenAI/Groq/… — OpenAI-совместимо)."""
+    """Онлайн-модель по API-ключу (Groq/Mistral/GitHub/GigaChat/… —
+    OpenAI-совместимо)."""
     c = _cloud()
     if not c["key"]:
         raise LLMError("не задан API-ключ облачной модели — впиши его в "
                        "интерфейсе (меню модели → Онлайн) или в secrets.json")
-    yield from _stream_openai(c["base_url"], c["key"],
+    key = c["key"]
+    if _is_gigachat(c["base_url"]):
+        key = _gigachat_token(key)
+    yield from _stream_openai(c["base_url"], key,
                               messages, model, temperature, tools, image)
 
 
@@ -644,6 +792,118 @@ def is_busy(backend: str, model: str) -> bool:
 # трёх холостых запросов на каждую фразу.
 _API_QUIRKS: dict = {}
 
+# ФОРМА СООБЩЕНИЙ, а не поля запроса (2026-07-26). GigaChat отвечает
+# 422 «Invalid params: system message must be the first message» — он
+# принимает ровно ОДНО системное сообщение и только первым. У нас же вся
+# динамика хода (память, лорбук, зрение) намеренно уезжает отдельным
+# system-сообщением В КОНЕЦ, перед последней фразой человека: так стабильный
+# префикс не ломается и KV-кэш живёт (см. комментарий в run_dialog). Для
+# таких провайдеров склеиваем «поздний system» с ближайшей репликой
+# пользователя — смысл и позиция сохраняются, ценой кэша (у облака он всё
+# равно не наш).
+_MSG_QUIRKS: dict = {}
+_MID_SYSTEM_HINTS = ("system message must be the first",
+                     "system message must be first",
+                     "only one system message",
+                     "system role must be the first")
+
+
+def _fold_mid_system(messages):
+    """Системные сообщения ПОСЛЕ первого вклеиваем в следующую реплику
+    пользователя. Возвращает новый список, исходный не трогаем."""
+    out, pending = [], []
+    for i, m in enumerate(messages):
+        if i > 0 and m.get("role") == "system":
+            txt = m.get("content")
+            # мультимодальный content (список частей) сюда не попадает:
+            # системные блоки у нас всегда текст
+            if isinstance(txt, str) and txt.strip():
+                pending.append(txt.strip())
+            continue
+        if pending and m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, str):
+                m = dict(m, content="\n\n".join(pending) + "\n\n" + c)
+                pending = []
+            elif isinstance(c, list):
+                # картинка + текст: своё вставляем отдельной текстовой частью
+                m = dict(m, content=[{"type": "text",
+                                      "text": "\n\n".join(pending)}] + c)
+                pending = []
+        out.append(m)
+    if pending:
+        # не нашлось пользовательской реплики после — цепляем к последней
+        if out:
+            last = out[-1]
+            c = last.get("content")
+            if isinstance(c, str):
+                out[-1] = dict(last, content=c + "\n\n"
+                               + "\n\n".join(pending))
+            else:
+                out.append({"role": "user", "content": "\n\n".join(pending)})
+        else:
+            out.append({"role": "user", "content": "\n\n".join(pending)})
+    return out
+
+# ─────────────────── ПРОДВИНУТЫЙ СЭМПЛИНГ (2026-07-26) ───────────────────
+# Раньше из настроек генерации у нас была одна temperature. Этого мало:
+# главные болезни локальных мелких моделей — повторы и вялость — лечатся не
+# температурой, а DRY (штраф за повторяющиеся n-граммы) и XTC (выбрасывание
+# самых вероятных токенов, чтобы речь не сползала в шаблон).
+#
+# Поля кладём на верхний уровень JSON: llama.cpp и LM Studio читают их прямо
+# оттуда (в python-SDK это называлось бы extra_body, но мы шлём сырой HTTP).
+# Провайдеры, которые их не знают, ответят 400 — и сработает уже готовый
+# механизм _API_QUIRKS: он запомнит, что этому API сэмплинг не давать, и
+# следующий запрос уйдёт сразу без него. Одним куском, а не по полю за раз.
+_SAMPLING_OPENAI = (
+    "top_p", "top_k", "min_p", "typical_p", "repeat_penalty",
+    "presence_penalty", "frequency_penalty", "stop", "seed",
+    "xtc_probability", "xtc_threshold",
+    "dry_multiplier", "dry_base", "dry_allowed_length",
+    "dynatemp_range", "dynatemp_exponent",
+)
+# Ollama знает НЕ ВСЁ: XTC/DRY/dynatemp у него нет, поэтому шлём подмножество
+# и внутрь options, а не на верхний уровень.
+_SAMPLING_OLLAMA = ("top_p", "top_k", "min_p", "typical_p", "repeat_penalty",
+                    "presence_penalty", "frequency_penalty", "stop", "seed")
+
+# 0 или -1 значит «параметр выключен» — такие вообще не шлём, чтобы не
+# навязывать модели дефолт, отличный от её собственного.
+_SAMPLING_OFF_AT_ZERO = {
+    "top_k", "min_p", "typical_p", "presence_penalty", "frequency_penalty",
+    "xtc_probability", "dry_multiplier", "dynatemp_range",
+}
+
+
+def sampling_cfg() -> dict:
+    """Настройки сэмплинга из config (llm.sampling). enabled=false — пусто."""
+    s = CFG.get("llm.sampling", {}) or {}
+    return s if s.get("enabled") else {}
+
+
+def _sampling_fields(keys) -> dict:
+    """Отобрать из конфига то, что имеет смысл послать."""
+    cfg = sampling_cfg()
+    out = {}
+    for k in keys:
+        if k not in cfg:
+            continue
+        v = cfg[k]
+        if v is None:
+            continue
+        if k == "stop":
+            v = [x for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
+            if not v:
+                continue
+        elif k == "seed":
+            if int(v) < 0:
+                continue
+        elif k in _SAMPLING_OFF_AT_ZERO and float(v) == 0:
+            continue
+        out[k] = v
+    return out
+
 
 def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
                    image=None):
@@ -653,6 +913,10 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
     function.arguments — строка, собирается конкатенацией), поэтому копим их
     и достраиваем целиком, когда стрим закончился."""
     messages = _attach_image_openai(messages, image)
+    # GigaChat известен заранее, остальных выучиваем по первому 422 (ниже)
+    if _is_gigachat(base_url) or "mid_system" in _MSG_QUIRKS.get(
+            (base_url, model), ()):
+        messages = _fold_mid_system(messages)
     payload = {
         "model": model,
         "messages": messages,
@@ -683,6 +947,17 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             pass
     if tools:
         payload["tools"] = tools
+    # ПОВТОРНОЕ ИСПОЛЬЗОВАНИЕ KV-КЭША. llama.cpp-server (и LM Studio на нём)
+    # понимают cache_prompt: совпавший префикс промпта не пережёвывается
+    # заново. У свежих сборок это уже по умолчанию, у сборок постарше — нет,
+    # и тогда каждый ход стоит полного prefill всех ~5 тысяч токенов. Поле
+    # безобидное: провайдер, который его не знает, ответит 400, и _API_QUIRKS
+    # уберёт его навсегда после одного холостого захода. Облаку не шлём —
+    # там кэш префикса на стороне провайдера и своими правилами.
+    if not api_key and CFG.get("llm.cache_prompt", True):
+        payload["cache_prompt"] = True
+    # продвинутый сэмплинг — панель «Сэмплинг» в меню модели
+    payload.update(_sampling_fields(_SAMPLING_OPENAI))
     # 2026-07-23: облако (Kimi/Moonshot) по 7-47с «думает» даже на реплики в
     # 30-90 токенов — то есть почти всё время это ПРЕФИЛЛ растущей истории,
     # не генерация. Moonshot заявляет автоматическое кэширование префикса
@@ -692,18 +967,25 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
     # финальном чанке стрима; ЕСЛИ там есть поля про кэш (у части провайдеров
     # это prompt_tokens_details.cached_tokens) — увидим в логе и поймём,
     # реально ли работает кэш или бьёмся об одну и ту же стену каждый раз.
-    # Только для облака (есть api_key) — по локальным бэкендам не рискуем
-    # незнакомым полем.
-    if api_key:
-        payload["stream_options"] = {"include_usage": True}
+    # 2026-07-26: просим usage и у ЛОКАЛЬНЫХ бэкендов тоже. Без него
+    # непонятно, сколько токенов реально ушло в prefill — а без этого числа
+    # «prefill 2.3с» невозможно оценить: то ли промпт огромный, то ли кэш не
+    # сработал и модель жуёт его целиком каждый ход. Если LM Studio/llama.cpp
+    # поля не знает — сработает _API_QUIRKS и уберёт его навсегда.
+    payload["stream_options"] = {"include_usage": True}
     # выученные причуды этого API: неугодные поля не кладём с самого начала
     for f in _API_QUIRKS.get((base_url, model), ()):
         payload.pop(f, None)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
+    # у GigaChat та же история с российским УЦ, что и у его OAuth —
+    # решение принято один раз в _gigachat_token и переиспользуется здесь
+    _verify = _giga["verify"] if _is_gigachat(base_url) else True
+
     def _do_request(body):
         r = requests.post(base_url + "/chat/completions", json=body,
-                          headers=headers, stream=True, timeout=(10, 600))
+                          headers=headers, stream=True, timeout=(10, 600),
+                          verify=_verify)
         if not r.ok:
             # тело ответа — единственное место, где провайдер объясняет,
             # ЧТО ему не понравилось («unknown field», «model not found»…).
@@ -731,17 +1013,45 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         # а найденное запоминаем в _API_QUIRKS: следующая фраза строит
         # запрос сразу правильно, без холостых заходов.
         recovered, last = False, e0
-        suspects = [f for f in ("tools", "chat_template_kwargs",
+        # ФАЗА 0 — провайдер ругается не на поле, а на СТРУКТУРУ диалога.
+        # Убирать поля тут бессмысленно (именно так GigaChat молча уводил
+        # разговор на локальный фолбэк): чиним форму и пробуем ещё раз.
+        _txt = str(e0).lower()
+        if any(h in _txt for h in _MID_SYSTEM_HINTS):
+            trial = dict(payload, messages=_fold_mid_system(payload["messages"]))
+            try:
+                r = _do_request(trial)
+                payload = trial
+                _MSG_QUIRKS.setdefault((base_url, model),
+                                       set()).add("mid_system")
+                log.warning("API %s принимает system только первым — "
+                            "запомнила, дальше склеиваю поздние системные "
+                            "блоки с репликой пользователя", model)
+                recovered = True
+            except requests.exceptions.HTTPError as e1:
+                last = e1
+        suspects = [] if recovered else [
+            f for f in ("tools", "chat_template_kwargs", "cache_prompt",
                                 "max_tokens", "temperature", "stream_options")
                     if payload.get(f) is not None]
+        # «sampling» — не поле, а целая группа: снимаем её ОДНИМ ходом.
+        # Иначе перебор по одному стоил бы до 16 холостых запросов на фразу,
+        # а провайдер, который не знает XTC, обычно не знает и DRY.
+        if not recovered and any(k in payload for k in _SAMPLING_OPENAI):
+            suspects.insert(0, "sampling")
         for fix in suspects:                    # фаза 1: по одному
-            trial = {k: v for k, v in payload.items() if k != fix}
+            if fix == "sampling":
+                trial = {k: v for k, v in payload.items()
+                         if k not in _SAMPLING_OPENAI}
+            else:
+                trial = {k: v for k, v in payload.items() if k != fix}
             try:
                 r = _do_request(trial)
                 recovered = True
                 payload = trial
-                _API_QUIRKS.setdefault((base_url, model), set()).add(fix)
-                log.warning("API %s не принял поле «%s» (%s) — запомнила, "
+                bad = (set(_SAMPLING_OPENAI) if fix == "sampling" else {fix})
+                _API_QUIRKS.setdefault((base_url, model), set()).update(bad)
+                log.warning("API %s не принял «%s» (%s) — запомнила, "
                             "дальше шлю без него", model, fix,
                             str(last)[:160])
                 break

@@ -121,6 +121,34 @@ class Memory:
         self._promote(person_id)
         self._trim_raw()
 
+    def drop_last(self, person_id, role=None, n=1) -> int:
+        """Забыть последние n событий (2026-07-26, для «↻ переспросить»).
+
+        Нужно именно удаление из RAW, а не пометка: иначе при регенерации
+        отвергнутый ответ остаётся в истории, модель видит и его, и новый
+        вопрос — и второй раз выдаёт то же самое, только с извинениями.
+        Сжатые в эпизоды события НЕ трогаем: их уже переписала LLM, там
+        отдельной реплики может не существовать.
+        """
+        with self.lock:
+            if role:
+                rows = self._conn.execute(
+                    "SELECT id FROM events WHERE person_id=? AND role=? "
+                    "AND compressed=0 ORDER BY id DESC LIMIT ?",
+                    (person_id, role, n)).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT id FROM events WHERE person_id=? AND compressed=0 "
+                    "ORDER BY id DESC LIMIT ?", (person_id, n)).fetchall()
+            ids = [r[0] for r in rows]
+            if not ids:
+                return 0
+            self._conn.execute(
+                "DELETE FROM events WHERE id IN (%s)"
+                % ",".join("?" * len(ids)), ids)
+            self._conn.commit()
+        return len(ids)
+
     def _promote(self, person_id):
         """stranger -> regular по критерию 3+ сессий или 30+ сообщений."""
         with self.lock:
@@ -313,17 +341,40 @@ class Memory:
                 "ORDER BY id DESC LIMIT ?", (person_id, k)).fetchall()
         return [r[0] for r in rows]
 
-    def build_context(self, person_id, query) -> str:
-        """CORE-образ + релевантные эпизоды. RAW добавляет main как историю чата."""
+    def build_context(self, person_id, query, limit_chars: int = 0) -> str:
+        """CORE-образ + релевантные эпизоды. RAW добавляет main как историю чата.
+
+        limit_chars (2026-07-26) — потолок в символах. До него потолка не
+        было вообще, и этот кусок рос вместе с памятью: у владельца он
+        разросся так, что промпт распух до 16 тысяч символов, а платить за
+        это приходилось КАЖДЫМ ходом — в облаке кэша префикса нет, провайдер
+        жуёт всё заново. Режем самый разговорчивый источник (эпизоды),
+        образ собеседника бережём: он короткий и важный.
+        """
+        limit = int(limit_chars or CFG.get("memory.context_chars", 2000) or 0)
         parts = []
         p = self.person(person_id)
+        core = ""
         if p.get("core"):
-            parts.append("Образ собеседника (" + p.get("name", person_id) + "): "
-                         + json.dumps(p["core"], ensure_ascii=False))
+            core = ("Образ собеседника (" + p.get("name", person_id) + "): "
+                    + json.dumps(p["core"], ensure_ascii=False))
+            # даже образ бывает раздутым — оставляем ему не больше половины
+            if limit and len(core) > limit // 2:
+                core = core[:limit // 2].rstrip() + "…"
+            parts.append(core)
         eps = self.relevant_episodes(query, person_id)
         if eps:
-            parts.append("Из прошлых разговоров:\n" +
-                         "\n".join("- " + e for e in eps))
+            room = (limit - len(core) - 24) if limit else 0
+            keep = []
+            for e in eps:
+                line = "- " + e
+                if room:
+                    if len(line) + 1 > room:
+                        break        # лучше меньше эпизодов, чем обрубок
+                    room -= len(line) + 1
+                keep.append(line)
+            if keep:
+                parts.append("Из прошлых разговоров:\n" + "\n".join(keep))
         return "\n".join(parts)
 
     def stats(self):

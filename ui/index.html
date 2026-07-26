@@ -139,13 +139,19 @@
   /* ── чат ── */
   #chat{flex:1;order:4;overflow-y:auto;padding:18px;display:flex;
     flex-direction:column;gap:14px;border-radius:var(--r-tile);min-width:0}
-  .msg{max-width:84%;padding:11px 14px;border-radius:16px 16px 16px 5px;
-    white-space:pre-wrap;font-size:13.5px;line-height:1.55;
+  /* размеры вынесены в переменные — их крутит панель «Внешний вид»
+     (2026-07-26). Значения по умолчанию те же, что были. */
+  .msg{max-width:var(--msg-max,84%);padding:11px 14px;
+    border-radius:var(--msg-radius,16px) var(--msg-radius,16px)
+                  var(--msg-radius,16px) 5px;
+    white-space:pre-wrap;font-size:var(--msg-size,13.5px);line-height:1.55;
     background:var(--tile-hi);border:1px solid rgba(255,255,255,.13);
     box-shadow:0 12px 26px -18px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.10);
     animation:msgin .28s cubic-bezier(.2,.7,.3,1)}
   @keyframes msgin{from{opacity:0;transform:translateY(6px)}}
-  .msg.user{align-self:flex-end;border-radius:16px 16px 5px 16px;
+  .msg.user{align-self:flex-end;
+    border-radius:var(--msg-radius,16px) var(--msg-radius,16px) 5px
+                  var(--msg-radius,16px);
     background:linear-gradient(160deg,rgba(145,132,217,.32),rgba(145,132,217,.16));
     border-color:rgba(145,132,217,.42)}
   .msg.saika{align-self:flex-start}
@@ -259,7 +265,7 @@
   .wrap{position:relative}
   .pop{position:absolute;bottom:54px;left:0;min-width:268px;
     max-height:min(74vh,calc(100vh - 130px));overflow-y:auto;
-    background:linear-gradient(165deg,rgba(30,32,48,.86),rgba(20,22,34,.9));
+    background:linear-gradient(165deg,rgba(30,32,48,.94),rgba(19,21,33,.96));
     backdrop-filter:blur(30px) saturate(180%);
     -webkit-backdrop-filter:blur(30px) saturate(180%);
     border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:7px;
@@ -276,6 +282,19 @@
     box-shadow:inset 0 0 0 1px rgba(145,132,217,.35)}
   .pop .item .st{margin-left:auto;font-size:11px;color:var(--dim)}
   .pop .item .st.ok{color:var(--ok)} .pop .item .st.bad{color:var(--err)}
+  /* .mini жил ТОЛЬКО внутри .pop .item — за пределами меню (шторка голосов,
+     мета под ответом) кнопки выпадали в серый системный вид браузера.
+     Базовое правило общее, а .pop-версия ниже всё равно перебивает его
+     по весу селектора. */
+  button.mini{background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.12);border-radius:8px;color:var(--dim);
+    cursor:pointer;font-size:12px;width:27px;height:23px;line-height:1;flex:none;
+    padding:0;display:inline-flex;align-items:center;justify-content:center}
+  button.mini:hover{color:#fff;border-color:var(--accent);
+    background:rgba(145,132,217,.2)}
+  button.mini.del:hover{color:var(--err);border-color:var(--err);
+    background:rgba(224,101,95,.16)}
+  button.mini:disabled{opacity:.5;cursor:default}
   .pop .item button.mini{background:rgba(255,255,255,.05);
     border:1px solid rgba(255,255,255,.12);border-radius:8px;color:var(--dim);
     cursor:pointer;font-size:12px;width:27px;height:23px;line-height:1;flex:none}
@@ -292,6 +311,36 @@
   @keyframes slide{from{margin-left:-40%}to{margin-left:100%}}
   .pop.top{bottom:auto;top:44px;left:auto;right:0}
   .pop input[type=range]{accent-color:var(--accent)}
+  /* СВОЙ ВЫПАДАЮЩИЙ СПИСОК (2026-07-26). Закрытый <select> красится, а
+     раскрытый рисует ОС — на тёмной странице это серые нечитаемые строки с
+     синей подсветкой поверх стекла. Настоящий select спрятан, но жив: весь
+     код по-прежнему читает .value и слушает change. */
+  /* width НЕ задаём: часть списков стоит в flex-строке рядом с кнопками и
+     раньше сжималась по содержимому. Ширину переносит JS с самого select */
+  .fsel-btn{display:flex;align-items:center;gap:8px;max-width:100%;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+    border-radius:10px;color:var(--text);cursor:pointer;font:inherit;
+    font-size:12.5px;padding:6px 10px;text-align:left}
+  .fsel-btn:hover{border-color:rgba(145,132,217,.5)}
+  .fsel-btn:disabled{opacity:.5;cursor:default}
+  .fsel-cur{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .fsel-ar{flex:none;color:var(--dim);font-size:10px}
+  .fsel-list{position:fixed;z-index:200;overflow-y:auto;padding:5px;
+    border-radius:14px;border:1px solid rgba(255,255,255,.14);
+    background:linear-gradient(165deg,rgba(34,36,54,.98),rgba(20,22,34,.99));
+    backdrop-filter:blur(30px) saturate(180%);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+    box-shadow:0 30px 70px -20px rgba(0,0,0,.9),
+      inset 0 1px 0 rgba(255,255,255,.12);
+    animation:popin .14s cubic-bezier(.2,.8,.3,1)}
+  .fsel-opt{padding:7px 10px;border-radius:9px;cursor:pointer;font-size:12.5px;
+    color:var(--text);white-space:nowrap}
+  .fsel-opt:hover{background:rgba(255,255,255,.07)}
+  .fsel-opt.on{color:#cec7f0;background:rgba(145,132,217,.18);
+    box-shadow:inset 0 0 0 1px rgba(145,132,217,.35)}
+  .fsel-opt.off{opacity:.45;cursor:default}
+  .fsel-opt.off:hover{background:none}
   .pop select,.pop input[type=text],.pop input[type=password],.pop input:not([type]){
     background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.12)!important;
     border-radius:10px!important;color:var(--text)!important}
@@ -478,8 +527,375 @@
   :focus{outline:none}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
+  /* ═════════ ТОСТЫ (2026-07-26) ═════════
+     Заменяют браузерные confirm/alert: те блокируют поток, выглядят
+     чужеродно и в стеклянном интерфейсе смотрятся как заплатка. */
+  #toasts{position:fixed;top:66px;right:14px;z-index:90;display:flex;
+    flex-direction:column;gap:8px;pointer-events:none;max-width:min(380px,80vw)}
+  .toast{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;
+    padding:11px 13px;border-radius:14px;font-size:12.5px;line-height:1.45;
+    background:linear-gradient(165deg,rgba(34,36,52,.92),rgba(20,22,34,.95));
+    backdrop-filter:blur(24px) saturate(170%);
+    -webkit-backdrop-filter:blur(24px) saturate(170%);
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 24px 50px -24px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.14);
+    animation:toastin .22s cubic-bezier(.2,.8,.3,1)}
+  .toast.out{animation:toastout .2s ease forwards}
+  @keyframes toastin{from{opacity:0;transform:translateX(16px) scale(.97)}}
+  @keyframes toastout{to{opacity:0;transform:translateX(16px) scale(.97)}}
+  .toast .ti{flex:none;font-size:15px;line-height:1.2}
+  .toast .tx{flex:1;min-width:0;word-break:break-word}
+  .toast .tb{display:flex;gap:6px;margin-top:8px}
+  .toast .tb button{border:1px solid rgba(255,255,255,.14);border-radius:9px;
+    background:rgba(255,255,255,.06);color:var(--text);cursor:pointer;
+    font:12px/1 inherit;padding:6px 11px}
+  .toast .tb button:hover{background:rgba(255,255,255,.13)}
+  .toast .tb button.danger{border-color:rgba(224,101,95,.45);
+    background:rgba(224,101,95,.16);color:#f0a9a4}
+  .toast .tb button.danger:hover{background:rgba(224,101,95,.28);color:#ffd4d1}
+  .toast.ok{border-color:rgba(67,209,138,.3)}
+  .toast.err{border-color:rgba(224,101,95,.35)}
+  .toast.warn{border-color:rgba(240,169,76,.35)}
+
+  /* ползунки панели сэмплинга */
+  .srow{display:flex;align-items:center;gap:8px;padding:3px 2px}
+  .srow label{flex:1;min-width:0;font-size:11.5px;color:rgba(233,233,237,.72);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
+  .srow input[type=range]{flex:1.1;min-width:70px;accent-color:var(--accent)}
+  .srow .sval{flex:none;width:44px;text-align:right;font-size:11.5px;
+    color:var(--text);font-variant-numeric:tabular-nums}
+  .srow.off label,.srow.off .sval{opacity:.45}
+  .spreset{border:1px solid rgba(255,255,255,.12);border-radius:10px;
+    background:rgba(255,255,255,.05);color:var(--dim);cursor:pointer;
+    font:12px/1 inherit;padding:7px 11px}
+  .spreset:hover{background:rgba(255,255,255,.12);color:var(--text)}
+  .spreset.on{color:#cec7f0;background:rgba(145,132,217,.2);
+    border-color:rgba(145,132,217,.45)}
+
   /* ═════════ ЯЗЫК И МОБИЛЬНАЯ ВЕРСИЯ (2026-07-25) ═════════ */
   #mob-tabs{display:none}
+    /* ── Полноэкранные шторки поверх системы+аватара+чата (2026-07-26).
+     В узкой колонке инструкции и мастера читать невозможно, поэтому они
+     раскрываются на всю рабочую область. Закрываются кликом мимо, по ✕ и
+     по Escape. #main стоит position:relative — отсюда inset:0. ── */
+  #phone-ov,#skills-ov{position:absolute;inset:0;z-index:60;display:none;
+    background:rgba(6,7,13,.72);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);padding:14px}
+  #phone-ov.show,#skills-ov.show{display:flex;justify-content:center;
+    align-items:stretch}
+  .ph-card,.sk-card{flex:1;min-width:0;max-width:1180px;display:flex;
+    flex-direction:column;border-radius:22px;padding:16px 20px;
+    overflow:hidden;
+    background:linear-gradient(165deg,rgba(30,32,48,.96),rgba(18,20,32,.98));
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.9),
+      inset 0 1px 0 rgba(255,255,255,.14);
+    animation:sheetin .24s cubic-bezier(.2,.8,.3,1)}
+  .ph-head,.sk-head{display:flex;align-items:center;gap:12px;
+    margin-bottom:10px;font-weight:600;font-size:15px;flex:none}
+  .ph-body,.sk-body{flex:1;min-height:0;overflow-y:auto;padding-right:8px}
+  #sk-find{width:220px;background:var(--panel2);color:var(--text);
+    border:1px solid var(--border);border-radius:10px;padding:6px 10px;
+    font:12.5px inherit;outline:none;font-weight:400}
+
+  /* ── обучающий список ── */
+  .sk-group{margin-bottom:18px}
+  .sk-gtitle{font-size:10px;text-transform:uppercase;letter-spacing:.13em;
+    color:rgba(233,233,237,.42);margin-bottom:8px}
+  .sk-grid{display:grid;gap:10px;
+    grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+  .sk-item{background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 13px}
+  .sk-item b{font-size:13.5px}
+  .sk-item p{margin:4px 0 8px;font-size:12.5px;line-height:1.55;
+    color:rgba(233,233,237,.8)}
+  .sk-try,.sk-see,.sk-need{display:flex;gap:8px;font-size:12px;
+    line-height:1.5;margin-top:3px}
+  .sk-try span,.sk-see span,.sk-need span{flex:none;width:56px;
+    font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+    padding-top:3px}
+  .sk-try span{color:var(--accent)}
+  .sk-see span{color:var(--ok)}
+  .sk-need span{color:var(--warn)}
+  .sk-try i{font-style:normal;color:#e6e2f5}
+  .sk-see i,.sk-need i{font-style:normal;color:var(--dim)}
+
+  /* ── мастер подключения телефона ── */
+  .ph-block{background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.08);border-radius:14px;
+    padding:12px 15px;margin-bottom:11px;font-size:13px;line-height:1.6}
+  .ph-block.ph-note{background:rgba(145,132,217,.08);
+    border-color:rgba(145,132,217,.22)}
+  .ph-block b{display:block;margin-bottom:5px;font-size:13px}
+  .ph-block p{margin:0 0 6px}
+  .ph-lead{font-size:13.5px}
+  .ph-ok{color:var(--ok)} .ph-warn{color:var(--warn)}
+  .ph-two{display:grid;gap:12px;grid-template-columns:repeat(2,1fr);
+    margin-bottom:11px}
+  @media (max-width:820px){.ph-two{grid-template-columns:1fr}}
+  .ph-pick{background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:16px;
+    cursor:pointer;transition:border-color .15s,background .15s}
+  .ph-pick:hover{border-color:var(--accent);background:rgba(145,132,217,.1)}
+  .ph-ico{font-size:26px;line-height:1;margin-bottom:6px}
+  .ph-pick b{font-size:14px}
+  .ph-pick p{font-size:12.5px;line-height:1.55;color:rgba(233,233,237,.78);
+    margin:5px 0}
+  .ph-pick .ph-minus{color:var(--dim);font-size:11.5px}
+  .ph-go{color:var(--accent);font-size:12px}
+  .ph-steps{margin:2px 0 0;padding-left:20px;font-size:12.5px;line-height:1.7}
+  .ph-steps li{margin-bottom:3px}
+  .ph-toggle{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
+    border-radius:14px;padding:11px 15px;margin-bottom:11px;font-size:13px}
+  .ph-hint{font-size:11.5px;color:var(--dim);flex:1;min-width:180px}
+  .ph-qrwrap{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:11px}
+  .ph-qr{background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:12px;
+    text-align:center}
+  .ph-qrimg{width:240px;height:240px;display:flex;align-items:center;
+    justify-content:center;background:#fff;border-radius:10px;
+    color:#333;font-size:12px;padding:8px}
+  .ph-qrimg.ph-qrfail{background:rgba(255,255,255,.05);color:var(--warn)}
+  .ph-qrimg svg{width:100%;height:100%;border-radius:6px}
+  .ph-qrlab{font-size:11.5px;color:var(--dim);margin-top:7px}
+  .ph-qr code{font-size:11px;color:var(--text);word-break:break-all;
+    display:block;margin-top:3px;max-width:240px}
+  .ph-token{font-size:15px;letter-spacing:.08em;background:var(--panel2);
+    padding:3px 9px;border-radius:8px}
+  .ph-back{margin-bottom:10px}
+  /* ── самочувствие: полоска в колонке и полная панель ── */
+  #psy-strip{margin-top:10px;padding:9px 10px;border-radius:12px;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+    cursor:pointer;transition:border-color .15s,background .15s}
+  #psy-strip:hover{border-color:var(--accent);background:rgba(145,132,217,.1)}
+  .psy-head{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .psy-emo{font-size:15px;line-height:1}
+  .psy-mood{flex:1;font-size:12px}
+  .psy-est{font-size:11px;color:var(--dim)}
+  .psy-line{display:flex;align-items:center;gap:7px;margin-bottom:3px;
+    font-size:9.5px;color:var(--dim)}
+  .psy-line>span{width:74px;flex:none}
+  .psy-track{position:relative;flex:1;height:4px;border-radius:3px;
+    background:linear-gradient(90deg,rgba(224,101,95,.35),
+      rgba(255,255,255,.14),rgba(126,209,166,.4))}
+  .psy-track.big{height:6px;margin:5px 0 4px}
+  .psy-track>i{position:absolute;top:50%;width:9px;height:9px;
+    margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 0 2px rgba(19,21,33,.9);transition:left .5s ease}
+  .psy-track.big>i{width:12px;height:12px;margin:-6px 0 0 -6px}
+  .psy-t{margin-top:6px;font-size:10px;color:var(--dim);line-height:1.35}
+  #psy-ov{position:absolute;inset:0;z-index:60;display:none;
+    background:rgba(6,7,13,.72);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);padding:14px}
+  #psy-ov.show{display:flex;justify-content:center;align-items:stretch}
+  #psy-ov .title{font-size:10px;text-transform:uppercase;letter-spacing:.12em;
+    color:rgba(233,233,237,.42);margin-bottom:6px}
+  #psy-ov input[type=range]{accent-color:var(--accent)}
+  .psy-grid{display:grid;gap:9px;
+    grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  .psy-skill{background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:9px 11px}
+  .psy-sname{display:flex;gap:8px;font-size:12.5px}
+  .psy-sname b{margin-left:auto;color:var(--accent)}
+  .psy-skill input[type=range]{width:100%}
+
+  /* ── досье моделей ── */
+  #dos-ov{position:absolute;inset:0;z-index:60;display:none;
+    background:rgba(6,7,13,.72);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);padding:14px}
+  #dos-ov.show{display:flex;justify-content:center;align-items:stretch}
+  #dos-find{width:190px;background:var(--panel2);color:var(--text);
+    border:1px solid var(--border);border-radius:10px;padding:6px 10px;
+    font:12.5px inherit;outline:none;font-weight:400}
+  .dos-grid{display:grid;gap:9px;
+    grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
+  .dos-row{background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 12px}
+  .dos-row.on{border-color:rgba(145,132,217,.45);
+    background:rgba(145,132,217,.1)}
+  .dos-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .dos-name{font-size:12.5px;font-weight:500;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+  .dos-tag{font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--dim)}
+  .dos-bar{display:flex;align-items:center;gap:9px;margin-top:7px}
+  .dos-bar input[type=range]{flex:1;accent-color:var(--accent)}
+  .dos-lab{font-size:11px;min-width:118px}
+  .dos-stat{font-size:11px;color:var(--dim);margin-top:4px}
+  .dos-note{width:100%;margin-top:6px;background:var(--panel2);
+    color:var(--text);border:1px solid var(--border);border-radius:9px;
+    padding:5px 8px;font:11.5px inherit;outline:none}
+  .dos-cheap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    margin-top:8px;font-size:12.5px}
+
+  /* ── библиотека аватаров ── */
+  #av-ov{position:absolute;inset:0;z-index:60;display:none;
+    background:rgba(6,7,13,.72);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);padding:14px}
+  #av-ov.show{display:flex;justify-content:center;align-items:stretch}
+  #av-ov.av-drop .ph-card{border-color:var(--accent);
+    box-shadow:0 0 0 2px rgba(145,132,217,.4),
+      0 40px 90px -30px rgba(0,0,0,.9)}
+  #av-ov .title{font-size:10px;text-transform:uppercase;letter-spacing:.12em;
+    color:rgba(233,233,237,.42);margin-bottom:8px}
+  #av-ov input[type=range]{accent-color:var(--accent)}
+  #av-ov code{background:rgba(255,255,255,.07);padding:1px 5px;
+    border-radius:6px;font-size:11.5px}
+  .av-grid{display:grid;gap:10px;
+    grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .av-card{position:relative;background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:9px;
+    cursor:pointer;transition:border-color .15s,background .15s}
+  .av-card:hover{border-color:var(--accent);background:rgba(145,132,217,.1)}
+  .av-card.on{border-color:rgba(145,132,217,.55);
+    background:rgba(145,132,217,.16)}
+  .av-card.off{opacity:.5;cursor:default}
+  .av-card.off:hover{border-color:rgba(255,255,255,.09);
+    background:rgba(255,255,255,.04)}
+  .av-thumb{height:104px;display:flex;align-items:center;
+    justify-content:center;background:rgba(0,0,0,.25);border-radius:10px;
+    font-size:34px;overflow:hidden;margin-bottom:7px}
+  .av-thumb img{max-width:100%;max-height:100%;object-fit:contain}
+  .av-name{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .av-meta{font-size:10.5px;color:var(--dim);margin-top:2px}
+  .av-note{font-size:10.5px;color:var(--warn);margin-top:3px;line-height:1.35}
+  .av-cur{font-size:10px;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--accent);margin-top:4px}
+  .av-del{position:absolute;top:7px;right:7px;opacity:0;transition:opacity .14s}
+  .av-card:hover .av-del{opacity:.75}
+  .av-del:hover{opacity:1}
+  .ph-block.ph-alarm{background:rgba(224,101,95,.12);
+    border-color:rgba(224,101,95,.4)}
+  .ph-block.ph-alarm b{color:var(--err)}
+  .ph-cmd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    background:rgba(0,0,0,.3);border-radius:10px;padding:8px 10px;
+    margin:5px 0}
+  .ph-cmd code{flex:1;min-width:220px;word-break:break-all;font-size:11.5px;
+    background:none;padding:0}
+  .ph-qr.ph-virt{opacity:.5}
+  .ph-best{font-size:10px;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--ok);margin-bottom:6px}
+  .ph-bad{font-size:10px;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--warn);margin-bottom:6px}
+  .ph-body code{background:rgba(255,255,255,.07);padding:1px 5px;
+    border-radius:6px;font-size:12px}
+  /* панель «Компьютер» */
+  #pc-sheet{position:fixed;inset:0;z-index:71;display:none;
+    background:rgba(6,7,13,.6);backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);padding:12px}
+  #pc-sheet.show{display:flex;flex-direction:column;
+    justify-content:center;align-items:center}
+  #pc-sheet .ss-card{flex:0 1 auto;width:min(720px,100%);
+    max-height:min(92vh,100%);display:flex;flex-direction:column;
+    border-radius:24px;padding:18px 20px;overflow:hidden;
+    background:linear-gradient(165deg,rgba(30,32,48,.94),rgba(18,20,32,.96));
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.14);
+    animation:sheetin .26s cubic-bezier(.2,.8,.3,1)}
+  #pc-sheet .ss-head{display:flex;align-items:center;gap:10px;
+    margin-bottom:10px;font-weight:600;font-size:14px}
+  #pc-sheet .ss-body{flex:1;min-height:0;display:flex;flex-direction:column;
+    overflow-y:auto;overflow-x:hidden;padding-right:6px}
+  #pc-sheet .title{font-size:10px;text-transform:uppercase;
+    letter-spacing:.12em;color:rgba(233,233,237,.42)}
+  #pc-sheet input[type=range]{accent-color:var(--accent)}
+  #pc-sheet .item:hover{background:rgba(255,255,255,.06)}
+  /* панель «Скорость ответа» — те же правила, что у шторки голосов */
+  #speed-sheet{position:fixed;inset:0;z-index:71;display:none;
+    background:rgba(6,7,13,.6);backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);padding:12px}
+  #speed-sheet.show{display:flex;flex-direction:column;
+    justify-content:center;align-items:center}
+  #speed-sheet .ss-card{flex:0 1 auto;width:min(640px,100%);
+    max-height:min(92vh,100%);display:flex;flex-direction:column;
+    border-radius:24px;padding:18px 20px;overflow:hidden;
+    background:linear-gradient(165deg,rgba(30,32,48,.94),rgba(18,20,32,.96));
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.14);
+    animation:sheetin .26s cubic-bezier(.2,.8,.3,1)}
+  #speed-sheet .ss-head{display:flex;align-items:center;gap:10px;
+    margin-bottom:10px;font-weight:600;font-size:14px}
+  #speed-sheet .ss-body{flex:1;min-height:0;display:flex;flex-direction:column;
+    overflow-y:auto;overflow-x:hidden;padding-right:6px}
+  #speed-sheet .title{font-size:10px;text-transform:uppercase;
+    letter-spacing:.12em;color:rgba(233,233,237,.42)}
+  #speed-sheet input[type=range]{accent-color:var(--accent)}
+#voice-sheet{position:fixed;inset:0;z-index:71;display:none;
+    background:rgba(6,7,13,.6);backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);padding:12px}
+  #voice-sheet.show{display:flex;flex-direction:column;
+    justify-content:center;align-items:center}
+  #voice-sheet .ss-card{flex:0 1 auto;width:min(900px,100%);
+    max-height:min(92vh,100%);display:flex;flex-direction:column;
+    border-radius:24px;padding:18px 20px;overflow:hidden;
+    background:linear-gradient(165deg,rgba(30,32,48,.94),rgba(18,20,32,.96));
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.14);
+    animation:sheetin .26s cubic-bezier(.2,.8,.3,1)}
+  #voice-sheet .ss-head{display:flex;align-items:center;gap:10px;
+    margin-bottom:10px;font-weight:600;font-size:14px}
+  #voice-sheet .ss-body{flex:1;min-height:0;display:flex;flex-direction:column;
+    gap:6px;overflow-y:auto;overflow-x:hidden;padding-right:6px}
+  #voice-sheet .title{font-size:10px;text-transform:uppercase;
+    letter-spacing:.12em;color:rgba(233,233,237,.42);margin-top:10px}
+/* Строка голоса: имя сверху, приметы мелким снизу, размер и кнопки справа.
+   В одну строку язык+пол+примечание не влезали в колонку каталога и
+   переносились в нечитаемую кашу. */
+#voice-sheet .item{display:flex;align-items:center;gap:8px;
+    flex-wrap:nowrap;padding:7px 10px;border-radius:11px;cursor:pointer;
+    font-size:13px;transition:background .14s}
+#voice-sheet .item:hover{background:rgba(255,255,255,.06)}
+/* подсветка «этим сейчас говорит» — правило .pop .item.sel сюда не
+   достаёт, шторка живёт вне выпадающего меню */
+#voice-sheet .item.sel{color:#cec7f0;background:rgba(145,132,217,.16);
+    box-shadow:inset 0 0 0 1px rgba(145,132,217,.35)}
+#voice-sheet .vtxt{flex:1;min-width:0;display:flex;flex-direction:column;
+    gap:1px;line-height:1.25}
+#voice-sheet .vtxt b{font-weight:500;font-size:12.5px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+#voice-sheet .vtxt span{font-size:10.5px;color:var(--dim);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+#voice-sheet .vsz{flex:none;font-size:10.5px;color:var(--dim);
+    white-space:nowrap}
+#voice-sheet .item .mini{opacity:.55;transition:opacity .14s}
+#voice-sheet .item:hover .mini,#voice-sheet .item .mini:focus{opacity:1}
+  #set-sheet{position:fixed;inset:0;z-index:70;display:none;
+    background:rgba(6,7,13,.6);backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);padding:12px}
+  #set-sheet.show{display:flex;flex-direction:column;
+    justify-content:center;align-items:center}
+  /* по содержимому, а не на всю высоту: пустое стекло на пол-экрана
+     читается как «тут что-то не загрузилось» (2026-07-26) */
+  /* 2026-07-26: было 520px и всё сжималось в колонку-щель. Настроек стало
+     много (внешний вид, заметки, лорбук, порядок блоков), поэтому шире и
+     в две колонки на широком экране. */
+  #set-sheet .ss-card{flex:0 1 auto;width:min(820px,100%);
+    max-height:min(92vh,100%);display:flex;flex-direction:column;
+    border-radius:24px;padding:18px 20px;overflow:hidden;
+    background:linear-gradient(165deg,rgba(30,32,48,.94),rgba(18,20,32,.96));
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.14);
+    animation:sheetin .26s cubic-bezier(.2,.8,.3,1)}
+  #set-sheet .ss-head{display:flex;align-items:center;gap:10px;
+    margin-bottom:10px;font-weight:600;font-size:14px}
+  /* 2026-07-26, вторая попытка: сначала я сделал .ss-body сеткой в две
+     колонки — и всё разъехалось. Причина: её дети это не «секции», а
+     отдельные заголовки, ползунки и текстовые поля, поэтому подпись
+     уезжала в одну колонку, а её поле в другую. Правильный способ —
+     колонка целиком, а место по ширине используют ВНУТРЕННИЕ сетки
+     (записи лорбука раскладываются auto-fill сами). */
+  #set-sheet .ss-body{flex:1;min-height:0;display:flex;flex-direction:column;
+    gap:8px;overflow-y:auto;overflow-x:hidden;padding-right:6px}
+  #set-sheet .ss-body>*{min-width:0;max-width:100%}
+  /* текстовые поля в настройках: не ужимать, содержимое важнее компактности */
+  #set-sheet textarea{min-height:82px;font-size:12.5px;line-height:1.5}
+  #set-sheet .srow label{white-space:normal;line-height:1.3}
+  #set-sheet .srow{gap:10px}
+  #set-sheet input[type=range]{flex:1.4}
+  #set-sheet .title{font-size:10px;text-transform:uppercase;
+    letter-spacing:.12em;color:rgba(233,233,237,.42);margin-top:8px}
   #sys-sheet{position:fixed;inset:0;z-index:70;display:none;
     background:rgba(6,7,13,.6);backdrop-filter:blur(10px);
     -webkit-backdrop-filter:blur(10px);padding:12px}
@@ -548,6 +964,7 @@
 </head>
 <body>
 <div id="toploader"><i></i></div>
+<div id="toasts"></div>
 <header>
   <div class="dot" id="dot-llm" title="LLM"></div>
   <div class="dot" id="dot-stt" title="Слух"></div>
@@ -726,20 +1143,38 @@
       <details id="cloud-details">
       <summary class="title" style="cursor:pointer">☁ Онлайн-модель (по API-ключу) — настроить</summary>
       <select id="cloud-provider" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px;margin-bottom:4px">
-        <option value="openrouter">OpenRouter (все топ-модели, 1 ключ)</option>
+        <option value="gigachat">GigaChat (Сбер) — без VPN и без карты</option>
+        <option value="groq">Groq — самый быстрый, есть бесплатный тир</option>
+        <option value="mistral">Mistral AI — 1 млрд токенов/мес бесплатно</option>
+        <option value="github">GitHub Models — ключ за полминуты</option>
+        <option value="cerebras">Cerebras</option>
+        <option value="gemini">Google Gemini (из РФ не работает)</option>
         <option value="openai">OpenAI</option>
-        <option value="groq">Groq</option>
-        <option value="kimi">Kimi (Moonshot AI)</option>
         <option value="anthropic">Anthropic (Claude)</option>
-        <option value="seed">Seed (ByteDance / BytePlus Ark)</option>
+        <option value="kimi">Kimi (Moonshot AI)</option>
         <option value="deepseek">DeepSeek</option>
+        <option value="seed">Seed (ByteDance / BytePlus Ark)</option>
+        <option value="openrouter">OpenRouter (из РФ не работает с 27.06.2026)</option>
         <option value="custom">Своё (OpenAI-совместимое)</option>
       </select>
       <input id="cloud-base" placeholder="base_url" style="width:100%;margin-bottom:4px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px">
       <input id="cloud-model" placeholder="модель" style="width:100%;margin-bottom:4px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px">
-      <input id="cloud-key" type="password" placeholder="API-ключ (хранится локально в secrets.json)" style="width:100%;margin-bottom:4px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px">
+      <input id="cloud-key" type="password" placeholder="API-ключ или Authorization key (хранится локально в secrets.json)" style="width:100%;margin-bottom:4px;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px">
       <button class="chip" id="cloud-save">Сохранить и включить</button>
       <div id="cloud-status" style="font-size:11px;color:var(--dim);margin-top:4px"></div>
+      </details>
+      <!-- Сэмплинг (2026-07-26): главные болезни мелких локальных моделей —
+           повторы и вялость — лечатся не температурой, а DRY и XTC. Ручек
+           много, поэтому впереди пресеты: крутить шестнадцать ползунков
+           вслепую никто не станет, а «живая речь» это один клик. -->
+      <details id="samp-details">
+      <summary class="title" style="cursor:pointer">🎚 Сэмплинг — как она говорит <span id="samp-badge" style="color:var(--dim)"></span></summary>
+      <div id="samp-presets" style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0"></div>
+      <div id="samp-note" style="font-size:11px;color:var(--dim);margin:0 2px 6px;line-height:1.45"></div>
+      <div id="samp-sliders"></div>
+      <div class="title">Стоп-строки (через запятую)</div>
+      <input id="samp-stop" placeholder="&lt;|im_end|&gt;, ###"
+        style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px;font-size:12px">
       </details>
       <div class="title">Модели (худшие сверху → лучшие внизу, у курсора)</div>
       <div id="model-list"></div>
@@ -930,6 +1365,16 @@ function connect(){
   };
 }
 let curSaikaMsg=null;
+/* Полный маркер и оборванный хвост — те же выражения, что в main.py
+   (_GESTURE_MARK_RE / _GESTURE_TAIL_RE). Держать синхронно. */
+const MARK_FULL = /[\[({]\s*(?:жест|эмоция|gesture|emote)\s*[:=\-]?\s*[a-zA-Zа-яёА-ЯЁ0-9_]+\s*[\])}]/gi;
+const MARK_TAIL = /[\[({]\s*(?:ж|же|жес|жест|э|эм|эмо|эмоц|эмоци|эмоция|g|ge|ges|gest|gestu|gestur|gesture|e|em|emo|emot|emote)\s*(?:[:=\-]\s*[a-zA-Zа-яёА-ЯЁ0-9_]*)?\s*$/i;
+function stripMarks(s){
+  if(!s) return s;
+  let out = s.replace(MARK_FULL, ' ');
+  out = out.replace(MARK_TAIL, '');       // недописанный маркер в конце
+  return out.replace(/[ \t]{2,}/g, ' ').replace(/\s+$/, m => m.includes('\n') ? m : '');
+}
 let bootId=null;
 function handleJson(m){
   if(m.type==='hello'){
@@ -977,8 +1422,16 @@ function handleJson(m){
     $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
   }
   else if(m.type==='token'){
-    if(!curSaikaMsg) curSaikaMsg=addMsg('saika','');
-    curSaikaMsg.firstChild.textContent += m.text;
+    if(!curSaikaMsg){ curSaikaMsg=addMsg('saika',''); curSaikaMsg._raw=''; }
+    // МАРКЕРЫ ЖЕСТОВ НЕ ПОКАЗЫВАЕМ (2026-07-26). Сервер вырезает [жест:имя]
+    // только из ОЗВУЧКИ (_apply_gesture_marks в speak), а в чат токены идут
+    // сырыми — и «[жест:good]» читалось прямо в реплике. Вырезать на сервере
+    // нельзя: маркер приходит по кускам в разных токенах, пришлось бы
+    // буферизовать стрим и текст появлялся бы рывками. Поэтому храним сырой
+    // текст рядом, а показываем очищенный: заодно прячем НЕДОПИСАННЫЙ маркер
+    // в конце, чтобы «[жест:go» не мелькало на экране.
+    curSaikaMsg._raw = (curSaikaMsg._raw || '') + m.text;
+    curSaikaMsg.firstChild.textContent = stripMarks(curSaikaMsg._raw);
     $('#chat').scrollTop = 1e9;
   }
   else if(m.type==='tool'){
@@ -998,6 +1451,33 @@ function handleJson(m){
       if(m.latency_ms!=null) t+=' · думала '+(m.latency_ms/1000).toFixed(1)+'с';
       if(m.model) t+=' · '+m.model;  // кто реально сгенерил этот ответ
       const txt=document.createElement('span'); txt.textContent=t; md.appendChild(txt);
+      // РАЗБИВКА ЗАДЕРЖКИ (2026-07-26). «Думала 2.5с» само по себе ничего не
+      // говорит: секунды могли уйти в память, в кадр экрана или в prefill
+      // модели — лечится это по-разному. Сервер присылает этапы, здесь их
+      // можно развернуть кликом, а самый жирный подсвечен.
+      if(m.stages && Object.keys(m.stages).length){
+        const NAMES={queue:'очередь',mem:'память',lore:'лор',vision:'зрение',
+                     prompt:'промпт',prefill:'prefill модели',sound:'до звука'};
+        const rows=Object.entries(m.stages).filter(([k,v])=>v>0)
+          .sort((a,b)=>b[1]-a[1]);
+        if(rows.length){
+          const worst=rows[0][1];
+          const b=document.createElement('button');
+          b.className='mini'; b.textContent='⏱'; b.style.width='24px';
+          b.title='Из чего сложилась задержка';
+          const det=document.createElement('div');
+          det.className='meta';
+          det.style.cssText='display:none;flex-wrap:wrap;gap:4px 10px;'+
+            'margin-top:3px;font-size:10.5px';
+          det.innerHTML=rows.map(([k,v])=>
+            '<span style="color:'+(v===worst&&worst>150?'var(--warn)':'var(--dim)')+
+            '">'+(NAMES[k]||k)+' '+v+'мс</span>').join('');
+          b.onclick=()=>{ det.style.display=det.style.display==='none'?'flex':'none'; };
+          md.appendChild(b);
+          // подробности — отдельной строкой под метой, иначе ломают верстку
+          setTimeout(()=>{ if(md.parentNode) md.parentNode.appendChild(det); },0);
+        }
+      }
       // та же оценка-эквалайзер в углу ответа (по скорости этого ответа)
       const model = m.model || (status.llm && status.llm.model);
       if(model && m.tps!=null){
@@ -1329,6 +1809,14 @@ document.addEventListener('click', e=>{
   if(!e.target.closest('.wrap'))
     document.querySelectorAll('.pop').forEach(p=>p.classList.remove('show'));
 });
+/* Клик по аватару меню не закрывал (2026-07-26): аватар живёт в <iframe>, и
+   события мыши внутри него до этой страницы физически не долетают. Окно
+   аватара теперь само стучится сюда postMessage'ем на каждое нажатие. */
+window.addEventListener('message', e=>{
+  if(e.data && e.data.saika === 'pointerdown'){
+    document.querySelectorAll('.pop').forEach(p=>p.classList.remove('show'));
+  }
+});
 
 async function fillMicPop(){
   try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e){}
@@ -1543,7 +2031,10 @@ function weightDot(m){ return weightDotBytes(m.size, 1.2, false); }
    реального API размеров у них нет, цифры приблизительные по классам моделей. */
 const STT_WEIGHT={faster_whisper:1.6e9, gigaam:1.0e9, vosk:0.05e9,
   whispercpp:1.5e9, tone:0.2e9, voxtral:9e9, groq_whisper:null};
-const TTS_WEIGHT={qwen3:3.6e9, silero:0.1e9, edge:null};
+const TTS_WEIGHT={qwen3:3.6e9, silero:0.1e9, edge:null,
+  piper:0.06e9,   // ONNX medium, целиком на CPU
+  omni:1.4e9,     // 0.6B в fp16 + вокодер
+  xtts:2.5e9, f5ru:1.6e9};
 
 let modelPoll=null;
 // взведённый крестик удаления: refresh() перерисовывает список каждые 5с и
@@ -1629,8 +2120,14 @@ async function fillModelPop(){
       db.textContent=on?'точно?':'✕';
       db.style.width=on?'auto':''; db.style.color=on?'var(--err)':'';
       db.style.borderColor=on?'var(--err)':'';
-      db.title=on?'Клик ещё раз — модель будет СТЁРТА с диска'
-               :'Удалить модель из системы (стереть с диска)';
+      // у облачной модели файла на диске нет — говорим честно, что она
+      // просто уйдёт из списка, а ключ провайдера останется
+      const cloud = m.backend==='cloud';
+      db.title=on
+        ?(cloud?'Клик ещё раз — уберу её из списка'
+              :'Клик ещё раз — модель будет СТЁРТА с диска')
+        :(cloud?'Убрать из списка настроенных онлайн-моделей'
+              :'Удалить модель из системы (стереть с диска)');
     };
     if(db && delArmKey===mkey && Date.now()<delArmUntil) arm(true);
     if(db) db.onclick=async(e)=>{
@@ -1646,6 +2143,7 @@ async function fillModelPop(){
       delArmKey=null;
       db.textContent='⏳'; db.disabled=true;
       const r=await api('/api/llm/model',{name:m.name,backend:m.backend,
+                                          base_url:m.base_url,
                                           action:'delete'});
       if(r && r.error){
         db.disabled=false; arm(false);
@@ -1658,7 +2156,10 @@ async function fillModelPop(){
       fillModelPop();
     };
     el.onclick=async()=>{
-      await api('/api/select',{kind:'model',value:m.name,backend:m.backend});
+      // у облачной модели свой адрес — шлём его, иначе при одинаковых
+      // именах у разных провайдеров можно уехать не туда
+      await api('/api/select',{kind:'model',value:m.name,backend:m.backend,
+                               base_url:m.base_url});
       refresh();
       if(!loaded.has(m.name)){
         const bar=document.createElement('div');
@@ -1789,9 +2290,14 @@ function ttsScore(nm, st){
   return base;
 }
 function fillTtsPop(){
-  const names={qwen3:'Qwen3-TTS — голос Сайки', silero:'Silero (запасной)',
-    edge:'Edge-TTS (онлайн)'};
+  // названия и лицензии теперь приходят с сервера (status.tts.meta) —
+  // список движков растёт, дублировать его в двух местах было ошибкой
   const st=status.tts||{};
+  const meta=st.meta||{};
+  const names={qwen3:'Qwen3-TTS — голос Сайки', silero:'Silero (запасной)',
+    edge:'Edge-TTS (онлайн)', piper:'Piper (офлайн, MIT)',
+    omni:'OmniVoice — клон голоса, Apache-2.0',
+    xtts:'XTTS-v2 — клон голоса', f5ru:'F5-TTS русский — клон'};
   const box=$('#tts-engines');
   const pop=box.closest('.pop');
   const prevScroll=pop?pop.scrollTop:0;   // не дёргаем прокрутку при refresh
@@ -1812,7 +2318,18 @@ function fillTtsPop(){
     const btn = loaded===null ? '' :
       `<button class="mini" title="${loaded?'Выгрузить модель из памяти'
         :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
-    el.innerHTML=`${scoreBar(nm, ttsScore(nm,st),'качество голоса')}${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 ${names[nm]||nm} ${stIcon}${btn}`;
+    const mt=meta[nm]||{};
+    // ⚠️ у лицензии есть практический смысл: у Silero она запрещает
+    // коммерческое использование, а проект планируется монетизировать —
+    // владелец должен видеть это в списке, а не узнать потом
+    const lic = mt.license ? (/⚠/.test(mt.license)
+        ? `<span class="st" style="color:var(--warn)" title="${esc(mt.license)}">⚠ лиц.</span>`
+        : '') : '';
+    const clone = mt.voice_clone ? '<span class="st" style="color:var(--accent)" '
+        + 'title="Клонирует голос Сайки по образцу">🎭</span>' : '';
+    el.title = [mt.title||names[nm]||nm, mt.license?('Лицензия: '+mt.license):'',
+                mt.note||''].filter(Boolean).join('\n\n');
+    el.innerHTML=`${scoreBar(nm, ttsScore(nm,st),'качество голоса')}${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 <span class="mname">${mt.title||names[nm]||nm}</span>${clone}${lic}${stIcon}${btn}`;
     const b=el.querySelector('.mini');
     // клик по строке — только переключить (мгновенно). Загрузка — по ⬇ или
     // лениво при первой озвучке, чтобы зависшая загрузка не блокировала выбор
@@ -1922,6 +2439,15 @@ $('#btn-always').onclick = async(e)=>{
 $('#btn-model').onclick = ()=>{ fillModelPop(); loadCloud(); togglePop('pop-model'); };
 /* ---------- онлайн-модели по API-ключу ---------- */
 const CLOUD_PRESETS={
+  // 2026-07-26: список пересобран под бесплатные тиры. OpenRouter уехал
+  // вниз — с 27.06.2026 он не работает для РФ и Беларуси (гео аккаунта,
+  // VPN не спасает), а был у нас дефолтом.
+  gigachat:{url:'https://gigachat.devices.sberbank.ru/api/v1', hint:'напр. GigaChat-2, GigaChat-2-Pro (в поле ключа — Authorization key из кабинета Сбера)'},
+  mistral:{url:'https://api.mistral.ai/v1', hint:'напр. mistral-medium-3-5, mistral-small-2603'},
+  github:{url:'https://models.github.ai/inference', hint:'напр. openai/gpt-4.1-mini (ключ — GitHub PAT со scope models)'},
+  cerebras:{url:'https://api.cerebras.ai/v1', hint:'напр. zai-glm-4.7, gpt-oss-120b'},
+  gemini:{url:'https://generativelanguage.googleapis.com/v1beta/openai', hint:'напр. gemini-3.5-flash (из РФ бесплатный тир недоступен)'},
+  cloudflare:{url:'', hint:'адрес с твоим account_id: api.cloudflare.com/client/v4/accounts/ID/ai/v1'},
   openrouter:{url:'https://openrouter.ai/api/v1', hint:'напр. anthropic/claude-3.5-sonnet, openai/gpt-4o, google/gemini-2.0-flash'},
   openai:{url:'https://api.openai.com/v1', hint:'напр. gpt-4o, gpt-4o-mini'},
   groq:{url:'https://api.groq.com/openai/v1', hint:'напр. llama-3.3-70b-versatile'},
@@ -1934,10 +2460,10 @@ const CLOUD_PRESETS={
 async function loadCloud(){
   try{
     const c=await (await fetch('/api/llm/cloud')).json();
-    $('#cloud-provider').value=c.provider||'openrouter';
-    $('#cloud-base').value=c.base_url||CLOUD_PRESETS.openrouter.url;
+    $('#cloud-provider').value=c.provider||'gigachat';
+    $('#cloud-base').value=c.base_url||CLOUD_PRESETS.gigachat.url;
     $('#cloud-model').value=c.model||'';
-    $('#cloud-model').placeholder=(CLOUD_PRESETS[c.provider]||CLOUD_PRESETS.openrouter).hint;
+    $('#cloud-model').placeholder=(CLOUD_PRESETS[c.provider]||CLOUD_PRESETS.gigachat).hint;
     $('#cloud-status').textContent=c.has_key?(c.enabled?'✓ включено, ключ на месте':'ключ есть, выключено'):'ключ не задан';
   }catch(e){}
 }
@@ -3076,6 +3602,8 @@ eqFrame();
       '<div class="title">Проверка</div>' +
       '<div class="item" id="eyes-shot">📷 <span class="mname">Пробный кадр</span></div>' +
       '<div class="item" id="eyes-retest">🔄 <span class="mname">Перепроверить камеру</span></div>' +
+      '<div class="item" id="eyes-testall">🧪 <span class="mname">Проверить все камеры</span>' +
+        '<span class="st">несколько секунд</span></div>' +
       '<img id="eyes-preview" style="display:none;width:100%;border-radius:12px;' +
         'margin:6px 0;border:1px solid var(--border)">' +
       '<div id="eyes-err" style="font-size:11px;color:var(--err);' +
@@ -3238,6 +3766,19 @@ eqFrame();
   $id('eyes-live').onclick = () => liveOn ? liveStop() : liveStart();
   // источник вроде Iriun оживает, когда запускают приложение на телефоне —
   // тогда прошлая проба уже неверна, надо уметь спросить заново
+  $id('eyes-testall').onclick = async () => {
+    $id('eyes-err').textContent = 'открываю каждую камеру по очереди…';
+    liveStop();
+    ST = await api('/api/vision/test_cameras', {});
+    paint();
+    const pr = ST.camera_probe || {};
+    const alive = Object.keys(pr).filter(k => pr[k].ok && !pr[k].black);
+    $id('eyes-err').style.color = alive.length ? 'var(--ok)' : 'var(--warn)';
+    $id('eyes-err').textContent = alive.length
+      ? ('живых камер: ' + alive.length + ' — выбери помеченную «рабочая»')
+      : 'ни одна камера не отдала кадр — запусти программу-источник ' +
+        '(Iriun, OBS, NVIDIA Broadcast) и проверь снова';
+  };
   $id('eyes-retest').onclick = async () => {
     $id('eyes-err').textContent = 'проверяю…';
     liveStop();
@@ -3264,6 +3805,3256 @@ eqFrame();
   // первый опрос — тихо, чтобы кнопка сразу показывала правду
   refresh();
 })();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · волна 1 по мотивам Soul of Waifu (2026-07-26)
+
+   Что здесь: тосты вместо браузерных модалок, панель сэмплинга, настройки
+   внешнего вида, заметки автора, регенерация сообщений.
+
+   ПРО ПРОИСХОЖДЕНИЕ ИДЕЙ. Разбор SoW (workshop/SOW_vs_SAIKA.md) показал
+   несколько удачных решений, которых у нас не было. Его код под GPL-3.0, а
+   в стеке Live2D Cubism и Coqui XTTS с некоммерческими лицензиями — брать
+   оттуда строки нельзя ни в публичный репозиторий, ни в проект, который
+   планируется монетизировать. Поэтому здесь переизобретено с нуля: идеи
+   лицензиями не защищены, конкретный код защищён.
+
+   Отдельным файлом, чтобы не раздувать основной скрипт и чтобы при поломке
+   достаточно было вырезать один <script>.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+
+  /* ─────────────────────────────────────────────────────────────────
+     1. ТОСТЫ
+     confirm()/alert() блокируют поток, выглядят чужеродно и в стеклянном
+     интерфейсе читаются как заплатка. Плюс confirm нельзя показать из
+     фонового события — а Беймаксу и зрению есть что сказать не в ответ
+     на клик.
+     ───────────────────────────────────────────────────────────────── */
+  const ICONS = {info: 'ℹ', ok: '✓', warn: '⚠', err: '✕', ask: '❓'};
+
+  function toast(text, opts){
+    opts = opts || {};
+    const box = $id('toasts');
+    if(!box) return null;
+    const kind = opts.kind || 'info';
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    const ic = document.createElement('span');
+    ic.className = 'ti'; ic.textContent = opts.icon || ICONS[kind] || ICONS.info;
+    const tx = document.createElement('div');
+    tx.className = 'tx'; tx.textContent = text;
+    el.append(ic, tx);
+    const close = () => {
+      if(el.classList.contains('out')) return;
+      el.classList.add('out');
+      setTimeout(() => el.remove(), 220);
+    };
+    if(opts.buttons && opts.buttons.length){
+      const bar = document.createElement('div');
+      bar.className = 'tb';
+      opts.buttons.forEach(b => {
+        const btn = document.createElement('button');
+        btn.textContent = b.label;
+        if(b.danger) btn.className = 'danger';
+        btn.onclick = () => { close(); if(b.onClick) b.onClick(); };
+        bar.appendChild(btn);
+      });
+      tx.appendChild(bar);
+    } else {
+      // без кнопок тост уходит сам; с кнопками ждёт решения человека
+      setTimeout(close, opts.ttl || 4200);
+    }
+    el.onclick = e => { if(!e.target.closest('button') && !opts.buttons) close(); };
+    box.appendChild(el);
+    return {el, close};
+  }
+
+  /** Замена confirm(): вместо блокировки — тост с двумя кнопками. */
+  function ask(text, onYes, opts){
+    opts = opts || {};
+    return toast(text, {
+      kind: 'ask', icon: ICONS.ask,
+      buttons: [
+        {label: opts.yes || 'Да', danger: opts.danger !== false, onClick: onYes},
+        {label: opts.no || 'Отмена'},
+      ]});
+  }
+
+  // отдаём наружу: основной скрипт и будущие правки зовут это же
+  window.saikaToast = toast;
+  window.saikaAsk = ask;
+
+  /* Перехват браузерных модалок в уже написанном коде. Причина: заменить
+     каждый вызов руками — это правки в десятках мест основного скрипта,
+     который я намеренно не трогаю. Здесь window.confirm подменяется на
+     тост с кнопками, а чтобы не менять синхронную семантику вызова
+     (`if(!confirm(...)) return;`), исходное действие переспрашивается: на
+     первый вызов возвращаем false и показываем тост, по кнопке «Да» —
+     повторяем то же действие с флагом «уже подтверждено». */
+  const nativeConfirm = window.confirm.bind(window);
+  const nativeAlert = window.alert.bind(window);
+  let confirmed = null;                 // текст последнего подтверждённого
+  window.confirm = function(msg){
+    if(confirmed === msg){ confirmed = null; return true; }
+    ask(String(msg), () => {
+      confirmed = msg;
+      // повторяем тот же клик: обработчик дойдёт до confirm и получит true
+      if(lastClick && document.contains(lastClick)) lastClick.click();
+      else confirmed = null;
+    });
+    return false;
+  };
+  window.alert = function(msg){ toast(String(msg), {kind: 'info', ttl: 6000}); };
+  let lastClick = null;
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button,.item,.chip,.iconbtn');
+    if(b) lastClick = b;
+  }, true);
+  window.saikaNativeConfirm = nativeConfirm;
+  window.saikaNativeAlert = nativeAlert;
+
+  /* ─────────────────────────────────────────────────────────────────
+     2. ПАНЕЛЬ СЭМПЛИНГА
+     Пресеты впереди ползунков осознанно: шестнадцать ручек вслепую никто
+     крутить не будет, а «живая речь» — один клик. Подписи объясняют, что
+     параметр делает СЛЫШИМО, а не как он называется в статье.
+     ───────────────────────────────────────────────────────────────── */
+  const SLIDERS = [
+    {k: 'min_p', label: 'min_p — отсечка маловероятных', min: 0, max: 0.3,
+     step: 0.01, hint: 'Главный фильтр хвоста. 0.05 — норма, выше = скучнее '
+       + 'и предсказуемее, 0 = выключен.'},
+    {k: 'top_p', label: 'top_p — ядро вероятности', min: 0.5, max: 1,
+     step: 0.01, hint: 'Классика. При работающем min_p обычно держат 1.0, '
+       + 'чтобы фильтры не дублировали друг друга.'},
+    {k: 'top_k', label: 'top_k — сколько вариантов', min: 0, max: 100,
+     step: 1, hint: '0 = без ограничения. Грубый фильтр, min_p умнее.'},
+    {k: 'dry_multiplier', label: 'DRY — штраф за повторы', min: 0, max: 2,
+     step: 0.05, hint: 'ЛУЧШЕЕ лекарство от «она повторяет одно и то же». '
+       + 'Штрафует повторяющиеся n-граммы, а не отдельные токены. 0.8 — норма.'},
+    {k: 'dry_base', label: 'DRY base — крутизна штрафа', min: 1, max: 4,
+     step: 0.05, hint: 'Насколько резко растёт штраф с длиной повтора. 1.75.'},
+    {k: 'dry_allowed_length', label: 'DRY — длина без штрафа', min: 1, max: 8,
+     step: 1, hint: 'Сколько токенов можно повторить безнаказанно. 2 — норма: '
+       + 'обычные словосочетания повторять нормально.'},
+    {k: 'xtc_probability', label: 'XTC — сбивать шаблонность', min: 0, max: 1,
+     step: 0.05, hint: 'Иногда выбрасывает САМЫЙ вероятный токен. Речь '
+       + 'перестаёт сползать в дежурные формулировки. 0.3 — заметно, но '
+       + 'безопасно; выше — начнёт терять нить.'},
+    {k: 'xtc_threshold', label: 'XTC — порог срабатывания', min: 0.05, max: 0.5,
+     step: 0.01, hint: 'Ниже порога токен не выбрасывается. 0.1.'},
+    {k: 'repeat_penalty', label: 'Штраф повтора (старый)', min: 1, max: 1.3,
+     step: 0.01, hint: 'Грубый предшественник DRY. При включённом DRY держать '
+       + '1.0 — вместе они портят грамматику.'},
+    {k: 'presence_penalty', label: 'Штраф за присутствие', min: 0, max: 1.5,
+     step: 0.05, hint: 'Гонит к новым темам. Для болтовни — 0.'},
+    {k: 'frequency_penalty', label: 'Штраф за частоту', min: 0, max: 1.5,
+     step: 0.05, hint: 'Давит часто встречающиеся слова. Перебор ломает речь.'},
+    {k: 'dynatemp_range', label: 'Динамическая температура', min: 0, max: 1,
+     step: 0.05, hint: 'Температура плавает вокруг заданной. 0 = выключено. '
+       + 'Даёт разброс между спокойными и живыми фразами.'},
+  ];
+  const PRESET_NAMES = {
+    off: '⏸ Выключено', lively: '✨ Живая речь', precise: '🎯 Точность',
+    wild: '🌀 Хаос', custom: '✎ Своё',
+  };
+  const PRESET_NOTES = {
+    off: 'Только температура из настроек модели — как было раньше.',
+    lively: 'DRY против повторов, XTC против дежурных формулировок, min_p '
+      + 'вместо top_k. Рекомендую как основной режим для разговора.',
+    precise: 'Жёстче отсечка, без XTC. Для фактов, кода и вызова инструментов, '
+      + 'где выдумывать нельзя.',
+    wild: 'Максимум непредсказуемости плюс плавающая температура. Интересно '
+      + 'слушать, но нить теряет чаще.',
+    custom: 'Ручная настройка поверх пресета.',
+  };
+  let SAMP = null;
+
+  function paintSampling(){
+    if(!SAMP) return;
+    const on = !!SAMP.enabled;
+    const cur = on ? (SAMP.preset || 'custom') : 'off';
+    const badge = $id('samp-badge');
+    if(badge) badge.textContent = '· ' + (PRESET_NAMES[cur] || cur)
+      .replace(/^\S+\s/, '');
+
+    const pbox = $id('samp-presets');
+    if(pbox){
+      pbox.innerHTML = '';
+      ['off', 'lively', 'precise', 'wild'].forEach(name => {
+        const b = document.createElement('button');
+        b.className = 'spreset' + (cur === name ? ' on' : '');
+        b.textContent = PRESET_NAMES[name];
+        b.title = PRESET_NOTES[name];
+        b.onclick = async () => {
+          SAMP = (await api('/api/llm/sampling', {preset: name})).sampling;
+          paintSampling();
+          toast(name === 'off' ? 'Сэмплинг выключен'
+            : 'Режим речи: ' + PRESET_NAMES[name].replace(/^\S+\s/, ''),
+            {kind: 'ok'});
+        };
+        pbox.appendChild(b);
+      });
+    }
+    const note = $id('samp-note');
+    if(note) note.textContent = PRESET_NOTES[cur] || '';
+
+    const box = $id('samp-sliders');
+    if(box){
+      box.innerHTML = '';
+      if(on) SLIDERS.forEach(s => {
+        const v = Number(SAMP[s.k] ?? s.min);
+        const row = document.createElement('div');
+        row.className = 'srow' + (v === 0 ? ' off' : '');
+        const lab = document.createElement('label');
+        lab.textContent = s.label; lab.title = s.hint;
+        const inp = document.createElement('input');
+        inp.type = 'range'; inp.min = s.min; inp.max = s.max;
+        inp.step = s.step; inp.value = v; inp.title = s.hint;
+        const val = document.createElement('span');
+        val.className = 'sval';
+        val.textContent = s.step >= 1 ? String(v) : v.toFixed(2);
+        inp.oninput = () => {
+          const nv = Number(inp.value);
+          val.textContent = s.step >= 1 ? String(nv) : nv.toFixed(2);
+          row.classList.toggle('off', nv === 0);
+        };
+        // сохраняем по отпусканию, а не на каждый пиксель — иначе на
+        // перетаскивании уходит сотня записей в config
+        inp.onchange = async () => {
+          const f = {}; f[s.k] = Number(inp.value);
+          SAMP = (await api('/api/llm/sampling', {fields: f})).sampling;
+          paintSampling();
+        };
+        row.append(lab, inp, val);
+        box.appendChild(row);
+      });
+    }
+    const stop = $id('samp-stop');
+    if(stop && document.activeElement !== stop)
+      stop.value = (SAMP.stop || []).join(', ');
+  }
+
+  const stopEl = $id('samp-stop');
+  if(stopEl) stopEl.onchange = async () => {
+    const list = stopEl.value.split(',').map(x => x.trim()).filter(Boolean);
+    SAMP = (await api('/api/llm/sampling', {fields: {stop: list}})).sampling;
+    paintSampling();
+    toast(list.length ? 'Стоп-строк: ' + list.length : 'Стоп-строки убраны',
+          {kind: 'ok'});
+  };
+
+  async function loadSampling(){
+    try{
+      SAMP = (await api('/api/llm/sampling')).sampling;
+      paintSampling();
+    }catch(e){ /* сервер старый — панель просто останется пустой */ }
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     3. ВНЕШНИЙ ВИД — поверх готовых CSS-переменных
+     Весь интерфейс уже собран на токенах (--accent, --gb, --r-tile…),
+     поэтому «настройки внешнего вида» это чтение и запись переменных,
+     а не второй набор стилей.
+     ───────────────────────────────────────────────────────────────── */
+  const LOOK = [
+    {k: '--accent', label: 'Акцент', type: 'color', def: '#9184d9'},
+    {k: '--accent2', label: 'Второй акцент', type: 'color', def: '#3fb6c8'},
+    {k: '--bg', label: 'Фон', type: 'color', def: '#0b0d16'},
+    {k: '--gb', label: 'Размытие стекла', type: 'range', def: 26,
+     min: 0, max: 48, step: 1, unit: 'px'},
+    {k: '--r-tile', label: 'Скругление плиток', type: 'range', def: 22,
+     min: 0, max: 34, step: 1, unit: 'px'},
+    {k: '--msg-size', label: 'Размер текста в чате', type: 'range', def: 13.5,
+     min: 11, max: 20, step: 0.5, unit: 'px'},
+    {k: '--msg-max', label: 'Ширина сообщений', type: 'range', def: 84,
+     min: 50, max: 100, step: 1, unit: '%'},
+    {k: '--msg-radius', label: 'Скругление пузырей', type: 'range', def: 16,
+     min: 2, max: 24, step: 1, unit: 'px'},
+    {k: '--tile-a', label: 'Плотность стекла', type: 'range', def: 85,
+     min: 20, max: 220, step: 5, unit: '‰'},
+  ];
+  const LOOK_KEY = 'saika_look';
+  let look = {};
+  try{ look = JSON.parse(localStorage[LOOK_KEY] || '{}'); }catch(e){}
+
+  function applyLook(){
+    const r = document.documentElement.style;
+    LOOK.forEach(o => {
+      const v = look[o.k];
+      if(v === undefined || v === null || v === '') { r.removeProperty(o.k); return; }
+      r.setProperty(o.k, o.type === 'range' ? (v + (o.unit === '‰' ? '' : o.unit)) : v);
+    });
+    // производные величины, которые из одного значения красят несколько мест
+    if(look['--tile-a'] !== undefined){
+      const a = Number(look['--tile-a']) / 1000;
+      r.setProperty('--tile',
+        `linear-gradient(165deg,rgba(255,255,255,${a}),rgba(255,255,255,${a * 0.33}))`);
+      r.setProperty('--tile-hi',
+        `linear-gradient(160deg,rgba(255,255,255,${a * 1.18}),rgba(255,255,255,${a * 0.41}))`);
+    }
+    if(look['--msg-max'] !== undefined)
+      r.setProperty('--msg-max', look['--msg-max'] + '%');
+  }
+  applyLook();
+
+  function buildLookPanel(box){
+    box.innerHTML = '';
+    LOOK.forEach(o => {
+      const row = document.createElement('div');
+      row.className = 'srow';
+      const lab = document.createElement('label');
+      lab.textContent = o.label;
+      let inp;
+      if(o.type === 'color'){
+        inp = document.createElement('input');
+        inp.type = 'color';
+        inp.value = look[o.k] || o.def;
+        inp.style.cssText = 'flex:none;width:44px;height:26px;padding:0;'
+          + 'border:1px solid var(--border);border-radius:7px;background:none;'
+          + 'cursor:pointer';
+        inp.oninput = () => { look[o.k] = inp.value; applyLook(); };
+        inp.onchange = save;
+        row.append(lab, inp);
+      } else {
+        inp = document.createElement('input');
+        inp.type = 'range'; inp.min = o.min; inp.max = o.max; inp.step = o.step;
+        inp.value = look[o.k] ?? o.def;
+        const val = document.createElement('span');
+        val.className = 'sval';
+        val.textContent = inp.value + (o.unit === '‰' ? '' : o.unit);
+        inp.oninput = () => {
+          look[o.k] = Number(inp.value);
+          val.textContent = inp.value + (o.unit === '‰' ? '' : o.unit);
+          applyLook();
+        };
+        inp.onchange = save;
+        row.append(lab, inp, val);
+      }
+      box.appendChild(row);
+    });
+    const reset = document.createElement('button');
+    reset.className = 'spreset';
+    reset.textContent = '↺ Вернуть как было';
+    reset.style.marginTop = '8px';
+    reset.onclick = () => {
+      look = {}; save(); applyLook(); buildLookPanel(box);
+      toast('Внешний вид сброшен', {kind: 'ok'});
+    };
+    box.appendChild(reset);
+    function save(){
+      try{ localStorage[LOOK_KEY] = JSON.stringify(look); }catch(e){}
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     4. ЗАМЕТКИ АВТОРА
+     Скрытая инструкция, которая едет в промпт, но не показывается как
+     реплика. Управлять поведением так проще, чем правкой персоны:
+     персона — это кто она, заметки — что делаем сейчас.
+     ───────────────────────────────────────────────────────────────── */
+  async function loadNotes(el){
+    try{
+      const r = await api('/api/notes');
+      el.value = r.notes || '';
+    }catch(e){}
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     5. ШТОРКА НАСТРОЕК — где всё это живёт
+     Отдельная панель, а не ещё одна кнопка в шапке: пунктов будет
+     становиться больше, и им нужно место.
+     ───────────────────────────────────────────────────────────────── */
+  const sheet = document.createElement('div');
+  sheet.id = 'set-sheet';
+  sheet.innerHTML =
+    // ширину задаёт CSS (#set-sheet .ss-card) — инлайновый max-width тут
+    // перебивал её и держал карточку узкой, из-за чего всё ужималось
+    '<div class="ss-card">' +
+      '<div class="ss-head">⚙ <span>Настройки</span>' +
+      '<button class="iconbtn" id="set-close" title="Закрыть" ' +
+      'style="margin-left:auto;width:30px;height:30px;font-size:13px">✕</button></div>' +
+      '<div class="ss-body">' +
+        '<div class="title">Внешний вид</div><div id="set-look"></div>' +
+        '<div class="title">Заметки автора — скрытая инструкция для неё</div>' +
+        '<textarea id="set-notes" rows="4" placeholder="Например: сегодня мы ' +
+          'на стриме, отвечай короче обычного и не читай длинных списков"' +
+          ' style="width:100%;background:var(--panel2);color:var(--text);' +
+          'border:1px solid var(--border);border-radius:10px;padding:8px;' +
+          'font:13px/1.5 inherit;resize:vertical"></textarea>' +
+        '<div style="font-size:11px;color:var(--dim);line-height:1.45">' +
+          'Едет в промпт рядом с персоной, но в чате не показывается и ' +
+          'репликой не считается. Персона — это кто она; заметки — что ' +
+          'делаем прямо сейчас.</div>' +
+      '</div></div>';
+  document.body.appendChild(sheet);
+  sheet.querySelector('#set-close').onclick = () => sheet.classList.remove('show');
+  sheet.onclick = e => { if(e.target === sheet) sheet.classList.remove('show'); };
+
+  const notesEl = $id('set-notes');
+  let notesTimer = null;
+  if(notesEl) notesEl.oninput = () => {
+    clearTimeout(notesTimer);
+    notesTimer = setTimeout(async () => {
+      try{
+        await api('/api/notes', {notes: notesEl.value});
+      }catch(e){}
+    }, 700);
+  };
+
+  const btn = document.createElement('button');
+  btn.className = 'iconbtn'; btn.id = 'btn-settings';
+  btn.textContent = '⚙'; btn.title = 'Настройки: внешний вид, заметки автора';
+  btn.onclick = () => {
+    buildLookPanel($id('set-look'));
+    if(notesEl) loadNotes(notesEl);
+    sheet.classList.add('show');
+  };
+  const header = document.querySelector('header');
+  if(header) header.insertBefore(btn, $id('btn-board') || null);
+
+  /* ─────────────────────────────────────────────────────────────────
+     6. РЕГЕНЕРАЦИЯ ПОСЛЕДНЕГО ОТВЕТА
+     Кнопка появляется на последнем сообщении Сайки. Работает поверх
+     существующего пути: удаляем её реплику из истории на сервере и
+     отправляем последнюю фразу человека заново.
+     ───────────────────────────────────────────────────────────────── */
+  function lastUserText(){
+    const msgs = document.querySelectorAll('#chat .msg.user');
+    const el = msgs[msgs.length - 1];
+    if(!el) return '';
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('.meta').forEach(m => m.remove());
+    return clone.textContent.trim();
+  }
+
+  function decorate(){
+    const msgs = document.querySelectorAll('#chat .msg.saika');
+    const last = msgs[msgs.length - 1];
+    document.querySelectorAll('#chat .msg .regen').forEach(b => {
+      if(b.parentElement !== last) b.remove();
+    });
+    if(!last || last.querySelector('.regen')) return;
+    const b = document.createElement('button');
+    b.className = 'regen';
+    b.textContent = '↻ переспросить';
+    b.title = 'Убрать этот ответ и спросить то же самое заново';
+    b.style.cssText = 'margin-top:7px;border:1px solid rgba(255,255,255,.14);'
+      + 'border-radius:9px;background:rgba(255,255,255,.06);color:var(--dim);'
+      + 'cursor:pointer;font:11.5px/1 inherit;padding:5px 9px';
+    b.onmouseenter = () => b.style.color = 'var(--text)';
+    b.onmouseleave = () => b.style.color = 'var(--dim)';
+    b.onclick = async () => {
+      const q = lastUserText();
+      if(!q){ toast('Не нашла, что переспросить', {kind: 'warn'}); return; }
+      b.disabled = true; b.textContent = '↻ спрашиваю…';
+      try{
+        await api('/api/dialog/drop_last', {});   // забыть её последнюю реплику
+      }catch(e){}
+      last.style.opacity = '.4';
+      const input = $id('input');
+      const send = $id('btn-send');
+      if(input && send){ input.value = q; send.click(); }
+    };
+    last.appendChild(b);
+  }
+
+  const chat = $id('chat');
+  if(chat){
+    let deb = null;
+    new MutationObserver(() => {
+      clearTimeout(deb);
+      deb = setTimeout(decorate, 240);   // не на каждый токен стрима
+    }).observe(chat, {childList: true, subtree: true});
+  }
+
+  /* ── старт ── */
+  loadSampling();
+  const det = $id('samp-details');
+  if(det) det.addEventListener('toggle', () => { if(det.open) loadSampling(); });
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · волна 2 (2026-07-26): лорбук и порядок блоков промпта.
+
+   Идеи из разбора Soul of Waifu (workshop/SOW_vs_SAIKA.md), код свой —
+   у него GPL-3.0, брать оттуда строки в публичный репозиторий нельзя.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const body = document.querySelector('#set-sheet .ss-body');
+  if(!body) return;
+
+  /* ─────────────────────────────────────────────────────────────────
+     ЛОРБУК
+     Запись лежит тихо и подмешивается в промпт только когда в разговоре
+     прозвучал её ключ. Так сто фактов о мире не съедают контекст на
+     каждой фразе — а именно это происходит, если вписать их в персону.
+     ───────────────────────────────────────────────────────────────── */
+  const loreWrap = document.createElement('div');
+  loreWrap.innerHTML =
+    '<div class="title">Лорбук — что она знает о мире <span id="lore-stat" ' +
+      'style="text-transform:none;letter-spacing:0"></span></div>' +
+    '<div style="font-size:11px;color:var(--dim);line-height:1.45;margin-bottom:6px">' +
+      'Запись всплывает в памяти, когда в разговоре прозвучал её ключ — ' +
+      'а не висит в контексте постоянно. Ключи пишутся словарной формой, ' +
+      'склонения ловятся сами («озвучка» поймает «озвучку»).</div>' +
+    '<div id="lore-list" style="display:flex;flex-direction:column;gap:6px"></div>' +
+    '<button class="spreset" id="lore-add" style="margin-top:6px">＋ Добавить запись</button>';
+  body.appendChild(loreWrap);
+
+  let LORE = [];
+
+  function loreRow(e){
+    const row = document.createElement('div');
+    row.style.cssText = 'border:1px solid var(--border);border-radius:12px;'
+      + 'padding:9px 10px;background:rgba(255,255,255,.04);display:flex;'
+      + 'flex-direction:column;gap:6px';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:8px';
+    head.innerHTML =
+      '<b style="font-size:12px;flex:1;min-width:0;overflow:hidden;' +
+        'text-overflow:ellipsis;white-space:nowrap">' + esc(e.id) + '</b>' +
+      (e.always ? '<span class="st ok" style="font-size:10px">всегда</span>' : '') +
+      (e.enabled === false ? '<span class="st bad" style="font-size:10px">выкл</span>' : '');
+    const eye = document.createElement('button');
+    eye.className = 'spreset';
+    eye.style.cssText = 'padding:4px 8px;font-size:11px';
+    eye.textContent = e.enabled === false ? '○' : '●';
+    eye.title = e.enabled === false ? 'Включить запись' : 'Выключить запись';
+    eye.onclick = async () => {
+      await api('/api/lore/save',
+        {entry: Object.assign({}, e, {enabled: e.enabled === false})});
+      loadLore();
+    };
+    const del = document.createElement('button');
+    del.className = 'spreset';
+    del.style.cssText = 'padding:4px 8px;font-size:11px;'
+      + 'border-color:rgba(224,101,95,.4);color:#f0a9a4';
+    del.textContent = '✕'; del.title = 'Удалить запись';
+    del.onclick = () => (window.saikaAsk || confirm)(
+      'Удалить запись «' + e.id + '»?', async () => {
+        await api('/api/lore/delete', {id: e.id});
+        loadLore(); toast('Запись удалена', {kind: 'ok'});
+      });
+    head.append(eye, del);
+
+    const keys = document.createElement('input');
+    keys.value = (e.keys || []).join(', ');
+    keys.placeholder = 'ключи через запятую (пусто + «всегда» = всегда в промпте)';
+    const cont = document.createElement('textarea');
+    cont.value = e.content || '';
+    cont.rows = 2;
+    cont.placeholder = 'что она знает';
+    [keys, cont].forEach(x => {
+      x.style.cssText = 'width:100%;background:var(--panel2);color:var(--text);'
+        + 'border:1px solid var(--border);border-radius:9px;padding:6px 8px;'
+        + 'font:12px/1.45 inherit;outline:none;resize:vertical';
+    });
+
+    const opts = document.createElement('div');
+    opts.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
+      + 'font-size:11px;color:var(--dim)';
+    const mk = (lab, key, min, max, step, hint) => {
+      const w = document.createElement('label');
+      w.style.cssText = 'display:flex;align-items:center;gap:4px';
+      w.title = hint;
+      const i = document.createElement('input');
+      i.type = 'number'; i.min = min; i.max = max; i.step = step;
+      i.value = e[key] ?? min;
+      i.dataset.k = key;
+      i.style.cssText = 'width:52px;background:var(--panel2);color:var(--text);'
+        + 'border:1px solid var(--border);border-radius:7px;padding:3px 5px;'
+        + 'font:11px inherit';
+      w.append(document.createTextNode(lab), i);
+      return w;
+    };
+    const always = document.createElement('label');
+    always.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer';
+    always.title = 'Всегда в промпте, без ключей. Тратит контекст на каждой '
+      + 'фразе — держи так только самое важное.';
+    const ab = document.createElement('input');
+    ab.type = 'checkbox'; ab.checked = !!e.always; ab.dataset.k = 'always';
+    always.append(ab, document.createTextNode('всегда'));
+    opts.append(
+      mk('глубина ', 'depth', 1, 20, 1,
+         'В скольких последних сообщениях искать ключ. 4 — норма: ключ, '
+         + 'названный пару реплик назад, ещё работает.'),
+      mk('кулдаун с ', 'cooldown_s', 0, 3600, 5,
+         'Не повторять чаще, чем раз в N секунд. 0 = без ограничения.'),
+      mk('вес ', 'priority', -9, 9, 1,
+         'Больше = выше в списке, когда записей всплыло больше лимита.'),
+      always);
+
+    const save = document.createElement('button');
+    save.className = 'spreset';
+    save.style.cssText = 'align-self:flex-start;padding:5px 10px;font-size:11px';
+    save.textContent = '✓ Сохранить';
+    save.onclick = async () => {
+      const entry = Object.assign({}, e, {
+        keys: keys.value.split(',').map(x => x.trim()).filter(Boolean),
+        content: cont.value,
+      });
+      opts.querySelectorAll('input').forEach(i => {
+        entry[i.dataset.k] = i.type === 'checkbox' ? i.checked : Number(i.value);
+      });
+      await api('/api/lore/save', {entry});
+      loadLore(); toast('Запись сохранена', {kind: 'ok'});
+    };
+
+    row.append(head, keys, cont, opts, save);
+    return row;
+  }
+
+  async function loadLore(){
+    try{
+      const r = await api('/api/lore');
+      LORE = r.entries || [];
+      const st = $id('lore-stat');
+      if(st) st.textContent = LORE.length
+        ? '· ' + LORE.length + ', из них всегда: ' + (r.stats || {}).always
+        : '· пусто';
+      const list = $id('lore-list');
+      list.innerHTML = '';
+      LORE.forEach(e => list.appendChild(loreRow(e)));
+      if(!LORE.length)
+        list.innerHTML = '<div style="font-size:11.5px;color:var(--dim)">'
+          + 'Пока ничего. Хорошие первые записи: кто такой Беймакс, как '
+          + 'зовут постоянных зрителей, что за проект Сайка, названия наших '
+          + 'модулей.</div>';
+    }catch(e){}
+  }
+
+  $id('lore-add').onclick = () => {
+    const list = $id('lore-list');
+    if(list.querySelector('[data-new]')) return;
+    const row = loreRow({id: '(новая)', keys: [], content: '',
+                         depth: 4, cooldown_s: 0, priority: 0});
+    row.dataset.new = '1';
+    row.style.borderColor = 'rgba(145,132,217,.45)';
+    // у новой записи id придумает сервер по первому ключу
+    row.querySelectorAll('button').forEach(b => {
+      if(b.textContent.indexOf('Сохранить') < 0 && b.textContent !== '✕') b.remove();
+    });
+    list.insertBefore(row, list.firstChild);
+    row.querySelector('input').focus();
+  };
+
+  /* ─────────────────────────────────────────────────────────────────
+     ПОРЯДОК БЛОКОВ ПРОМПТА
+     Ближе к концу = весит больше: модель сильнее слушает конец промпта.
+     Поэтому «указание на сейчас» по умолчанию последнее.
+     ───────────────────────────────────────────────────────────────── */
+  const BLOCK_NAMES = {
+    lore: 'Лорбук — знание о мире',
+    memory: 'Долгая память по теме',
+    devboard: 'Дев-доска',
+    search: 'Результаты поиска',
+    image: 'Присланная картинка',
+    vision: 'Что она увидела сама',
+    tone: 'Метка тона — как себя вести',
+    tools: 'Правила инструментов',
+    browser: 'Открытое окно браузера',
+    other: 'Прочее',
+    notes: 'Заметки автора',
+  };
+  const orderWrap = document.createElement('div');
+  orderWrap.innerHTML =
+    '<div class="title">Порядок блоков промпта</div>' +
+    '<div style="font-size:11px;color:var(--dim);line-height:1.45;margin-bottom:6px">' +
+      'Чем ниже блок, тем сильнее он влияет: языковая модель слушает конец ' +
+      'промпта внимательнее, чем середину. Поэтому «заметки автора» стоят ' +
+      'последними — они должны перебивать всё выше.</div>' +
+    '<div id="ord-list" style="display:flex;flex-direction:column;gap:3px"></div>' +
+    '<button class="spreset" id="ord-reset" style="margin-top:6px">↺ Порядок по умолчанию</button>';
+  body.appendChild(orderWrap);
+
+  let ORDER = [];
+
+  function paintOrder(){
+    const list = $id('ord-list');
+    list.innerHTML = '';
+    ORDER.forEach((name, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;'
+        + 'padding:5px 9px;border-radius:9px;background:rgba(255,255,255,.045);'
+        + 'border:1px solid rgba(255,255,255,.08);font-size:12px';
+      const num = document.createElement('span');
+      num.textContent = (i + 1);
+      num.style.cssText = 'flex:none;width:16px;color:var(--dim);'
+        + 'font-variant-numeric:tabular-nums';
+      const lab = document.createElement('span');
+      lab.textContent = BLOCK_NAMES[name] || name;
+      lab.style.cssText = 'flex:1;min-width:0;overflow:hidden;'
+        + 'text-overflow:ellipsis;white-space:nowrap';
+      const up = document.createElement('button');
+      const dn = document.createElement('button');
+      [up, dn].forEach(b => b.style.cssText = 'flex:none;width:24px;height:22px;'
+        + 'border:1px solid rgba(255,255,255,.12);border-radius:6px;'
+        + 'background:rgba(255,255,255,.05);color:var(--dim);cursor:pointer;'
+        + 'font:11px/1 inherit');
+      up.textContent = '↑'; dn.textContent = '↓';
+      up.disabled = i === 0; dn.disabled = i === ORDER.length - 1;
+      if(up.disabled) up.style.opacity = '.3';
+      if(dn.disabled) dn.style.opacity = '.3';
+      const move = d => async () => {
+        const j = i + d;
+        [ORDER[i], ORDER[j]] = [ORDER[j], ORDER[i]];
+        paintOrder();
+        ORDER = (await api('/api/prompt/order', {order: ORDER})).order;
+        paintOrder();
+      };
+      up.onclick = move(-1); dn.onclick = move(1);
+      row.append(num, lab, up, dn);
+      list.appendChild(row);
+    });
+  }
+
+  $id('ord-reset').onclick = async () => {
+    const r = await api('/api/prompt/order', {order: null});
+    ORDER = (await api('/api/prompt/order', {order: r.all || []})).order;
+    paintOrder(); toast('Порядок блоков сброшен', {kind: 'ok'});
+  };
+
+  async function loadOrder(){
+    try{
+      ORDER = (await api('/api/prompt/order')).order || [];
+      paintOrder();
+    }catch(e){}
+  }
+
+  /* подгружаем при открытии шторки, а не на старте: лишние запросы на
+     загрузке страницы отодвигают первый токен ответа */
+  const btn = $id('btn-settings');
+  if(btn){
+    const prev = btn.onclick;
+    btn.onclick = e => { if(prev) prev(e); loadLore(); loadOrder(); };
+  }
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · «Попробовать бесплатно» (2026-07-26)
+
+   Слабое место, названное владельцем: чтобы поговорить с Сайкой, нужна либо
+   локальная модель на 8 ГБ, либо карта для облака. Здесь — список облаков
+   с настоящим бесплатным тиром, честно помеченный по доступности из России.
+
+   ⚠️ Пометки не косметика. OpenRouter (который стоял у нас дефолтом) с
+   27.06.2026 отрезал РФ и Беларусь, а бесплатный тир Gemini для РФ закрыт
+   официально. Без явного предупреждения новичок получил бы непонятную
+   ошибку и решил, что сломалось приложение.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+
+  const details = $id('cloud-details');
+  if(!details) return;
+
+  const RU = {
+    ok:    {ic: '🟢', txt: 'из РФ работает',        color: 'var(--ok)'},
+    vpn:   {ic: '🟡', txt: 'нужен VPN',             color: 'var(--warn)'},
+    block: {ic: '🔴', txt: 'из РФ НЕ работает',     color: 'var(--err)'},
+  };
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML =
+    '<div class="title" style="margin-top:8px">Попробовать бесплатно ' +
+      '<span style="text-transform:none;letter-spacing:0">— без карты</span></div>' +
+    '<div style="font-size:11px;color:var(--dim);line-height:1.45;margin:0 2px 6px">' +
+      'Клик подставит адрес и модель — останется вставить ключ. Пометка ' +
+      'слева говорит, работает ли это из России как есть.</div>' +
+    '<div id="free-list" style="display:flex;flex-direction:column;gap:5px"></div>' +
+    '<div id="free-info" style="font-size:11px;color:var(--dim);line-height:1.5;' +
+      'margin:7px 2px 0"></div>';
+  // ставим ПЕРЕД селектом провайдера: это первое, что должен увидеть новичок
+  details.insertBefore(wrap, details.querySelector('#cloud-provider'));
+
+  let FREE = [];
+
+  function pick(p){
+    const sel = $id('cloud-provider');
+    // в списке провайдеров может не быть такого id — тогда «Своё»
+    if(sel){
+      const has = Array.from(sel.options).some(o => o.value === p.id);
+      sel.value = has ? p.id : 'custom';
+      sel.dispatchEvent(new Event('change'));
+    }
+    // ВАЖЕН ПОРЯДОК: обработчик change у селекта чистит поле модели
+    // (имя от прежнего провайдера новому не подойдёт) — поэтому свои
+    // значения ставим ПОСЛЕ него, иначе они тут же обнулятся.
+    const base = $id('cloud-base'), model = $id('cloud-model'),
+          key = $id('cloud-key');
+    if(base) base.value = p.base_url || '';
+    if(model) model.value = (p.models || [])[0] || '';
+    const info = $id('free-info');
+    if(info){
+      const r = RU[p.ru] || RU.vpn;
+      info.innerHTML =
+        '<b style="color:var(--text)">' + p.name + '</b> · ' +
+        '<span style="color:' + r.color + '">' + r.ic + ' ' + r.txt + '</span>' +
+        (p.card ? ' · нужна карта' : ' · без карты') +
+        '<br><b>Лимит:</b> ' + (p.free || '—') +
+        '<br><b>Русский:</b> ' + (p.lang || '—') +
+        (p.note ? '<br>' + p.note : '') +
+        (p.models && p.models.length > 1
+          ? '<br><b>Модели:</b> ' + p.models.join(' · ') : '') +
+        (p.key_hint ? '<br><b>Где взять ключ:</b> ' + p.key_hint : '') +
+        (p.key_url ? '<br><a href="' + p.key_url + '" target="_blank" ' +
+          'rel="noreferrer" style="color:var(--accent)">Открыть страницу ключа ↗</a>' : '') +
+        (p.source ? ' · <a href="' + p.source + '" target="_blank" ' +
+          'rel="noreferrer" style="color:var(--dim)">лимиты ↗</a>' : '');
+    }
+    if(key) key.focus();
+    paint(p.id);
+    toast(p.name + ': адрес и модель подставлены — вставь ключ и сохрани',
+          {kind: 'info', ttl: 6000});
+  }
+
+  let active = null;
+  function paint(activeId){
+    active = activeId || active;
+    const list = $id('free-list');
+    list.innerHTML = '';
+    FREE.forEach(p => {
+      const r = RU[p.ru] || RU.vpn;
+      const b = document.createElement('div');
+      b.className = 'item' + (active === p.id ? ' sel' : '');
+      b.style.cssText = 'align-items:center';
+      b.title = (p.note || '') + '\n\nЛимит: ' + (p.free || '');
+      b.innerHTML =
+        '<span style="flex:none">' + r.ic + '</span>' +
+        '<span class="mname">' + p.name + '</span>' +
+        (p.card ? '<span class="st bad" style="font-size:10px">карта</span>' : '') +
+        (p.ru === 'block'
+          ? '<span class="st bad" style="font-size:10px">не РФ</span>'
+          : p.ru === 'vpn'
+            ? '<span class="st" style="font-size:10px;color:var(--warn)">VPN</span>'
+            : '<span class="st ok" style="font-size:10px">без VPN</span>');
+      b.onclick = e => {
+        // меню модели закрывается по клику в документе — свой клик
+        // до него доводить не надо, иначе панель схлопывается
+        e.stopPropagation();
+        pick(p);
+      };
+      list.appendChild(b);
+    });
+  }
+
+  async function load(){
+    try{
+      const r = await api('/api/llm/free');
+      FREE = r.providers || [];
+      paint();
+    }catch(e){ /* старый сервер — блок просто не появится */ }
+  }
+
+  // грузим при первом раскрытии «Онлайн-модель», не на старте страницы
+  details.addEventListener('toggle', () => {
+    if(details.open && !FREE.length) load();
+  });
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · вкладка «Голоса» (2026-07-26)
+
+   Раньше в интерфейсе выбирался только ДВИЖОК, а голос внутри него правился
+   руками в config.json. У Edge их десятки, у Piper четыре, у Silero свой
+   набор в каждом пакете — выбирать по имени в json неудобно и непонятно,
+   как это звучит. Здесь всё разом, с группировкой по движку и кнопкой
+   послушать.
+
+   Клонирующие движки (Qwen3, OmniVoice, XTTS, F5) устроены иначе: у них
+   «голос» — это файл-образец, поэтому их голоса это содержимое папки voice/.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const ENG_TITLE = {
+    qwen3: 'Qwen3-TTS — её собственный голос',
+    omni: 'OmniVoice — клон, Apache-2.0',
+    piper: 'Piper — офлайн, MIT',
+    silero: 'Silero',
+    edge: 'Edge-TTS — онлайн',
+    xtts: 'XTTS-v2 — клон',
+    f5ru: 'F5-TTS русский — клон',
+  };
+  const CLONING = new Set(['qwen3', 'omni', 'xtts', 'f5ru']);
+
+  /* ── шторка ── */
+  const sheet = document.createElement('div');
+  sheet.id = 'voice-sheet';
+  sheet.innerHTML =
+    '<div class="ss-card"><div class="ss-head">🎙 <span>Голоса</span>' +
+      '<input id="voice-find" placeholder="поиск: язык или имя" ' +
+        'style="width:170px;margin-left:8px;background:var(--panel2);' +
+        'color:var(--text);border:1px solid var(--border);border-radius:10px;' +
+        'padding:6px 10px;font:12.5px inherit;outline:none">' +
+      '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;' +
+        'color:var(--dim);cursor:pointer;white-space:nowrap">' +
+        '<input type="checkbox" id="voice-onlydl"> только скачанные</label>' +
+      '<input id="voice-say" placeholder="фраза для прослушки" ' +
+        'style="flex:1;max-width:340px;margin-left:12px;background:var(--panel2);' +
+        'color:var(--text);border:1px solid var(--border);border-radius:10px;' +
+        'padding:6px 10px;font:12.5px inherit;outline:none">' +
+      '<button class="iconbtn" id="voice-close" title="Закрыть" ' +
+      'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+      '<div class="ss-body" id="voice-body"></div></div>';
+  document.body.appendChild(sheet);
+  sheet.querySelector('#voice-close').onclick = () => close();
+  // перерисовываем по фильтру, не перезапрашивая сервер
+  let fdeb = null;
+  sheet.querySelector('#voice-find').oninput = () => {
+    clearTimeout(fdeb); fdeb = setTimeout(paint, 160);
+  };
+  sheet.querySelector('#voice-onlydl').onchange = () => paint();
+  sheet.onclick = e => { if(e.target === sheet) close(); };
+
+  let audio = null;
+  function stopAudio(){
+    if(audio){ try{ audio.pause(); }catch(e){} audio = null; }
+  }
+  function close(){ stopAudio(); sheet.classList.remove('show'); }
+
+  let DATA = null;
+
+  async function play(engine, voice){
+    stopAudio();
+    const say = ($id('voice-say').value || '').trim();
+    toast('Синтезирую пробную фразу…', {kind: 'info', ttl: 2500});
+    try{
+      const r = await fetch('/api/tts/preview', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({engine, text: say})});
+      if(!r.ok){
+        const d = await r.json().catch(() => ({}));
+        toast('Не смогла озвучить: ' + (d.detail || r.status), {kind: 'err',
+              ttl: 8000});
+        return;
+      }
+      const blob = await r.blob();
+      audio = new Audio(URL.createObjectURL(blob));
+      audio.play();
+    }catch(e){
+      toast('Прослушка не удалась: ' + e, {kind: 'err'});
+    }
+  }
+
+  function row(engine, v, cur){
+    const el = document.createElement('div');
+    // сравниваем «мягко»: в конфиге может лежать короткое имя (irina), а в
+    // витрине полный ключ индекса (ru_RU-irina-medium) — это один голос
+    const on = !!v.id && (String(cur || '') === String(v.id) ||
+      (!!cur && String(v.id).split('-').includes(String(cur))));
+    // downloaded === false бывает только у витрины Piper: остальные движки
+    // либо облачные, либо работают с образцами, которые уже лежат на диске
+    const off = v.downloaded === false;
+    el.className = 'item vitem' + (on ? ' sel' : '');
+    if(off) el.style.opacity = '.62';
+    // Имя и приметы — в две строки, а не в одну. В одну строку язык, пол и
+    // примечание не влезали в колонку и переносились в кашу («Иринаru ·
+    // женский · женский, спокойный63.1 МБ»).
+    // у строки-заглушки («загрузи движок») примет нет — иначе под ней
+    // болтается одинокое «ru»
+    const bits = v.id
+      ? [v.lang, v.gender, v.note].filter(Boolean).join(' · ') : '';
+    el.innerHTML =
+      '<span class="vtxt"><b>' + esc(v.title || v.id) + '</b>' +
+      (bits ? '<span>' + esc(bits) + '</span>' : '') + '</span>' +
+      (v.size_mb ? '<span class="vsz">' + v.size_mb + ' МБ</span>' : '');
+    el.title = [v.id, v.note, off ? 'не скачан' : ''].filter(Boolean).join(' — ');
+    if(!v.id){                       // строка-заглушка «загрузи движок»
+      el.style.opacity = '.6';
+      el.style.cursor = 'default';
+      return el;
+    }
+
+    const mini = (txt, title, fn, danger) => {
+      const b = document.createElement('button');
+      b.className = 'mini' + (danger ? ' del' : '');
+      b.textContent = txt; b.title = title;
+      b.onclick = async e => {
+        e.stopPropagation();
+        const was = b.textContent;
+        b.textContent = '⏳'; b.disabled = true;
+        try{ await fn(); } finally {
+          b.textContent = was; b.disabled = false;
+        }
+      };
+      return b;
+    };
+
+    if(off){
+      el.appendChild(mini('⬇', 'Скачать этот голос', async () => {
+        toast('Качаю «' + (v.title || v.id) + '»…', {kind: 'info', ttl: 3000});
+        const r = await api('/api/tts/voice/download', {engine, voice: v.id});
+        toast(r.ok ? r.message : (r.error || 'не скачалось'),
+              {kind: r.ok ? 'ok' : 'err', ttl: r.ok ? 4000 : 9000});
+        load();
+      }));
+      // не скачан — слушать нечего, выбирать тоже: сначала качаем
+      el.onclick = () => toast('Сначала скачай этот голос — кнопка ⬇ справа',
+                               {kind: 'warn'});
+      return el;
+    }
+
+    el.appendChild(mini('▶', 'Послушать этим голосом', async () => {
+      // сначала ставим голос, потом синтезируем — иначе послушаем прежний
+      await api('/api/tts/voice', {engine, voice: v.id});
+      await play(engine);
+      load();
+    }));
+    if(v.downloaded === true && engine === 'piper'){
+      el.appendChild(mini('🗑', 'Удалить с диска', () =>
+        new Promise(res => (window.saikaAsk || ((m, y) => y()))(
+          'Удалить голос «' + (v.title || v.id) + '» с диска?', async () => {
+            const r = await api('/api/tts/voice/delete', {engine, voice: v.id});
+            toast(r.ok ? r.message : (r.error || 'не удалилось'),
+                  {kind: r.ok ? 'ok' : 'err'});
+            load(); res();
+          })), true));
+    }
+    el.onclick = async () => {
+      const r = await api('/api/tts/voice',
+                          {engine, voice: v.id, select_engine: true});
+      if(r.ok){
+        toast(r.message + ' — движок выбран', {kind: 'ok'});
+        load();
+        if(typeof refresh === 'function') refresh();
+      } else {
+        toast(r.error || 'не получилось', {kind: 'err'});
+      }
+    };
+    return el;
+  }
+
+  function paint(){
+    const body = $id('voice-body');
+    body.innerHTML = '';
+    if(!DATA){ body.textContent = 'загружаю…'; return; }
+    const cur = DATA.current || {};
+    const meta = DATA.meta || {};
+    const names = Object.keys(DATA.voices || {});
+    // движок, который сейчас говорит, — первым: чаще всего правят именно его
+    names.sort((a, b) => (a === cur.engine ? -1 : b === cur.engine ? 1 : 0));
+    names.forEach(engine => {
+      const list = (DATA.voices || {})[engine] || [];
+      const m = meta[engine] || {};
+      const sec = document.createElement('div');
+      const lic = m.license || '';
+      const warn = /⚠/.test(lic);
+      sec.innerHTML =
+        '<div class="title" style="display:flex;align-items:center;gap:8px">' +
+          '<span>' + esc(ENG_TITLE[engine] || engine) + '</span>' +
+          (engine === cur.engine
+            ? '<span class="st ok" style="text-transform:none">говорит сейчас</span>' : '') +
+          (lic ? '<span class="st" style="text-transform:none;color:' +
+            (warn ? 'var(--warn)' : 'var(--dim)') + '">' + esc(lic) + '</span>' : '') +
+        '</div>';
+      const holder = document.createElement('div');
+      holder.style.cssText = 'display:grid;gap:4px;' +
+        'grid-template-columns:repeat(auto-fill,minmax(275px,1fr))';
+      const curVoice = CLONING.has(engine) ? cur.ref : cur[engine];
+      if(!list.length){
+        const d = document.createElement('div');
+        d.style.cssText = 'font-size:11.5px;color:var(--dim);padding:2px';
+        d.textContent = CLONING.has(engine)
+          ? 'Нет образцов в папке voice/ — положи туда wav, и он появится тут'
+          : 'Список пуст: движок не установлен или не отдаёт голоса';
+        holder.appendChild(d);
+      } else {
+        const q = ($id('voice-find').value || '').trim().toLowerCase();
+        const onlyDl = $id('voice-onlydl').checked;
+        let shown = list.filter(v => {
+          if(onlyDl && v.downloaded === false) return false;
+          if(!q) return true;
+          return (String(v.title || '') + ' ' + String(v.id || '') + ' '
+                  + String(v.lang || '')).toLowerCase().includes(q);
+        });
+        // Без фильтра не выливаем на человека сотни строк: показываем
+        // первые и честно пишем, сколько спрятано и как их найти.
+        if(!shown.length && (q || onlyDl)) return;   // пустую шапку не рисуем
+        const cap = (q || onlyDl) ? 400 : 24;
+        const hidden = shown.length - cap;
+        shown = shown.slice(0, cap);
+        shown.forEach(v => holder.appendChild(row(engine, v, curVoice)));
+        if(hidden > 0){
+          const d = document.createElement('div');
+          d.style.cssText = 'font-size:11.5px;color:var(--dim);padding:4px 2px;'
+            + 'grid-column:1/-1';
+          d.textContent = 'ещё ' + hidden + ' — напиши язык или имя в поиске '
+            + 'сверху (например «ru» или «de»)';
+          holder.appendChild(d);
+        }
+      }
+      sec.appendChild(holder);
+      body.appendChild(sec);
+    });
+  }
+
+  async function load(){
+    try{
+      DATA = await api('/api/tts/voices');
+      paint();
+    }catch(e){
+      $id('voice-body').textContent = 'не удалось получить список голосов';
+    }
+  }
+
+  /* ── кнопка в меню озвучки ── */
+  function mountButton(){
+    const pop = $id('pop-tts');
+    if(!pop || $id('voice-open')) return;
+    const b = document.createElement('div');
+    b.className = 'item';
+    b.id = 'voice-open';
+    b.innerHTML = '🎙 <span class="mname">Все голоса — выбрать и послушать</span>';
+    b.onclick = e => {
+      e.stopPropagation();
+      sheet.classList.add('show');
+      DATA = null; paint(); load();
+    };
+    // над списком движков: сначала «какой голос», потом тонкие настройки
+    pop.insertBefore(b, pop.firstChild);
+  }
+  mountButton();
+  // меню перерисовывается при обновлении статуса — возвращаем кнопку
+  const pop = $id('pop-tts');
+  if(pop) new MutationObserver(() => mountButton())
+    .observe(pop, {childList: true});
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · выпадающие списки в стиле интерфейса (2026-07-26)
+
+   Проблема. Закрытый <select> мы покрасили, а РАСКРЫТЫЙ список рисует сама
+   операционная система: на тёмной странице Chrome отдаёт серые нечитаемые
+   строки с ядовито-синей подсветкой, вылезающие за пределы стеклянной
+   панели. Выглядит как поломка, хотя ничего не сломано — просто нативный
+   виджет не умеет в наш дизайн.
+
+   Решение. Настоящий <select> остаётся в DOM (скрытый) — весь прежний код
+   продолжает читать .value и слушать change, ничего переписывать не надо.
+   Рядом рисуем свою кнопку и свой список.
+
+   Список кладём в <body> с position:fixed, а не внутрь панели: у .pop стоит
+   overflow-y:auto, и любой вложенный выпадающий блок она бы обрезала.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  let openList = null;
+
+  function closeOpen(){
+    if(openList){ openList.remove(); openList = null; }
+  }
+  document.addEventListener('click', e => {
+    if(openList && !openList.contains(e.target)
+       && !(e.target.closest && e.target.closest('.fsel-btn'))) closeOpen();
+  }, true);
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && openList){ closeOpen(); e.stopPropagation(); }
+  }, true);
+  window.addEventListener('resize', closeOpen);
+  // прокрутка панели уводит кнопку из-под списка — проще закрыть
+  window.addEventListener('scroll', closeOpen, true);
+
+  function enhance(sel){
+    if(sel.dataset.fsel) return;
+    sel.dataset.fsel = '1';
+    sel.style.display = 'none';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fsel-btn';
+    // ширину и отступы переносим с самого select, иначе вёрстка поедет:
+    // часть списков стоит в flex-строке рядом с кнопками
+    ['flex', 'minWidth', 'width', 'marginBottom', 'marginTop', 'maxWidth']
+      .forEach(k => { if(sel.style[k]) btn.style[k] = sel.style[k]; });
+
+    if(sel.className) btn.className += ' ' + sel.className;
+    btn.innerHTML = '<span class="fsel-cur"></span><span class="fsel-ar">▾</span>';
+    sel.parentNode.insertBefore(btn, sel.nextSibling);
+
+    function label(){
+      const o = sel.options[sel.selectedIndex];
+      return o ? o.textContent : '';
+    }
+    function sync(){
+      btn.querySelector('.fsel-cur').textContent = label();
+      btn.disabled = sel.disabled || !sel.options.length;
+      btn.title = label();
+    }
+    sync();
+    // список мог наполниться позже (модели тянутся с сервера) — следим
+    new MutationObserver(sync).observe(sel, {childList: true, subtree: true});
+    sel.addEventListener('change', sync);
+
+    btn.onclick = e => {
+      e.preventDefault(); e.stopPropagation();
+      if(openList){ const was = openList._for === sel; closeOpen(); if(was) return; }
+      if(!sel.options.length) return;
+      const list = document.createElement('div');
+      list._for = sel;
+      list.className = 'fsel-list';
+      [...sel.options].forEach((o, i) => {
+        const it = document.createElement('div');
+        it.className = 'fsel-opt' + (i === sel.selectedIndex ? ' on' : '')
+          + (o.disabled ? ' off' : '');
+        it.textContent = o.textContent;
+        it.onclick = ev => {
+          ev.stopPropagation();
+          if(o.disabled) return;
+          sel.selectedIndex = i;
+          sel.dispatchEvent(new Event('change', {bubbles: true}));
+          sync();
+          closeOpen();
+        };
+        list.appendChild(it);
+      });
+      document.body.appendChild(list);
+      const r = btn.getBoundingClientRect();
+      list.style.minWidth = r.width + 'px';
+      list.style.left = Math.max(6, Math.min(
+        r.left, innerWidth - list.offsetWidth - 6)) + 'px';
+      // не влезает вниз — раскрываем вверх, как это делает сам браузер
+      const below = innerHeight - r.bottom - 10;
+      if(list.offsetHeight > below && r.top > below){
+        list.style.maxHeight = Math.min(340, r.top - 10) + 'px';
+        list.style.top = Math.max(6, r.top - list.offsetHeight - 4) + 'px';
+      } else {
+        list.style.maxHeight = Math.min(340, below) + 'px';
+        list.style.top = (r.bottom + 4) + 'px';
+      }
+      const cur = list.querySelector('.fsel-opt.on');
+      if(cur) cur.scrollIntoView({block: 'nearest'});
+      openList = list;
+    };
+  }
+
+  function scan(){ document.querySelectorAll('select').forEach(enhance); }
+  scan();
+  // селекты появляются вместе с новыми панелями — досматриваем на лету
+  new MutationObserver(scan).observe(document.body,
+    {childList: true, subtree: true});
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · панель «Скорость ответа» (2026-07-26)
+
+   Ручки, которые решают, сколько человек ждёт до первого слова, до сих пор
+   жили только в config.json: температура, потолок контекста, размер куска
+   памяти, keep_alive, кэш промпта. Снаружи их не было видно вообще —
+   отсюда законное «не вижу настроек кешей, температуры».
+
+   Главное здесь — не сами поля, а ЧЕСТНАЯ ЦЕНА рядом с каждым. Почти все
+   они размен: «помнит больше» против «отвечает быстрее». Человек должен
+   видеть, чем платит, а не крутить вслепую.
+
+   Сверху — последний реальный замер (он же под ответом по кнопке ⏱), чтобы
+   покрутил → сказал фразу → сразу увидел эффект.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  /* Поле: ключ в конфиге, подпись, цена правки, тип. Цена — не украшение:
+     без неё «контекст 9000» ничего не значит. */
+  const FIELDS = [
+    {k: 'llm.temperature', t: 'Температура', kind: 'range',
+     min: 0, max: 1.6, step: 0.05,
+     why: 'Ниже — суше и предсказуемее, выше — живее и рискованнее. ' +
+          'На скорость не влияет.'},
+    {k: 'llm.context_chars', t: 'Потолок промпта, символов', kind: 'num',
+     why: '0 — считать от окна модели. Это ГЛАВНАЯ ручка задержки: ' +
+          'модель жуёт весь промпт до первого слова. Меньше — быстрее, ' +
+          'но короче память разговора.'},
+    {k: 'llm.cloud.context_chars', t: 'То же для облака', kind: 'num',
+     why: 'У облака нет нашего тёплого кэша — провайдер пережёвывает ' +
+          'промпт целиком каждый раз. Тут потолок жёстче местного.'},
+    {k: 'memory.context_chars', t: 'Кусок памяти в промпте', kind: 'num',
+     why: 'Сколько символов из образа собеседника и прошлых разговоров ' +
+          'подкладывать. Раньше потолка не было, и он рос вместе с ' +
+          'памятью — молча съедая секунды на каждой фразе.'},
+    {k: 'llm.cache_prompt', t: 'Кэш промпта (KV-cache)', kind: 'bool',
+     why: 'Просим llama.cpp/LM Studio не пережёвывать совпавшее начало ' +
+          'промпта заново. Выключать стоит только если движок ругается.'},
+    {k: 'llm.keep_alive', t: 'Держать модель в памяти', kind: 'text',
+     why: 'Для Ollama: 30m, 1h, -1 (навсегда). Выгрузилась между фразами — ' +
+          'первый ответ платит полной загрузкой с диска.'},
+    {k: 'llm.target_response_s', t: 'Целевая длина ответа, сек', kind: 'num',
+     why: '0 — без ограничения. Иначе считаем потолок токенов под эту ' +
+          'цель по замеренной скорости модели. Работает только при ' +
+          'выключенных размышлениях.'},
+    {k: 'llm.max_gen_seconds', t: 'Аварийный обрыв, сек', kind: 'num',
+     why: 'Предохранитель от зацикливания. Не ускоряет — просто не даёт ' +
+          'ждать вечно.'},
+  ];
+
+  const STAGE = {queue: 'очередь', mem: 'память', lore: 'лорбук',
+                 vision: 'зрение', prompt: 'сборка промпта',
+                 prefill: 'prefill модели', sound: 'до первого звука'};
+
+  /* ── шторка ── */
+  const sheet = document.createElement('div');
+  sheet.id = 'speed-sheet';
+  sheet.innerHTML =
+    '<div class="ss-card"><div class="ss-head">⚡ <span>Скорость ответа</span>' +
+      '<span style="flex:1"></span>' +
+      '<button class="iconbtn" id="speed-close" title="Закрыть" ' +
+      'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+      '<div class="ss-body" id="speed-body"></div></div>';
+  document.body.appendChild(sheet);
+  sheet.querySelector('#speed-close').onclick = () => close();
+  sheet.onclick = e => { if(e.target === sheet) close(); };
+  function close(){ sheet.classList.remove('show'); }
+
+  let DATA = null;
+
+  function lastLine(){
+    const l = (DATA && DATA.last) || {};
+    const rows = Object.keys(STAGE).filter(k => l[k] > 0)
+      .map(k => [k, l[k]]).sort((a, b) => b[1] - a[1]);
+    if(!rows.length) return '<div style="font-size:11.5px;color:var(--dim)">' +
+      'Скажи ей что-нибудь — и здесь появится разбор последнего ответа.</div>';
+    const worst = rows[0][1];
+    const total = rows.reduce((s, r) => s + r[1], 0);
+    return '<div style="display:flex;flex-wrap:wrap;gap:5px 12px;' +
+      'font-size:11.5px">' + rows.map(([k, v]) =>
+        '<span style="color:' + (v === worst && worst > 150 ? 'var(--warn)'
+          : 'var(--dim)') + '">' + STAGE[k] + ' <b>' + v + '</b>мс</span>')
+      .join('') + '</div>' +
+      '<div style="font-size:11.5px;color:var(--dim);margin-top:5px">' +
+      'итого ≈' + (total / 1000).toFixed(1) + 'с' +
+      (l.prompt_chars ? ' · промпт ' + l.prompt_chars + ' символов в '
+        + (l.messages || '?') + ' сообщениях (~' +
+        Math.round(l.prompt_chars / 3) + ' токенов)' : '') + '</div>';
+  }
+
+  function row(f){
+    const v = DATA[f.k];
+    const el = document.createElement('div');
+    el.style.cssText = 'padding:8px 2px;border-top:1px solid ' +
+      'rgba(255,255,255,.07)';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:10px';
+    const name = document.createElement('span');
+    name.style.cssText = 'flex:1;min-width:0;font-size:12.5px';
+    name.textContent = f.t;
+    head.appendChild(name);
+
+    let input, read = null;
+    if(f.kind === 'bool'){
+      input = document.createElement('button');
+      input.className = 'chip';
+      const paint = () => {
+        input.textContent = input.dataset.on === '1' ? 'включён' : 'выключен';
+        input.style.color = input.dataset.on === '1' ? 'var(--ok)' : 'var(--dim)';
+      };
+      input.dataset.on = v ? '1' : '0'; paint();
+      input.onclick = () => {
+        input.dataset.on = input.dataset.on === '1' ? '0' : '1';
+        paint(); save(f.k, input.dataset.on === '1');
+      };
+    } else if(f.kind === 'range'){
+      input = document.createElement('input');
+      input.type = 'range';
+      input.min = f.min; input.max = f.max; input.step = f.step;
+      input.value = v;
+      input.style.cssText = 'width:170px';
+      read = document.createElement('b');
+      read.style.cssText = 'min-width:34px;text-align:right;font-size:12px';
+      read.textContent = Number(v).toFixed(2);
+      input.oninput = () => { read.textContent = Number(input.value).toFixed(2); };
+      input.onchange = () => save(f.k, parseFloat(input.value));
+    } else {
+      input = document.createElement('input');
+      input.value = v == null ? '' : v;
+      input.style.cssText = 'width:110px;background:var(--panel2);' +
+        'color:var(--text);border:1px solid var(--border);border-radius:9px;' +
+        'padding:5px 8px;font:12.5px inherit;outline:none;text-align:right';
+      input.onchange = () => save(f.k,
+        f.kind === 'num' ? (parseFloat(input.value) || 0) : input.value);
+    }
+    if(read) head.appendChild(read);
+    head.appendChild(input);
+    el.appendChild(head);
+
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:11px;color:var(--dim);margin-top:3px;' +
+      'line-height:1.4';
+    why.textContent = f.why;
+    el.appendChild(why);
+    return el;
+  }
+
+  async function save(k, v){
+    const r = await api('/api/llm/speed', {[k]: v});
+    if(r && r.ok){
+      DATA = r;
+      toast('Сохранила', {kind: 'ok', ttl: 1600});
+    } else {
+      toast((r && r.error) || 'не сохранилось', {kind: 'err'});
+    }
+  }
+
+  function paint(){
+    const body = $id('speed-body');
+    body.innerHTML = '';
+    if(!DATA){ body.textContent = 'загружаю…'; return; }
+    const top = document.createElement('div');
+    top.innerHTML = '<div class="title" style="margin:0 0 5px">Последний ' +
+      'ответ — куда ушло время</div>' + lastLine();
+    body.appendChild(top);
+
+    const think = document.createElement('div');
+    think.style.cssText = 'display:flex;align-items:center;gap:10px;' +
+      'padding:8px 2px;border-top:1px solid rgba(255,255,255,.07);' +
+      'margin-top:8px';
+    think.innerHTML = '<span style="flex:1;font-size:12.5px">Размышления ' +
+      'модели</span>';
+    const tb = document.createElement('button');
+    tb.className = 'chip';
+    const paintT = () => {
+      tb.textContent = DATA.think ? 'включены' : 'выключены';
+      tb.style.color = DATA.think ? 'var(--warn)' : 'var(--ok)';
+    };
+    paintT();
+    tb.onclick = async () => {
+      DATA.think = !DATA.think; paintT();
+      await save('think', DATA.think);
+    };
+    think.appendChild(tb);
+    body.appendChild(think);
+    const tw = document.createElement('div');
+    tw.style.cssText = 'font-size:11px;color:var(--dim);margin-top:-4px;' +
+      'line-height:1.4';
+    tw.textContent = 'Думающие модели тратят токены на рассуждение ДО ' +
+      'первого слова ответа — это самый дорогой тумблер на этой странице.';
+    body.appendChild(tw);
+
+    FIELDS.forEach(f => body.appendChild(row(f)));
+
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:11px;color:var(--dim);margin-top:10px;' +
+      'line-height:1.5;border-top:1px solid rgba(255,255,255,.07);' +
+      'padding-top:8px';
+    note.innerHTML = 'Что тут вообще происходит: до первого слова модель ' +
+      'обязана «прочитать» весь промпт целиком (это и есть <b>prefill</b>). ' +
+      'Половину промпта занимает её характер, остальное — история ' +
+      'разговора и память. Локальные движки умеют не перечитывать ' +
+      'совпавшее начало — за это отвечает кэш промпта. У облака такого ' +
+      'кэша нет, поэтому там единственный рычаг — резать сам промпт.';
+    body.appendChild(note);
+  }
+
+  async function load(){
+    try{ DATA = await api('/api/llm/speed'); paint(); }
+    catch(e){ $id('speed-body').textContent = 'не удалось получить настройки'; }
+  }
+
+  /* ── кнопка в меню модели ── */
+  function mountButton(){
+    const pop = $id('pop-model');
+    if(!pop || $id('speed-open')) return;
+    const b = document.createElement('div');
+    b.className = 'item';
+    b.id = 'speed-open';
+    b.innerHTML = '⚡ <span class="mname">Скорость ответа — кэш, контекст, ' +
+      'температура</span>';
+    b.onclick = e => {
+      e.stopPropagation();
+      sheet.classList.add('show');
+      DATA = null; paint(); load();
+    };
+    pop.insertBefore(b, pop.firstChild);
+  }
+  mountButton();
+  const pop = $id('pop-model');
+  if(pop) new MutationObserver(() => mountButton())
+    .observe(pop, {childList: true});
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · панель «Компьютер» (2026-07-26)
+
+   Три вещи, которые вместе отвечают на вопрос «что ей позволено на этой
+   машине», и до сих пор их не было видно нигде:
+
+     доверие      — когда делает молча, когда переспрашивает
+     рабочая папка — единственное место, где она правит файлы и код
+     каталог программ — что она может запустить (собирается сам, лишнее
+                        вычёркивается)
+
+   Ползунок доверия показан НЕ голым числом: рядом всегда написано, что
+   именно оно означает прямо сейчас и с какой моделью — потому что число
+   умножается на то, насколько толковая модель за рулём, и «7» на мелкой
+   локалке и на облаке это разные вещи.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const sheet = document.createElement('div');
+  sheet.id = 'pc-sheet';
+  sheet.innerHTML =
+    '<div class="ss-card"><div class="ss-head">🖥 <span>Компьютер</span>' +
+      '<span style="flex:1"></span>' +
+      '<button class="iconbtn" id="pc-close" title="Закрыть" ' +
+      'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+      '<div class="ss-body" id="pc-body"></div></div>';
+  document.body.appendChild(sheet);
+  sheet.querySelector('#pc-close').onclick = () => sheet.classList.remove('show');
+  sheet.onclick = e => { if(e.target === sheet) sheet.classList.remove('show'); };
+
+  let DATA = null;
+
+  async function send(body){
+    const r = await api('/api/pc/set', body);
+    if(r && r.ok){
+      if(r.trust && DATA) DATA.trust = r.trust;
+      return true;
+    }
+    toast((r && r.error) || 'не сохранилось', {kind: 'err', ttl: 7000});
+    return false;
+  }
+
+  function sec(title){
+    const d = document.createElement('div');
+    d.className = 'title';
+    d.style.cssText = 'margin-top:12px';
+    d.textContent = title;
+    return d;
+  }
+
+  function toggle(label, on, why, fn){
+    const w = document.createElement('div');
+    w.style.cssText = 'padding:7px 2px';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px';
+    const n = document.createElement('span');
+    n.style.cssText = 'flex:1;min-width:0;font-size:12.5px';
+    n.textContent = label;
+    const b = document.createElement('button');
+    b.className = 'chip';
+    const paint = () => {
+      b.textContent = b.dataset.on === '1' ? 'включено' : 'выключено';
+      b.style.color = b.dataset.on === '1' ? 'var(--ok)' : 'var(--dim)';
+    };
+    b.dataset.on = on ? '1' : '0'; paint();
+    b.onclick = async () => {
+      b.dataset.on = b.dataset.on === '1' ? '0' : '1';
+      paint(); await fn(b.dataset.on === '1'); paint();
+    };
+    row.appendChild(n); row.appendChild(b); w.appendChild(row);
+    if(why){
+      const t = document.createElement('div');
+      t.style.cssText = 'font-size:11px;color:var(--dim);margin-top:3px;' +
+        'line-height:1.4';
+      t.textContent = why;
+      w.appendChild(t);
+    }
+    return w;
+  }
+
+  function trustBlock(){
+    const t = DATA.trust || {};
+    const w = document.createElement('div');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;' +
+      'padding:6px 2px';
+    const n = document.createElement('span');
+    n.style.cssText = 'flex:1;font-size:12.5px';
+    n.textContent = 'Доверие';
+    const val = document.createElement('b');
+    val.style.cssText = 'min-width:20px;text-align:right';
+    val.textContent = t.level;
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = 1; sl.max = 10; sl.step = 1;
+    sl.value = t.level || 5;
+    sl.style.cssText = 'width:180px';
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:11.5px;color:var(--dim);line-height:1.5;' +
+      'margin-top:2px';
+    const paintNote = () => {
+      const x = DATA.trust || {};
+      note.innerHTML =
+        'Сейчас за рулём <b>' + esc(x.model || '—') + '</b>, я оцениваю её ' +
+        'толковость в ' + (x.model_smart || '?') + ' из 10. ' +
+        'Итоговый запас <b>' + (x.budget || '?') + '</b> — ' +
+        esc(x.summary || '') + '.<br>' +
+        'Скажешь «делай как знаешь» в начале фразы — планка поднимется на ' +
+        'этот раз. «Осторожно» или «сначала спроси» — опустится.';
+    };
+    paintNote();
+    sl.oninput = () => { val.textContent = sl.value; };
+    sl.onchange = async () => {
+      if(await send({trust_level: parseInt(sl.value, 10)})){
+        paintNote();
+        toast('Доверие ' + sl.value, {kind: 'ok', ttl: 1500});
+      }
+    };
+    row.appendChild(n); row.appendChild(val); row.appendChild(sl);
+    w.appendChild(row); w.appendChild(note);
+    return w;
+  }
+
+  function rootsBlock(){
+    const w = document.createElement('div');
+    const inp = document.createElement('input');
+    inp.value = (DATA.roots_raw || []).join('; ');
+    inp.placeholder = 'F:/AI_load_work';
+    inp.style.cssText = 'width:100%;background:var(--panel2);color:var(--text);' +
+      'border:1px solid var(--border);border-radius:10px;padding:7px 10px;' +
+      'font:12.5px inherit;outline:none';
+    inp.onchange = async () => {
+      const list = inp.value.split(';').map(x => x.trim()).filter(Boolean);
+      if(await send({roots: list})) toast('Рабочая папка сохранена', {kind: 'ok'});
+    };
+    w.appendChild(inp);
+    const t = document.createElement('div');
+    t.style.cssText = 'font-size:11px;color:var(--dim);margin-top:4px;' +
+      'line-height:1.45';
+    t.innerHTML = 'Единственное место, где она создаёт, правит и удаляет ' +
+      'файлы и код. Всё, что снаружи, недоступно — даже если очень ' +
+      'попросить. Несколько папок — через точку с запятой. Путь должен ' +
+      'существовать, иначе не сохраню.';
+    w.appendChild(t);
+    return w;
+  }
+
+  function appsBlock(){
+    const w = document.createElement('div');
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;' +
+      'margin-bottom:6px';
+    const find = document.createElement('input');
+    find.placeholder = 'поиск по названию';
+    find.style.cssText = 'flex:1;background:var(--panel2);color:var(--text);' +
+      'border:1px solid var(--border);border-radius:10px;padding:6px 10px;' +
+      'font:12.5px inherit;outline:none';
+    const cnt = document.createElement('span');
+    cnt.style.cssText = 'font-size:11px;color:var(--dim);white-space:nowrap';
+    const re = document.createElement('button');
+    re.className = 'chip'; re.textContent = '⟳ пересобрать';
+    re.onclick = async () => {
+      re.textContent = '⏳'; re.disabled = true;
+      const r = await api('/api/pc/refresh', {});
+      re.textContent = '⟳ пересобрать'; re.disabled = false;
+      toast(r.ok ? ('Нашла ' + r.count + ' программ') : 'не вышло',
+            {kind: r.ok ? 'ok' : 'err'});
+      load();
+    };
+    bar.appendChild(find); bar.appendChild(cnt); bar.appendChild(re);
+    w.appendChild(bar);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:grid;gap:3px;' +
+      'grid-template-columns:repeat(auto-fill,minmax(230px,1fr));' +
+      'max-height:230px;overflow-y:auto';
+    w.appendChild(list);
+
+    const paint = () => {
+      const q = find.value.trim().toLowerCase();
+      const all = DATA.apps || [];
+      const shown = q ? all.filter(a => a.name.toLowerCase().includes(q))
+                      : all.slice(0, 60);
+      cnt.textContent = all.length + ' всего';
+      list.innerHTML = '';
+      if(!all.length){
+        list.innerHTML = '<div style="font-size:11.5px;color:var(--dim)">' +
+          'Каталог пуст — нажми «пересобрать». Если и тогда пусто, ' +
+          'значит ярлыков нет в меню «Пуск».</div>';
+        return;
+      }
+      shown.forEach(a => {
+        const el = document.createElement('div');
+        el.className = 'item';
+        el.style.cssText = 'display:flex;align-items:center;gap:8px;' +
+          'padding:5px 8px;border-radius:9px;font-size:12px;cursor:pointer';
+        if(a.blocked) el.style.opacity = '.45';
+        el.innerHTML = '<span style="flex:1;min-width:0;overflow:hidden;' +
+          'text-overflow:ellipsis;white-space:nowrap">' + esc(a.name) +
+          '</span><span style="font-size:10.5px;color:var(--dim)">' +
+          (a.blocked ? 'скрыта' : '') + '</span>';
+        el.title = a.blocked ? 'Клик — вернуть Сайке доступ'
+                             : 'Клик — скрыть от Сайки';
+        el.onclick = async () => {
+          a.blocked = !a.blocked;
+          await send({block: a.name, on: a.blocked});
+          paint();
+        };
+        list.appendChild(el);
+      });
+      if(!q && all.length > shown.length){
+        const d = document.createElement('div');
+        d.style.cssText = 'font-size:11px;color:var(--dim);grid-column:1/-1';
+        d.textContent = 'ещё ' + (all.length - shown.length) +
+          ' — найди поиском выше';
+        list.appendChild(d);
+      }
+    };
+    let deb = null;
+    find.oninput = () => { clearTimeout(deb); deb = setTimeout(paint, 140); };
+    paint();
+    return w;
+  }
+
+  function windowsBlock(){
+    const w = document.createElement('div');
+    const b = document.createElement('button');
+    b.className = 'chip'; b.textContent = '👁 что она видит на экранах';
+    const out = document.createElement('pre');
+    out.style.cssText = 'display:none;white-space:pre-wrap;font-size:11px;' +
+      'color:var(--dim);margin:6px 0 0;line-height:1.5;max-height:180px;' +
+      'overflow-y:auto';
+    b.onclick = async () => {
+      b.disabled = true;
+      const r = await api('/api/pc/windows');
+      b.disabled = false;
+      out.textContent = (r && r.map) || 'ничего не вернулось';
+      out.style.display = 'block';
+    };
+    w.appendChild(b); w.appendChild(out);
+    const t = document.createElement('div');
+    t.style.cssText = 'font-size:11px;color:var(--dim);margin-top:4px;' +
+      'line-height:1.45';
+    t.textContent = 'Та же карта рабочего стола, что уходит в модель: ' +
+      'сколько мониторов, какие окна на каком, что свёрнуто. Проверь, ' +
+      'что она видит твой второй экран.';
+    w.appendChild(t);
+    return w;
+  }
+
+  function paint(){
+    const body = $id('pc-body');
+    body.innerHTML = '';
+    if(!DATA){ body.textContent = 'загружаю…'; return; }
+
+    body.appendChild(sec('Доверие — когда делает молча'));
+    body.appendChild(trustBlock());
+
+    body.appendChild(sec('Что вообще разрешено'));
+    body.appendChild(toggle('Руки в системе', DATA.enabled,
+      'Запуск программ, окна, звук, вкладки. Выключишь — она снова только ' +
+      'разговаривает и ищет в сети.',
+      v => send({enabled: v})));
+    body.appendChild(toggle('Управляет своим интерфейсом', DATA.self_ui,
+      'Может сама сменить модель по просьбе «возьми поумнее» — или ' +
+      'выбрать за тебя, если ты не назвал конкретную.',
+      v => send({self_ui: v})));
+    body.appendChild(toggle('Открывать любые папки', DATA.open_any_folder,
+      'Проводник ничего не меняет на диске — это просто окно, поэтому по ' +
+      'умолчанию разрешено. Выключишь — она сможет открывать только ' +
+      'рабочую папку. Создавать и удалять файлы она в любом случае может ' +
+      'только внутри рабочей.',
+      v => send({open_any_folder: v})));
+
+    body.appendChild(sec('Рабочая папка — где она хозяйка'));
+    body.appendChild(rootsBlock());
+
+    body.appendChild(sec('Что она видит на экранах'));
+    body.appendChild(windowsBlock());
+
+    body.appendChild(sec('Программы, которые она может запускать'));
+    body.appendChild(appsBlock());
+  }
+
+  async function load(){
+    try{ DATA = await api('/api/pc'); paint(); }
+    catch(e){ $id('pc-body').textContent = 'не удалось получить настройки'; }
+  }
+
+  /* кнопка в шестерёнке настроек, если она есть; иначе в меню модели */
+  function mount(){
+    if($id('pc-open')) return;
+    const host = $id('pop-settings') || $id('pop-model');
+    if(!host) return;
+    const b = document.createElement('div');
+    b.className = 'item';
+    b.id = 'pc-open';
+    b.innerHTML = '🖥 <span class="mname">Компьютер — доверие, папка, ' +
+      'программы</span>';
+    b.onclick = e => {
+      e.stopPropagation();
+      sheet.classList.add('show');
+      DATA = null; paint(); load();
+    };
+    host.insertBefore(b, host.firstChild);
+  }
+  mount();
+  ['pop-settings', 'pop-model'].forEach(id => {
+    const p = $id(id);
+    if(p) new MutationObserver(() => mount()).observe(p, {childList: true});
+  });
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · «Подключение с телефона» (2026-07-26)
+
+   Отдельного мобильного клиента не делаем — интерфейс и так адаптивный.
+   Не хватало одного: сервер слушает 127.0.0.1, то есть только сам
+   компьютер, и телефон до него не достучится физически.
+
+   Мастер, а не тумблер, потому что вариантов два и они про разное:
+   дома по QR — быстро и без установки, но только в своей Wi-Fi;
+   Tailscale — откуда угодно, но надо поставить приложение на оба
+   устройства. Человек должен сначала понять, что выбирает.
+
+   Открываемся во всю область системы+аватара+чата: инструкция с шагами в
+   узкой колонке нечитаема, а мельтешить между окном и телефоном придётся.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  let DATA = null, VIEW = 'intro';
+
+  /* ── оверлей внутри #main: система + аватар + чат ── */
+  const ov = document.createElement('div');
+  ov.id = 'phone-ov';
+  ov.innerHTML = '<div class="ph-card">' +
+    '<div class="ph-head"><span>📱 Подключение с телефона</span>' +
+    '<span style="flex:1"></span>' +
+    '<button class="iconbtn" id="ph-close" title="Закрыть" ' +
+    'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+    '<div class="ph-body" id="ph-body"></div></div>';
+  function host(){ return $id('main') || document.body; }
+  function open(){
+    if(ov.parentNode !== host()) host().appendChild(ov);
+    ov.classList.add('show');
+    VIEW = 'intro'; DATA = null; paint(); load();
+  }
+  function close(){ ov.classList.remove('show'); }
+  ov.addEventListener('click', e => {
+    if(e.target === ov) close();
+    if(e.target.id === 'ph-close') close();
+  });
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && ov.classList.contains('show')) close();
+  });
+
+  function card(title, body, cls){
+    return '<div class="ph-block ' + (cls || '') + '">' +
+      (title ? '<b>' + title + '</b>' : '') + body + '</div>';
+  }
+
+  function intro(){
+    const open_ = DATA && DATA.open;
+    return card('',
+      '<p class="ph-lead">Интерфейс Сайки открывается в браузере телефона — ' +
+      'ставить ничего не нужно, мобильный вид уже есть. Вопрос только в ' +
+      'том, <b>как телефон найдёт этот компьютер</b>. Способа два.</p>' +
+      (open_ ? '<p class="ph-ok">✓ Сейчас доступ снаружи включён.</p>'
+             : '<p class="ph-warn">Сейчас Сайка слушает только сам ' +
+               'компьютер — с телефона не откроется.</p>')) +
+      '<div class="ph-two">' +
+        '<div class="ph-pick" data-go="lan">' +
+          '<div class="ph-ico">🏠</div><b>Дома, по QR</b>' +
+          '<p>Телефон и компьютер в одной Wi-Fi. Наводишь камеру на QR — ' +
+          'и всё, Сайка открылась. Ничего ставить не надо.</p>' +
+          '<p class="ph-minus">Работает только дома. Ушёл из дома — ' +
+          'связи нет.</p>' +
+          '<span class="ph-go">Настроить →</span>' +
+        '</div>' +
+        '<div class="ph-pick" data-go="ts">' +
+          '<div class="ph-ico">🌍</div><b>Через Tailscale</b>' +
+          '<p>Приватная сеть между твоими устройствами. Работает из любой ' +
+          'точки — из кафе, с дачи, с мобильного интернета.</p>' +
+          '<p class="ph-minus">Надо один раз поставить приложение на ' +
+          'компьютер и на телефон и войти в один аккаунт.</p>' +
+          '<span class="ph-go">Инструкция →</span>' +
+        '</div>' +
+      '</div>' +
+      card('Почему нужен код доступа',
+        '<p>У Сайки теперь руки в системе: она запускает программы, ' +
+        'управляет окнами и звуком, правит файлы в рабочей папке. Открыть ' +
+        'её на всю Wi-Fi без пароля — значит отдать эти руки любому, кто ' +
+        'в сети: гостю, соседу через слабый пароль роутера, чужому ' +
+        'ноутбуку.<br>Поэтому как только сервер выходит наружу, включается ' +
+        'код. Он уже зашит в ссылку внутри QR — телефон подставит его сам ' +
+        'и запомнит. <b>С этого компьютера код не спрашивается никогда</b>, ' +
+        'локальная работа не усложняется.</p>', 'ph-note');
+  }
+
+  function steps(list){
+    return '<ol class="ph-steps">' + list.map(s => '<li>' + s + '</li>')
+      .join('') + '</ol>';
+  }
+
+  function toggleRow(){
+    const on = DATA && DATA.open;
+    const need = DATA && DATA.restart_needed;
+    let h = '<div class="ph-toggle">' +
+      '<span>Доступ снаружи</span>' +
+      '<button class="chip" id="ph-toggle" style="color:' +
+        (on ? 'var(--ok)' : 'var(--dim)') + '">' +
+        (on ? 'включён' : 'выключен') + '</button>' +
+      '<span class="ph-hint">Переключатель меняет настройку. Порт ' +
+      'занимается один раз при старте — на лету его не переслушать.' +
+      '</span></div>';
+    // Самая частая причина «включил, отсканировал, не работает»: сервер всё
+    // ещё слушает 127.0.0.1. Раньше об этом было написано мелким текстом
+    // среди шагов — и терялось. Теперь это красная плашка, которая исчезает
+    // сама, как только сервер поднялся на новом адресе.
+    if(need){
+      h = '<div class="ph-block ph-alarm"><b>⚠ Нужен перезапуск сервера</b>' +
+        '<p>Настройка сохранена, но Сайка прямо сейчас слушает ' +
+        '<code>' + esc((DATA && DATA.bound) || '127.0.0.1') + '</code> — ' +
+        'это только сам компьютер. Пока не перезапустишь <code>start.bat</code>, ' +
+        'телефон не подключится, сколько QR ни сканируй.</p></div>' + h;
+    }
+    return h;
+  }
+
+  function firewallBlock(){
+    const cmd = (DATA && DATA.firewall_cmd) || '';
+    return card('Если QR открылся, но страница не грузится',
+      '<p>Почти наверняка брандмауэр Windows: при первом запуске сервера ' +
+      'наружу он спрашивает разрешение, и если окно закрыли или сеть ' +
+      'помечена как «Общедоступная» — входящие блокируются молча.</p>' +
+      '<p>Открой <b>PowerShell от администратора</b> и вставь:</p>' +
+      '<div class="ph-cmd"><code>' + esc(cmd) + '</code>' +
+      '<button class="chip" id="ph-copy">копировать</button></div>' +
+      '<p class="ph-hint">Заодно проверь, что в «Параметры → Сеть → ' +
+      'Wi-Fi → Свойства» стоит <b>Частная сеть</b>, а не общедоступная.</p>',
+      'ph-note');
+  }
+
+  function lanView(){
+    const urls = ((DATA && DATA.urls) || []).filter(u => u.kind === 'lan');
+    let body = card('Что сделать',
+      steps([
+        'Включи тумблер ниже и <b>перезапусти сервер</b> (start.bat). ' +
+        'Порт занимается один раз при старте — на лету не переслушать.',
+        'Убедись, что телефон в той же Wi-Fi, что и компьютер. Не в ' +
+        'гостевой сети — гостевые обычно изолируют устройства друг от друга.',
+        'Наведи камеру телефона на QR. Откроется браузер с Сайкой, код ' +
+        'подставится сам.',
+        'Добавь страницу на домашний экран — будет как приложение.',
+      ])) + toggleRow();
+
+    if(!DATA || !DATA.open){
+      body += card('', '<p class="ph-warn">Включи доступ снаружи — тогда ' +
+        'здесь появится QR.</p>');
+      return body;
+    }
+    if(!urls.length){
+      body += card('', '<p class="ph-warn">Не вижу ни одного адреса в ' +
+        'локальной сети. Похоже, компьютер не подключён к Wi-Fi или ' +
+        'кабелю.</p>');
+      return body;
+    }
+    // Адресов бывает несколько: кроме домашней Wi-Fi Windows показывает
+    // виртуальные адаптеры от Radmin VPN, Hamachi, VirtualBox. Телефон в
+    // них не входит, и QR по такому адресу не откроется никогда — поэтому
+    // подписываем прямо на карточке, а не оставляем человека гадать.
+    body += '<div class="ph-qrwrap">' + urls.map((u, i) =>
+      '<div class="ph-qr' + (u.virtual ? ' ph-virt' : '') + '">' +
+      (i === 0 && !u.virtual ? '<div class="ph-best">сканируй этот</div>' : '') +
+      (u.virtual ? '<div class="ph-bad">виртуальный адаптер</div>' : '') +
+      '<div class="ph-qrimg" data-url="' + esc(u.url) +
+      '">загружаю QR…</div><div class="ph-qrlab">' + esc(u.label) +
+      '</div><code>' + esc(u.url) + '</code>' +
+      (u.virtual ? '<div class="ph-hint" style="max-width:240px">Это сеть ' +
+        esc(u.virtual) + ', а не твой роутер. Телефона в ней нет — ' +
+        'сканировать бесполезно.</div>' : '') +
+      '</div>').join('') + '</div>';
+    body += firewallBlock();
+    body += card('Если QR не сработал',
+      '<p>Набери адрес в браузере телефона руками — он написан под ' +
+      'кодом. Код доступа: <code class="ph-token">' +
+      esc((DATA && DATA.token) || '') + '</code></p>' +
+      '<button class="chip" id="ph-newtok">Сменить код</button> ' +
+      '<span class="ph-hint">Старые телефоны после этого отвалятся и ' +
+      'попросят сканировать заново.</span>', 'ph-note');
+    return body;
+  }
+
+  function tsView(){
+    const ts = (DATA && DATA.tailscale) || {};
+    const urls = ((DATA && DATA.urls) || []).filter(u => u.kind === 'tailscale');
+    let body = card('Что это такое',
+      '<p>Tailscale соединяет <b>твои устройства</b> между собой ' +
+      'шифрованным туннелем. Он не открывает ни одного порта в интернет и ' +
+      'не требует ни белого IP, ни проброса портов на роутере — поэтому ' +
+      'для агента с руками в системе он безопаснее обычных туннелей вроде ' +
+      'ngrok, которые публикуют адрес наружу. Для личного использования ' +
+      'бесплатен.</p>');
+
+    body += card('На компьютере',
+      steps([
+        'Скачай с <code>tailscale.com/download</code> и установи.',
+        'Запусти, нажми <b>Log in</b> — откроется браузер. Войди через ' +
+        'Google или GitHub, любой аккаунт, главное запомнить какой.',
+        'В трее появится значок Tailscale — значит машина в сети.',
+      ]));
+    body += card('На телефоне',
+      steps([
+        'Поставь Tailscale из Google Play или App Store.',
+        'Войди <b>тем же самым аккаунтом</b>. Это единственное, что их ' +
+        'связывает.',
+        'Включи тумблер в приложении — телефон в сети.',
+      ]));
+    body += card('Здесь',
+      steps([
+        'Включи тумблер ниже и перезапусти сервер.',
+        'Обнови эту страницу — появится адрес <code>100.x.x.x</code> и QR.',
+      ])) + toggleRow();
+
+    body += card('Состояние',
+      ts.installed
+        ? (ts.ip
+            ? '<p class="ph-ok">✓ Tailscale работает, адрес этой машины: ' +
+              '<code>' + esc(ts.ip) + '</code></p>'
+            : '<p class="ph-warn">Tailscale установлен, но вход не ' +
+              'выполнен — нажми Log in в его окне.</p>')
+        : '<p class="ph-warn">Tailscale на этом компьютере не найден. ' +
+          'Поставь по шагам выше и вернись сюда.</p>', 'ph-note');
+
+    if(urls.length && DATA.open){
+      body += '<div class="ph-qrwrap">' + urls.map(u =>
+        '<div class="ph-qr"><div class="ph-qrimg" data-url="' + esc(u.url) +
+        '">загружаю QR…</div><div class="ph-qrlab">' + esc(u.label) +
+        '</div><code>' + esc(u.url) + '</code></div>').join('') + '</div>';
+    }
+    return body;
+  }
+
+  function paint(){
+    const b = $id('ph-body');
+    if(!b) return;
+    if(!DATA && VIEW !== 'intro'){ b.innerHTML = 'загружаю…'; return; }
+    let html = '';
+    if(VIEW !== 'intro'){
+      html += '<button class="chip ph-back">← к выбору способа</button>';
+    }
+    html += VIEW === 'lan' ? lanView()
+          : VIEW === 'ts' ? tsView() : intro();
+    b.innerHTML = html;
+
+    b.querySelectorAll('[data-go]').forEach(el => {
+      el.onclick = () => { VIEW = el.dataset.go; paint(); };
+    });
+    const back = b.querySelector('.ph-back');
+    if(back) back.onclick = () => { VIEW = 'intro'; paint(); };
+
+    const tg = $id('ph-toggle');
+    if(tg) tg.onclick = async () => {
+      tg.disabled = true;
+      const r = await api('/api/phone', {open: !(DATA && DATA.open)});
+      tg.disabled = false;
+      if(r){
+        DATA = r; paint();
+        toast(r.open ? 'Включила. Перезапусти сервер — и сканируй QR.'
+                     : 'Выключила: снаружи Сайка больше не отвечает.',
+              {kind: 'ok', ttl: 6000});
+      }
+    };
+    const cp = $id('ph-copy');
+    if(cp) cp.onclick = async () => {
+      try{
+        await navigator.clipboard.writeText((DATA && DATA.firewall_cmd) || '');
+        toast('Скопировала — вставь в PowerShell от администратора',
+              {kind: 'ok', ttl: 5000});
+      }catch(e){ toast('Не смогла скопировать — выдели руками',
+                       {kind: 'warn'}); }
+    };
+    const nt = $id('ph-newtok');
+    if(nt) nt.onclick = async () => {
+      DATA = await api('/api/phone', {new_token: true});
+      paint();
+      toast('Код сменён', {kind: 'ok'});
+    };
+    // QR тянем отдельно: сервер рисует SVG, чтобы картинка была чёткой на
+    // любом экране и не тянула ни одной внешней библиотеки в страницу
+    b.querySelectorAll('.ph-qrimg').forEach(async el => {
+      try{
+        const r = await fetch('/api/phone/qr?url=' +
+                              encodeURIComponent(el.dataset.url));
+        if(!r.ok){
+          const d = await r.json().catch(() => ({}));
+          el.textContent = d.error || 'QR не нарисовался';
+          el.classList.add('ph-qrfail');
+          return;
+        }
+        el.innerHTML = await r.text();
+      }catch(e){ el.textContent = 'QR не нарисовался'; }
+    });
+  }
+
+  async function load(){
+    try{ DATA = await api('/api/phone'); paint(); }
+    catch(e){ const b = $id('ph-body');
+              if(b) b.textContent = 'не удалось получить настройки'; }
+  }
+
+  /* ── кнопка в колонке системы, под «выгрузить всё» ── */
+  function mount(){
+    const bar = $id('sysbar');
+    if(!bar || $id('ph-open')) return;
+    const b = document.createElement('button');
+    b.id = 'ph-open';
+    b.textContent = '📱 Подключение с телефона';
+    b.style.cssText = 'width:100%;margin-top:8px;background:rgba(255,255,255,.05);' +
+      'border:1px solid rgba(255,255,255,.13);color:var(--text);' +
+      'border-radius:8px;padding:6px;cursor:pointer;font:inherit;font-size:12px';
+    b.title = 'Открыть Сайку на телефоне: дома по QR или через Tailscale';
+    b.onclick = open;
+    bar.appendChild(b);
+  }
+  mount();
+  // колонка системы перерисовывается каждые пару секунд — возвращаем кнопку
+  const bar = $id('sysbar');
+  if(bar) new MutationObserver(() => mount()).observe(bar, {childList: true});
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · «Что я умею» — обучающий список (2026-07-26)
+
+   Раньше это была плашка-шпаргалка внизу дев-доски: два столбца плотного
+   текста, где каждая способность описана тем, ЧТО она делает. Читать её в
+   узкой колонке невозможно, а главное — прочитав, всё равно непонятно, с
+   чего начать и как убедиться, что оно вообще работает.
+
+   Поэтому теперь у каждой способности три части:
+     что это        — одна фраза по сути
+     попробуй       — точная фраза или клавиша, которую можно повторить
+     что увидишь    — чем ответит система, чтобы было понятно: сработало
+   и, где нужно, четвёртая — «чтобы заработало»: что включить или поставить,
+   иначе человек честно пробует и честно не получает ничего.
+
+   Открывается во всю область системы+аватара+чата и закрывается кликом
+   куда угодно мимо — как остальные шторки.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  /* try  — что сказать или нажать; see — что должно произойти;
+     need — без чего не заработает (необязательно) */
+  const GROUPS = [
+    {title: 'Разговор', items: [
+      {t: '👂 Слух', d: 'Слышит через микрофон и сама решает, к ней ли ' +
+        'обращаются: по имени или в течение 30 секунд после её ответа.',
+       try: 'Нажми 🎙 (или клавишу M) и скажи: «Сайка, как дела?»',
+       see: 'Поле ввода покажет «Слушаю…», твоя фраза появится в чате ' +
+        'серой репликой с пометкой, каким движком распознана и за сколько.',
+       need: 'Движок слуха выбирается в меню 🎙 — там же микрофон.'},
+      {t: '⏹ Перебить', d: 'Глушит голос и генерацию на полуслове.',
+       try: 'Пока она говорит — скажи «стоп» или нажми V. Можно кликнуть ' +
+        'по волне-эквалайзеру внизу.',
+       see: 'Речь обрывается мгновенно, в чате остаётся недоговорённая ' +
+        'реплика — она помнит, что не договорила.'},
+      {t: '🧠 Память', d: 'Свежее помнит дословно, старое сжимает в эпизоды ' +
+        'по смыслу, раз в неделю обновляет образ собеседника.',
+       try: 'Спроси через день-другой: «помнишь, что мы решили по озвучке?»',
+       see: 'Ответит по сути прошлого разговора, не цитируя его дословно.'},
+      {t: '💓 Живость', d: 'Сама подаёт признаки жизни в тишине: ~6 минут — ' +
+        'мысль под нос, ~18 — «есть кто живой?», ~30 без ответа — может ' +
+        'попрощаться и выключиться.',
+       try: 'Просто помолчи. Или скажи «оставайся, я отойду» — счётчик ' +
+        'обнулится.',
+       see: 'Реплика появится сама, без твоего вопроса.',
+       need: 'Настраивается в config → idle.'},
+    ]},
+
+    {title: 'Руки в системе', items: [
+      {t: '🚀 Запуск программ', d: 'Каталог собирается сам из меню «Пуск» ' +
+        'и рабочего стола — игры Steam и Epic тоже.',
+       try: '«Сайка, запусти блендер»',
+       see: 'Программа откроется, в чате появится «Запустила Blender». ' +
+        'Если названий похожих несколько — назовёт, что именно выбрала.',
+       need: 'Настройки → 🖥 Компьютер: «Руки в системе» включены. Там же ' +
+        'видно весь каталог и можно вычеркнуть лишнее.'},
+      {t: '🪟 Окна и мониторы', d: 'Видит, какие окна открыты и на каком ' +
+        'экране, умеет свернуть, показать поверх, попросить закрыться.',
+       try: '«что у меня открыто?» → «сверни всё, кроме блендера»',
+       see: 'Перечислит окна по экранам. Свернёт всё, кроме названного.',
+       need: 'Закрытие — это вежливая просьба к окну: программа успеет ' +
+        'спросить про несохранённое.'},
+      {t: '🔊 Громкость', d: 'Крутит системный звук.',
+       try: '«сделай потише» или «громкость 30 процентов»',
+       see: 'Уровень изменится, она назовёт новый процент.',
+       need: 'Точный процент требует библиотеки pycaw — ставится сама при ' +
+        'запуске start.bat. Без неё остаётся «громче/тише».'},
+      {t: '🗂 Вкладки браузера', d: 'Открыть, закрыть, перейти к N-й — ' +
+        'клавишами, поэтому работает в любом браузере.',
+       try: '«открой новую вкладку», «перейди на третью вкладку»',
+       see: 'Вкладка переключится в том окне, которое сейчас впереди.',
+       need: 'Нужное окно браузера должно быть активным.'},
+      {t: '📁 Файлы и код', d: 'Полные руки, но только внутри рабочей ' +
+        'папки. Наружу выйти не может физически.',
+       try: '«создай папку заказ_5, внутри блокнот задачи.txt с текстом: ' +
+        'собрать референсы, и открой папку»',
+       see: 'Папка появится на диске, проводник откроется на ней.',
+       need: 'Настройки → 🖥 Компьютер → «Рабочая папка». Удалённое ' +
+        'уезжает в _trash, восстановимо.'},
+    ]},
+
+    {title: 'Доверие и самостоятельность', items: [
+      {t: '🎚 Ползунок доверия', d: 'Определяет, когда она делает молча, а ' +
+        'когда сначала спрашивает. Умножается на то, насколько толковая ' +
+        'модель сейчас за рулём.',
+       try: 'Настройки → 🖥 Компьютер → ползунок «Доверие». Под ним ' +
+        'написано, что именно он означает с текущей моделью.',
+       see: 'На низком запасе она проговорит план и подождёт «да». На ' +
+        'высоком — сделает цепочку и отчитается.'},
+      {t: '🗣 Разовое повышение', d: 'Оговорка в начале фразы двигает ' +
+        'планку на один ход.',
+       try: '«делай как знаешь, разбери папку загрузок» — или наоборот ' +
+        '«осторожно, сначала спроси»',
+       see: 'В первом случае не переспросит. Во втором — переспросит даже ' +
+        'на мелочи.'},
+      {t: '🧠 Меняет себе мозги', d: 'По просьбе выбирает другую модель ' +
+        'сама: по твоим оценкам, скорости и тому, влезет ли в видеопамять.',
+       try: '«возьми модель поумнее» — или просто «переключись на что-то ' +
+        'побыстрее»',
+       see: 'Назовёт, на что переключилась и почему. «Верни как было» ' +
+        'откатывает.',
+       need: 'Настройки → 🖥 Компьютер → «Управляет своим интерфейсом».'},
+    ]},
+
+    {title: 'Глаза', items: [
+      {t: '👁 Экран', d: 'Смотрит на монитор, когда просят — или сама, ' +
+        'когда работает над задачей.',
+       try: '«посмотри, что у меня на экране»',
+       see: 'В чате мелькнёт 🔎 look_screen, потом ответ по кадру.',
+       need: 'Тумблер 👁 в шапке. Окна из чёрного списка (банки, ' +
+        'менеджеры паролей, инкогнито) она не снимает.'},
+      {t: '📷 Камера', d: 'Видит через вебку, показывает картинку в ' +
+        'интерфейсе.',
+       try: 'Меню 👁 → выбери камеру → «что ты видишь?»',
+       see: 'Появится окно с картинкой, ответ по кадру.',
+       need: 'Виртуальные камеры (OBS, Iriun, Quest) откроются, только ' +
+        'если их программа запущена.'},
+    ]},
+
+    {title: 'Голос', items: [
+      {t: '🎙 Движки озвучки', d: 'Qwen3 — её собственный клонированный ' +
+        'голос, OmniVoice — тоже клон, но под свободной лицензией, Piper — ' +
+        'быстрый офлайн, Silero — запасной, Edge — онлайн.',
+       try: 'Меню 🔈 → «Все голоса — выбрать и послушать» → ▶ на любом',
+       see: 'Скажет пробную фразу этим голосом. Клик по строке — выберет ' +
+        'его насовсем.'},
+      {t: '⬇ Витрина голосов', d: 'Все голоса Piper, а не только ' +
+        'скачанные — с размером, скачиванием и удалением.',
+       try: 'В том же окне напиши в поиске «de» или «en»',
+       see: 'Появятся голоса других языков. ⬇ качает, 🗑 удаляет с диска.'},
+    ]},
+
+    {title: 'Скорость', items: [
+      {t: '⏱ Куда ушло время', d: 'Разбор задержки по этапам: очередь, ' +
+        'память, зрение, сборка промпта, prefill модели, до первого звука.',
+       try: 'Скажи ей что-нибудь и нажми ⏱ под её ответом.',
+       see: 'Развернётся строка с миллисекундами. Самый жирный этап ' +
+        'подсвечен — он и виноват.'},
+      {t: '⚡ Ручки скорости', d: 'Кэш промпта, потолок контекста, размер ' +
+        'куска памяти, температура, keep_alive.',
+       try: 'Меню 🧠 → «Скорость ответа». Покрути, скажи фразу, посмотри ' +
+        'на разбор сверху.',
+       see: 'Цифры изменятся сразу — это последний реальный замер, а не ' +
+        'ощущения.'},
+    ]},
+
+    {title: 'Связь и удалённое', items: [
+      {t: '📱 Телефон', d: 'Тот же интерфейс в браузере телефона: дома по ' +
+        'QR или через Tailscale из любой точки.',
+       try: 'Колонка системы → «Подключение с телефона»',
+       see: 'Мастер с двумя способами, QR и кодом доступа.',
+       need: 'Снаружи Сайка отвечает только с кодом — у неё руки в ' +
+        'системе, открывать её всей Wi-Fi без пароля нельзя.'},
+      {t: '💬 Telegram / VK', d: 'Те же диалоги и инструменты через бота.',
+       try: 'Впиши токены в secrets.json и напиши боту.',
+       see: 'Отвечает так же, как в окне.'},
+      {t: '🌐 Поиск в сети', d: 'Открывает своё видимое окно браузера и ' +
+        'ищет у тебя на глазах.',
+       try: '«Сайка, загугли что нового в Unreal Engine 5»',
+       see: 'Откроется окно браузера, она наберёт запрос и прочитает ' +
+        'результаты. Потом сама предложит закрыть — или скажи «закрой ' +
+        'браузер».'},
+    ]},
+
+    {title: 'Служебное', items: [
+      {t: '🗺 Дев-доска', d: 'Карта разработки, которую она читает и ' +
+        'дописывает сама.',
+       try: 'Клавиша B, потом «запиши в идеи: коннектор твич-чата»',
+       see: 'Пункт появится на доске.'},
+      {t: '⚡ Здоровье', d: 'Точки в шапке — состояние мозгов, слуха и ' +
+        'голоса. Жёлтая строка — что сломалось и что она починила сама.',
+       try: 'Наведи на точки в шапке.',
+       see: 'Подскажет, что именно не так. Полный осмотр: ' +
+        'setup\\doctor.py --fix'},
+      {t: '🔌 Самовыключение', d: 'Прощается голосом и гасит сервер: ' +
+        'выгружает модели, закрывает браузер.',
+       try: '«Сайка, выключайся»',
+       see: 'Попрощается и погасит себя.',
+       need: 'Отключается: idle.allow_self_shutdown=false'},
+      {t: '🧹 Новый диалог', d: 'Обнуляет контекст, память при этом ' +
+        'остаётся.',
+       try: 'Кнопка 🧹 в шапке.',
+       see: 'Чат чистый, но она помнит вас обоих.'},
+    ]},
+  ];
+
+  const ov = document.createElement('div');
+  ov.id = 'skills-ov';
+  ov.innerHTML = '<div class="sk-card">' +
+    '<div class="sk-head"><span>🧬 Что я умею</span>' +
+    '<input id="sk-find" placeholder="поиск по способностям">' +
+    '<span style="flex:1"></span>' +
+    '<button class="iconbtn" id="sk-close" title="Закрыть" ' +
+    'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+    '<div class="sk-body" id="sk-body"></div></div>';
+
+  function host(){ return $id('main') || document.body; }
+  function open(){
+    if(ov.parentNode !== host()) host().appendChild(ov);
+    ov.classList.add('show');
+    paint('');
+    const f = $id('sk-find');
+    if(f){ f.value = ''; setTimeout(() => f.focus(), 60); }
+  }
+  function close(){ ov.classList.remove('show'); }
+  ov.addEventListener('click', e => {
+    if(e.target === ov || e.target.id === 'sk-close') close();
+  });
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && ov.classList.contains('show')) close();
+  });
+
+  function item(it){
+    return '<div class="sk-item"><b>' + esc(it.t) + '</b>' +
+      '<p>' + esc(it.d) + '</p>' +
+      '<div class="sk-try"><span>попробуй</span><i>' + esc(it.try) +
+      '</i></div>' +
+      '<div class="sk-see"><span>увидишь</span><i>' + esc(it.see) +
+      '</i></div>' +
+      (it.need ? '<div class="sk-need"><span>нужно</span><i>' +
+        esc(it.need) + '</i></div>' : '') + '</div>';
+  }
+
+  function paint(q){
+    const b = $id('sk-body');
+    if(!b) return;
+    q = (q || '').trim().toLowerCase();
+    let html = '', found = 0;
+    GROUPS.forEach(g => {
+      const items = g.items.filter(it => !q ||
+        (it.t + ' ' + it.d + ' ' + it.try + ' ' + it.see + ' ' +
+         (it.need || '')).toLowerCase().includes(q));
+      if(!items.length) return;
+      found += items.length;
+      html += '<div class="sk-group"><div class="sk-gtitle">' +
+        esc(g.title) + '</div><div class="sk-grid">' +
+        items.map(item).join('') + '</div></div>';
+    });
+    b.innerHTML = found ? html :
+      '<div style="color:var(--dim);font-size:13px">Ничего не нашла. ' +
+      'Попробуй другое слово — например «голос», «окна», «память».</div>';
+  }
+
+  let deb = null;
+  ov.addEventListener('input', e => {
+    if(e.target.id !== 'sk-find') return;
+    clearTimeout(deb);
+    const v = e.target.value;
+    deb = setTimeout(() => paint(v), 130);
+  });
+
+  /* Старая плашка внутри дев-доски заменена кнопкой: в узкой колонке
+     два столбца мелкого текста читать было невозможно. */
+  function mount(){
+    const old = $id('board-skills');
+    if(old && !$id('sk-open')){
+      const b = document.createElement('button');
+      b.id = 'sk-open';
+      b.textContent = '🧬 Что я умею — список с примерами';
+      b.style.cssText = 'width:100%;margin-top:8px;padding:10px 14px;' +
+        'background:var(--panel2);border:1px solid var(--border);' +
+        'color:var(--text);border-radius:12px;cursor:pointer;font:inherit;' +
+        'font-weight:600;text-align:left';
+      b.title = 'Каждая способность: что это, что сказать, что увидишь';
+      b.onclick = e => { e.stopPropagation(); open(); };
+      old.parentNode.insertBefore(b, old);
+      old.remove();
+    }
+  }
+  mount();
+  new MutationObserver(() => mount())
+    .observe(document.body, {childList: true, subtree: true});
+  window.saikaSkills = open;
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · «Внешность» — библиотека аватаров и персонализация (2026-07-26)
+
+   До сих пор аватар был ОДИН файл, прописанный в config.json руками. Чтобы
+   поменять внешность, надо было лезть в json и перезапускаться; 2D не
+   поддерживалось вовсе, а наряды решали только половину задачи — это то же
+   тело в другой одежде, а не другой персонаж.
+
+   Здесь всё разом: список моделей с пометкой 2D/3D, загрузка своих
+   перетаскиванием, кнопка открыть папку на компьютере, и ручки внешности —
+   размер, подъём, фон, а для плоских ещё дыхание и раскачка от голоса.
+
+   Открывается во всю рабочую область: разглядывать модели в колонке
+   шириной в палец бессмысленно.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const KIND = {'3d': '3D · VRM', '2d': '2D · спрайт', live2d: 'Live2D'};
+  const WHERE = {library: '', config: 'из настроек', outfit: 'наряд'};
+
+  /* Ручка: ключ конфига, подпись, тип, диапазон и — обязательно — что она
+     делает на человеческом. Без последнего это набор безымянных ползунков. */
+  const KNOBS = [
+    {k: 'avatar.web.scale', t: 'Размер', kind: 'range', min: .3, max: 2.5,
+     step: .05, why: 'Насколько крупная модель в окне.'},
+    {k: 'avatar.web.offset_y', t: 'Подъём', kind: 'range', min: -1, max: 1,
+     step: .02, why: 'Сдвиг по вертикали: поднять, если обрезает ноги.'},
+    {k: 'avatar.web.bg', t: 'Фон окна', kind: 'text',
+     why: 'Цвет вроде 1a1a2e или пусто — тогда фон прозрачный (для OBS).'},
+    {k: 'avatar.enabled', t: 'Аватар включён', kind: 'bool',
+     why: 'Выключишь — Сайка перестанет реагировать телом, окно останется.'},
+    {k: 'avatar.llm_gestures', t: 'Жесты по смыслу', kind: 'bool',
+     why: 'Она сама решает, когда показать эмоцию, а не только по просьбе.'},
+    {k: 'avatar.idle_fidgets', t: 'Живость в покое', kind: 'bool',
+     why: 'Мелкие движения, пока молчит — чтобы не выглядела мёртвой.'},
+    {k: 'avatar.look_at_cursor', t: 'Следит за курсором', kind: 'bool',
+     why: 'Поворачивает голову за мышью.'},
+  ];
+  const KNOBS_2D = [
+    {k: 'avatar.2d.breath', t: 'Дыхание', kind: 'range', min: 0, max: 3,
+     step: .1, why: 'Медленное покачивание в покое.'},
+    {k: 'avatar.2d.sway', t: 'Отклик на голос', kind: 'range', min: 0,
+     max: 3, step: .1,
+     why: 'Насколько сильно её качает, когда она говорит.'},
+  ];
+
+  const ov = document.createElement('div');
+  ov.id = 'av-ov';
+  ov.innerHTML = '<div class="ph-card"><div class="ph-head">' +
+    '<span>🎭 Внешность</span><span style="flex:1"></span>' +
+    '<button class="chip" id="av-folder">📂 открыть папку</button>' +
+    '<button class="chip" id="av-add">⬆ загрузить модель</button>' +
+    '<button class="iconbtn" id="av-close" title="Закрыть" ' +
+    'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+    '<div class="ph-body" id="av-body"></div></div>' +
+    '<input type="file" id="av-file" accept=".vrm,.glb,.gltf,.png,.webp,' +
+    '.gif,.jpg,.jpeg" style="display:none">';
+
+  function host(){ return $id('main') || document.body; }
+  function open(){
+    if(ov.parentNode !== host()) host().appendChild(ov);
+    ov.classList.add('show');
+    DATA = null; paint(); load();
+  }
+  function close(){ ov.classList.remove('show'); }
+  ov.addEventListener('click', e => {
+    if(e.target === ov || e.target.id === 'av-close') close();
+  });
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && ov.classList.contains('show')) close();
+  });
+
+  let DATA = null;
+
+  async function upload(fileList){
+    const files = [...(fileList || [])];
+    if(!files.length) return;
+    for(const f of files){
+      toast('Загружаю «' + f.name + '»…', {kind: 'info', ttl: 4000});
+      const fd = new FormData();
+      fd.append('file', f);
+      try{
+        const r = await (await fetch('/api/avatar/upload',
+                                     {method: 'POST', body: fd})).json();
+        toast(r.ok ? ('Готово: ' + r.name) : (r.error || 'не загрузилось'),
+              {kind: r.ok ? 'ok' : 'err', ttl: r.ok ? 3000 : 9000});
+      }catch(e){
+        toast('Не загрузилось: ' + e, {kind: 'err'});
+      }
+    }
+    load();
+  }
+
+  function modelCard(m){
+    const el = document.createElement('div');
+    el.className = 'av-card' + (m.current ? ' on' : '') +
+      (m.playable ? '' : ' off');
+    const badge = KIND[m.kind] || m.kind;
+    const where = WHERE[m.where] || '';
+    el.innerHTML =
+      '<div class="av-thumb">' +
+        (m.kind === '2d' && m.current
+          ? '<img src="/avatar/sprite?v=' + Date.now() + '" alt="">'
+          : '<span>' + (m.kind === '2d' ? '🖼' : m.kind === 'live2d'
+              ? '🎏' : '🧍') + '</span>') +
+      '</div>' +
+      '<div class="av-name">' + esc(m.name) + '</div>' +
+      '<div class="av-meta">' + esc(badge) +
+        (m.size_mb ? ' · ' + m.size_mb + ' МБ' : '') +
+        (where ? ' · ' + esc(where) : '') + '</div>' +
+      (m.note ? '<div class="av-note">' + esc(m.note) + '</div>' : '') +
+      (m.current ? '<div class="av-cur">надета</div>' : '');
+    if(m.playable && !m.current){
+      el.onclick = async () => {
+        const r = await api('/api/avatar/select', {name: m.name});
+        toast(r.message || 'готово', {kind: r.ok ? 'ok' : 'err', ttl: 6000});
+        load();
+      };
+    } else if(!m.playable){
+      el.onclick = () => toast(m.note || 'эту модель показать не могу',
+                               {kind: 'warn', ttl: 8000});
+    }
+    if(m.where === 'library' && !m.current){
+      const del = document.createElement('button');
+      del.className = 'mini del av-del';
+      del.textContent = '🗑';
+      del.title = 'Убрать в _trash (можно вернуть)';
+      del.onclick = async e => {
+        e.stopPropagation();
+        const r = await api('/api/avatar/delete', {name: m.name});
+        toast(r.message || '', {kind: 'ok', ttl: 5000});
+        load();
+      };
+      el.appendChild(del);
+    }
+    return el;
+  }
+
+  function knobRow(f){
+    const st = DATA.settings || {};
+    const v = st[f.k];
+    const w = document.createElement('div');
+    w.style.cssText = 'padding:7px 2px;border-top:1px solid ' +
+      'rgba(255,255,255,.07)';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px';
+    const n = document.createElement('span');
+    n.style.cssText = 'flex:1;min-width:0;font-size:12.5px';
+    n.textContent = f.t;
+    row.appendChild(n);
+
+    let input, read = null;
+    if(f.kind === 'bool'){
+      input = document.createElement('button');
+      input.className = 'chip';
+      const paint2 = () => {
+        input.textContent = input.dataset.on === '1' ? 'включено' : 'выключено';
+        input.style.color = input.dataset.on === '1' ? 'var(--ok)' : 'var(--dim)';
+      };
+      input.dataset.on = v ? '1' : '0'; paint2();
+      input.onclick = async () => {
+        input.dataset.on = input.dataset.on === '1' ? '0' : '1';
+        paint2(); await save(f.k, input.dataset.on === '1');
+      };
+    } else if(f.kind === 'range'){
+      input = document.createElement('input');
+      input.type = 'range';
+      input.min = f.min; input.max = f.max; input.step = f.step;
+      input.value = v == null ? 1 : v;
+      input.style.cssText = 'width:170px';
+      read = document.createElement('b');
+      read.style.cssText = 'min-width:36px;text-align:right;font-size:12px';
+      read.textContent = Number(input.value).toFixed(2);
+      input.oninput = () => { read.textContent = Number(input.value).toFixed(2); };
+      input.onchange = () => save(f.k, parseFloat(input.value));
+    } else {
+      input = document.createElement('input');
+      input.value = v == null ? '' : v;
+      input.placeholder = 'прозрачный';
+      input.style.cssText = 'width:130px;background:var(--panel2);' +
+        'color:var(--text);border:1px solid var(--border);border-radius:9px;' +
+        'padding:5px 8px;font:12.5px inherit;outline:none;text-align:right';
+      input.onchange = () => save(f.k, input.value);
+    }
+    if(read) row.appendChild(read);
+    row.appendChild(input);
+    w.appendChild(row);
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:11px;color:var(--dim);margin-top:3px;' +
+      'line-height:1.4';
+    why.textContent = f.why;
+    w.appendChild(why);
+    return w;
+  }
+
+  async function save(k, v){
+    const r = await api('/api/avatar/settings', {[k]: v});
+    if(r && r.ok){ DATA.settings = r.settings; }
+    else toast((r && r.error) || 'не сохранилось', {kind: 'err'});
+  }
+
+  function paint(){
+    const body = $id('av-body');
+    if(!body) return;
+    if(!DATA){ body.textContent = 'загружаю…'; return; }
+    body.innerHTML = '';
+
+    const t1 = document.createElement('div');
+    t1.className = 'title';
+    t1.textContent = 'Модели';
+    body.appendChild(t1);
+
+    const drop = document.createElement('div');
+    drop.className = 'av-grid';
+    (DATA.models || []).forEach(m => drop.appendChild(modelCard(m)));
+    if(!(DATA.models || []).length){
+      drop.innerHTML = '<div style="font-size:12px;color:var(--dim);' +
+        'grid-column:1/-1">Библиотека пуста. Перетащи сюда .vrm или ' +
+        'картинку — или нажми «загрузить модель» сверху.</div>';
+    }
+    body.appendChild(drop);
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px;color:var(--dim);margin:8px 0 0;' +
+      'line-height:1.5';
+    hint.innerHTML = 'Файлы лежат в <code>' + esc(DATA.dir || '') +
+      '</code> — можно просто накидать их туда в проводнике, список ' +
+      'подхватит. <b>3D</b>: .vrm, .glb, .gltf. <b>2D</b>: .png, .webp, ' +
+      '.gif с прозрачным фоном. Удалённое уезжает в <code>_trash</code>, ' +
+      'откуда его можно вернуть.';
+    body.appendChild(hint);
+
+    const t2 = document.createElement('div');
+    t2.className = 'title';
+    t2.style.cssText = 'margin-top:16px';
+    t2.textContent = 'Как она выглядит и двигается';
+    body.appendChild(t2);
+    KNOBS.forEach(f => body.appendChild(knobRow(f)));
+
+    if((DATA.settings || {}).kind === '2d'){
+      const t3 = document.createElement('div');
+      t3.className = 'title';
+      t3.style.cssText = 'margin-top:16px';
+      t3.textContent = 'Плоская модель — оживление';
+      body.appendChild(t3);
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:11px;color:var(--dim);' +
+        'line-height:1.5;margin-bottom:2px';
+      note.textContent = 'У картинки нет костей, поэтому настоящей ' +
+        'симуляции тут быть не может. Вместо неё дыхание в покое и отклик ' +
+        'на собственный голос — этого хватает, чтобы она перестала ' +
+        'выглядеть наклейкой.';
+      body.appendChild(note);
+      KNOBS_2D.forEach(f => body.appendChild(knobRow(f)));
+    }
+  }
+
+  async function load(){
+    try{ DATA = await api('/api/avatar/library'); paint(); }
+    catch(e){ const b = $id('av-body');
+              if(b) b.textContent = 'не удалось получить список моделей'; }
+  }
+
+  /* перетаскивание файлов прямо в панель */
+  ov.addEventListener('dragover', e => {
+    e.preventDefault(); ov.classList.add('av-drop');
+  });
+  ov.addEventListener('dragleave', e => {
+    if(e.target === ov) ov.classList.remove('av-drop');
+  });
+  ov.addEventListener('drop', e => {
+    e.preventDefault(); ov.classList.remove('av-drop');
+    upload(e.dataTransfer && e.dataTransfer.files);
+  });
+  ov.addEventListener('change', e => {
+    if(e.target.id === 'av-file') upload(e.target.files);
+  });
+  ov.addEventListener('click', async e => {
+    if(e.target.id === 'av-add') $id('av-file').click();
+    if(e.target.id === 'av-folder'){
+      const r = await api('/api/avatar/folder', {});
+      toast(r.message || '', {kind: 'ok'});
+    }
+  });
+
+  /* ── кнопка в колонке системы ── */
+  function mount(){
+    const bar = $id('sysbar');
+    if(!bar || $id('av-open')) return;
+    const b = document.createElement('button');
+    b.id = 'av-open';
+    b.textContent = '🎭 Внешность — модели и настройка';
+    b.style.cssText = 'width:100%;margin-top:6px;background:rgba(255,255,255,.05);' +
+      'border:1px solid rgba(255,255,255,.13);color:var(--text);' +
+      'border-radius:8px;padding:6px;cursor:pointer;font:inherit;font-size:12px';
+    b.title = 'Библиотека аватаров 2D и 3D, загрузка своих, персонализация';
+    b.onclick = open;
+    bar.appendChild(b);
+  }
+  mount();
+  const bar = $id('sysbar');
+  if(bar) new MutationObserver(() => mount()).observe(bar, {childList: true});
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · «Досье моделей» (2026-07-26)
+
+   Рейтинг у нас был один — токенов в секунду. Владелец точно поймал, где
+   это врёт: «4b высоко в рейтинге только потому, что бодро отвечает, но
+   она часто ошибалась или не делала под видом что сделала — доверие к ней
+   на самом деле низкое».
+
+   Скорость и надёжность разные оси, и здесь видна вторая. Плюс цена:
+   платные модели должны быть подстраховкой, а не первым выбором.
+
+   Цифра надёжности копится сама (главный сигнал — «сказала, что сделала»
+   без единого вызова инструмента), но ручная оценка владельца её
+   перебивает: он живёт с этими моделями и видит то, чего счётчик не видит.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const COST = {free: ['свой ПК', 'var(--ok)'],
+                metered: ['бесплатный тир', 'var(--dim)'],
+                paid: ['платная', 'var(--warn)']};
+
+  const ov = document.createElement('div');
+  ov.id = 'dos-ov';
+  ov.innerHTML = '<div class="ph-card"><div class="ph-head">' +
+    '<span>🧭 Досье моделей</span>' +
+    '<input id="dos-find" placeholder="поиск по имени">' +
+    '<span style="flex:1"></span>' +
+    '<button class="iconbtn" id="dos-close" title="Закрыть" ' +
+    'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+    '<div class="ph-body" id="dos-body"></div></div>';
+
+  function host(){ return $id('main') || document.body; }
+  function open(){
+    if(ov.parentNode !== host()) host().appendChild(ov);
+    ov.classList.add('show');
+    DATA = null; paint(); load();
+  }
+  ov.addEventListener('click', e => {
+    if(e.target === ov || e.target.id === 'dos-close')
+      ov.classList.remove('show');
+  });
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && ov.classList.contains('show'))
+      ov.classList.remove('show');
+  });
+
+  let DATA = null;
+
+  async function save(body){
+    const r = await api('/api/models/dossier', body);
+    if(r && r.ok){ DATA = r; return true; }
+    toast((r && r.error) || 'не сохранилось', {kind: 'err'});
+    return false;
+  }
+
+  function row(m){
+    const el = document.createElement('div');
+    el.className = 'dos-row' + (m.current ? ' on' : '');
+    const [ctxt, ccol] = COST[m.cost] || COST.free;
+
+    const head = document.createElement('div');
+    head.className = 'dos-head';
+    head.innerHTML =
+      '<span class="dos-name">' + esc(m.name) + '</span>' +
+      '<span class="dos-tag" style="color:' + ccol + '">' + ctxt + '</span>' +
+      (m.vision ? '<span class="dos-tag">зрение</span>' : '') +
+      (m.current ? '<span class="dos-tag" style="color:var(--accent)">' +
+        'сейчас</span>' : '');
+    el.appendChild(head);
+
+    const bar = document.createElement('div');
+    bar.className = 'dos-bar';
+    const lab = document.createElement('span');
+    lab.className = 'dos-lab';
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = 0; sl.max = 10; sl.step = 1;
+    sl.value = m.manual || m.reliability;
+    const paintLab = () => {
+      const v = parseInt(sl.value, 10);
+      lab.textContent = v === 0
+        ? 'считать самой (' + m.reliability + ')'
+        : 'моя оценка: ' + v;
+      lab.style.color = v === 0 ? 'var(--dim)' : 'var(--text)';
+    };
+    // 0 = «убрать ручную оценку»: тогда цифра снова копится сама, а это
+    // именно то, чего человек хочет, когда передумал вмешиваться
+    if(!m.manual) sl.value = 0;
+    paintLab();
+    sl.oninput = paintLab;
+    sl.onchange = async () => {
+      const v = parseInt(sl.value, 10);
+      if(await save({name: m.name, manual: v || null})){
+        toast(v ? ('Надёжность ' + m.name + ' = ' + v)
+                : 'Снова считаю сама', {kind: 'ok', ttl: 2200});
+        load();
+      }
+    };
+    bar.appendChild(lab); bar.appendChild(sl);
+    el.appendChild(bar);
+
+    const st = document.createElement('div');
+    st.className = 'dos-stat';
+    const bits = ['надёжность <b>' + m.reliability + '</b>/10'];
+    if(m.lies) bits.push('<span style="color:var(--err)">приписала себе ' +
+      m.lies + '</span>');
+    if(m.errors) bits.push('ошибок ' + m.errors);
+    st.innerHTML = bits.join(' · ');
+    el.appendChild(st);
+
+    const note = document.createElement('input');
+    note.className = 'dos-note';
+    note.value = m.note || '';
+    note.placeholder = 'заметка: в чём хороша, где врёт…';
+    note.onchange = () => save({name: m.name, note: note.value})
+      .then(ok => ok && toast('Записала', {kind: 'ok', ttl: 1600}));
+    el.appendChild(note);
+    return el;
+  }
+
+  function paint(){
+    const b = $id('dos-body');
+    if(!b) return;
+    if(!DATA){ b.textContent = 'загружаю…'; return; }
+    b.innerHTML = '';
+
+    const top = document.createElement('div');
+    top.className = 'ph-block ph-note';
+    top.innerHTML = '<b>Надёжность — это не скорость</b>' +
+      '<p>Бодрая мелкая модель, которая пишет «запустила», ничего не ' +
+      'запустив, хуже медленной и честной. Цифра копится сама: главный ' +
+      'сигнал — реплика про выполненное действие, за которой не было ни ' +
+      'одного вызова инструмента. Твоя оценка перебивает счётчик.</p>' +
+      '<div class="dos-cheap"><span>Беречь платные модели</span>' +
+      '<button class="chip" id="dos-cheap">' +
+      (DATA.prefer_cheap ? 'да' : 'нет') + '</button>' +
+      '<span class="ph-hint">Когда «да», Сайка сначала пробует бесплатные, ' +
+      'а платные берёт как подстраховку — если задача не далась или ты ' +
+      'попросил сам.</span></div>';
+    b.appendChild(top);
+
+    const q = ($id('dos-find').value || '').trim().toLowerCase();
+    const list = (DATA.models || []).filter(m =>
+      !q || m.name.toLowerCase().includes(q));
+    if(!list.length){
+      const d = document.createElement('div');
+      d.style.cssText = 'font-size:12px;color:var(--dim)';
+      d.textContent = 'Пусто. Досье заводится само, как только модель ' +
+        'появляется в списке — проверь, отвечают ли движки.';
+      b.appendChild(d);
+      return;
+    }
+    const grid = document.createElement('div');
+    grid.className = 'dos-grid';
+    list.forEach(m => grid.appendChild(row(m)));
+    b.appendChild(grid);
+
+    const ch = $id('dos-cheap');
+    if(ch) ch.onclick = async () => {
+      if(await save({prefer_cheap: !DATA.prefer_cheap})){ paint(); }
+    };
+  }
+
+  let deb = null;
+  ov.addEventListener('input', e => {
+    if(e.target.id !== 'dos-find') return;
+    clearTimeout(deb); deb = setTimeout(paint, 130);
+  });
+
+  async function load(){
+    try{ DATA = await api('/api/models/dossier'); paint(); }
+    catch(e){ const b = $id('dos-body');
+              if(b) b.textContent = 'не удалось получить досье'; }
+  }
+
+  function mount(){
+    const pop = $id('pop-model');
+    if(!pop || $id('dos-open')) return;
+    const b = document.createElement('div');
+    b.className = 'item';
+    b.id = 'dos-open';
+    b.innerHTML = '🧭 <span class="mname">Досье моделей — надёжность и ' +
+      'цена</span>';
+    b.onclick = e => { e.stopPropagation(); open(); };
+    pop.insertBefore(b, pop.firstChild);
+  }
+  mount();
+  const pop = $id('pop-model');
+  if(pop) new MutationObserver(() => mount()).observe(pop, {childList: true});
+})();
+
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · «Самочувствие» — плашка слева и полная панель (2026-07-26)
+
+   Снаружи, в пустой части левой колонки, — живая полоска: настроение,
+   самооценка и две-три подписи. Клик — полная панель с модулями.
+
+   Три оси настроения это модель PAD (Mehrabian & Russell, 1974), а вера в
+   себя по каждому умению — self-efficacy Бандуры. Почему именно так и
+   какие веса — подробно в server/psyche.py; здесь только показ и ручки.
+
+   Полоска обновляется сама раз в несколько секунд, но НЕ дёргает сервер,
+   когда вкладка спрятана: панель системы и без того опрашивается часто.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const api = async (u, b) => {
+    const r = await fetch(u, b === undefined ? undefined : {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(b)});
+    return r.json();
+  };
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const AXIS = {
+    p: ['Приятно', 'неприятно ↔ приятно',
+        'Насколько ей сейчас хорошо от происходящего.'],
+    a: ['Заведена', 'сонная ↔ на взводе',
+        'Уровень внутренней энергии: от вялости до ярости.'],
+    d: ['Владеет ситуацией', 'её несёт ↔ она рулит',
+        'Третья ось нужна, чтобы отличать злость от испуга: обе ' +
+        'неприятные и возбуждённые, но злость доминантна, а испуг — нет.'],
+  };
+  const MARK = {praise: ['похвала', 'var(--ok)'],
+                blame: ['недоволен', 'var(--err)'],
+                correction: ['поправил', 'var(--warn)']};
+
+  let DATA = null;
+
+  /* ─── полоска в колонке системы ─── */
+  function strip(){
+    const bar = $id('sysbar');
+    if(!bar) return;
+    let el = $id('psy-strip');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'psy-strip';
+      el.title = 'Самочувствие и самооценка — клик для настройки';
+      el.onclick = open;
+      bar.appendChild(el);
+    } else if(el.parentNode !== bar || el.nextSibling){
+      bar.appendChild(el);          // перерисовали колонку — вернулись вниз
+    }
+    if(!DATA){ el.innerHTML = '<div class="psy-t">самочувствие…</div>'; return; }
+    if(!DATA.enabled){
+      el.innerHTML = '<div class="psy-t">самочувствие выключено</div>';
+      return;
+    }
+    const est = Math.round((DATA.esteem || 0) * 100);
+    const ax = a => Math.round(((DATA.pad[a] + 1) / 2) * 100);
+    el.innerHTML =
+      '<div class="psy-head"><span class="psy-emo">' + (DATA.emoji || '') +
+        '</span><span class="psy-mood">' + esc(DATA.mood || '') + '</span>' +
+        '<span class="psy-est">' + est + '%</span></div>' +
+      ['p', 'a', 'd'].map(a =>
+        '<div class="psy-line"><span>' + AXIS[a][0] + '</span>' +
+        '<div class="psy-track"><i style="left:' + ax(a) + '%"></i></div>' +
+        '</div>').join('') +
+      '<div class="psy-t">уверенность в себе ' + est + '% · ' +
+      'клик — подробно</div>';
+  }
+
+  /* ─── полная панель ─── */
+  const ov = document.createElement('div');
+  ov.id = 'psy-ov';
+  ov.innerHTML = '<div class="ph-card"><div class="ph-head">' +
+    '<span>🧠 Самоанализ</span><span style="flex:1"></span>' +
+    '<button class="chip" id="psy-reset">сбросить всё</button>' +
+    '<button class="iconbtn" id="psy-close" title="Закрыть" ' +
+    'style="width:30px;height:30px;font-size:13px">✕</button></div>' +
+    '<div class="ph-body" id="psy-body"></div></div>';
+  function host(){ return $id('main') || document.body; }
+  function open(){
+    if(ov.parentNode !== host()) host().appendChild(ov);
+    ov.classList.add('show'); paint(); load();
+  }
+  ov.addEventListener('click', e => {
+    if(e.target === ov || e.target.id === 'psy-close')
+      ov.classList.remove('show');
+  });
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && ov.classList.contains('show'))
+      ov.classList.remove('show');
+  });
+
+  async function save(body){
+    const r = await api('/api/psyche', body);
+    if(r && r.ok !== false){ DATA = r; strip(); return true; }
+    toast((r && r.error) || 'не сохранилось', {kind: 'err'});
+    return false;
+  }
+
+  function knob(label, key, val, min, max, step, why, fmt){
+    const w = document.createElement('div');
+    w.style.cssText = 'padding:7px 2px;border-top:1px solid ' +
+      'rgba(255,255,255,.07)';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px';
+    const n = document.createElement('span');
+    n.style.cssText = 'flex:1;min-width:0;font-size:12.5px';
+    n.textContent = label;
+    const read = document.createElement('b');
+    read.style.cssText = 'min-width:44px;text-align:right;font-size:12px';
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step;
+    sl.value = val; sl.style.cssText = 'width:170px';
+    const show = () => { read.textContent = (fmt || (v => v))(+sl.value); };
+    show();
+    sl.oninput = show;
+    sl.onchange = () => save({[key]: parseFloat(sl.value)});
+    row.appendChild(n); row.appendChild(read); row.appendChild(sl);
+    w.appendChild(row);
+    const t = document.createElement('div');
+    t.style.cssText = 'font-size:11px;color:var(--dim);margin-top:3px;' +
+      'line-height:1.4';
+    t.textContent = why;
+    w.appendChild(t);
+    return w;
+  }
+
+  function sec(title){
+    const d = document.createElement('div');
+    d.className = 'title';
+    d.style.cssText = 'margin-top:14px';
+    d.textContent = title;
+    return d;
+  }
+
+  function paint(){
+    const b = $id('psy-body');
+    if(!b) return;
+    if(!DATA){ b.textContent = 'загружаю…'; return; }
+    b.innerHTML = '';
+
+    const intro = document.createElement('div');
+    intro.className = 'ph-block ph-note';
+    intro.innerHTML = '<b>' + (DATA.emoji || '') + ' Сейчас она ' +
+      esc(DATA.mood || '') + '</b>' +
+      '<p>Настроение описано тремя непрерывными осями — это модель <b>PAD</b> ' +
+      '(Mehrabian &amp; Russell, 1974), стандарт аффективных вычислений. ' +
+      'Список готовых «эмоций» не годится: они не переключаются кнопками, ' +
+      'а смешиваются и плавают.</p>' +
+      '<p>Вера в свои силы ведётся <b>отдельно по каждому умению</b> — по ' +
+      'теории самоэффективности Бандуры. Оттуда же и веса: собственный ' +
+      'успех влияет сильнее похвалы, поэтому хвалить сломанное бесполезно, ' +
+      'она всё равно поверит фактам.</p>';
+    b.appendChild(intro);
+
+    b.appendChild(sec('Настроение прямо сейчас'));
+    ['p', 'a', 'd'].forEach(a => {
+      const w = document.createElement('div');
+      w.style.cssText = 'padding:6px 2px';
+      const v = DATA.pad[a];
+      w.innerHTML =
+        '<div style="display:flex;gap:10px;font-size:12.5px">' +
+          '<span style="flex:1">' + AXIS[a][0] + '</span>' +
+          '<span style="color:var(--dim);font-size:11px">' + AXIS[a][1] +
+          '</span><b style="min-width:44px;text-align:right">' +
+          v.toFixed(2) + '</b></div>' +
+        '<div class="psy-track big"><i style="left:' +
+          Math.round(((v + 1) / 2) * 100) + '%"></i></div>' +
+        '<div style="font-size:11px;color:var(--dim);line-height:1.4">' +
+          AXIS[a][2] + '</div>';
+      b.appendChild(w);
+    });
+
+    b.appendChild(sec('Во что она верит — по умениям'));
+    const grid = document.createElement('div');
+    grid.className = 'psy-grid';
+    Object.keys(DATA.skills || {}).forEach(sk => {
+      const v = DATA.eff[sk] || 0.5;
+      const card = document.createElement('div');
+      card.className = 'psy-skill';
+      card.innerHTML = '<div class="psy-sname">' + esc(sk) +
+        '<b>' + Math.round(v * 100) + '%</b></div>' +
+        '<div style="font-size:10.5px;color:var(--dim);line-height:1.35;' +
+        'margin:2px 0 5px">' + esc(DATA.skills[sk]) + '</div>';
+      const sl = document.createElement('input');
+      sl.type = 'range'; sl.min = 2; sl.max = 100; sl.step = 1;
+      sl.value = Math.round(v * 100);
+      sl.oninput = () => {
+        card.querySelector('b').textContent = sl.value + '%';
+      };
+      sl.onchange = () => save({eff: {[sk]: sl.value / 100}});
+      card.appendChild(sl);
+      grid.appendChild(card);
+    });
+    b.appendChild(grid);
+
+    b.appendChild(sec('Характер — куда она возвращается'));
+    const tnote = document.createElement('div');
+    tnote.style.cssText = 'font-size:11px;color:var(--dim);line-height:1.5';
+    tnote.textContent = 'Настроение затухает к этой точке, когда ничего не ' +
+      'происходит. Это и есть темперамент: одна Сайка бодрая и дерзкая, ' +
+      'другая тихая и мягкая.';
+    b.appendChild(tnote);
+    b.appendChild(knob('Базовое настроение', 'psyche.temperament.p',
+      DATA.temperament.p, -1, 1, 0.05,
+      'Куда тянет по приятности: выше — по умолчанию довольная жизнью.',
+      v => v.toFixed(2)));
+    b.appendChild(knob('Базовая бодрость', 'psyche.temperament.a',
+      DATA.temperament.a, -1, 1, 0.05,
+      'Выше — живее и напористее, ниже — спокойнее и тише.',
+      v => v.toFixed(2)));
+    b.appendChild(knob('Базовая уверенность', 'psyche.temperament.d',
+      DATA.temperament.d, -1, 1, 0.05,
+      'Выше — держится хозяйкой положения, ниже — мягче и осторожнее.',
+      v => v.toFixed(2)));
+
+    b.appendChild(sec('Как она это переживает'));
+    b.appendChild(knob('Отходчивость', 'psyche.calm_minutes',
+      DATA.calm_minutes, 1, 60, 1,
+      'За сколько минут случившееся отпускает наполовину. Больше — дольше ' +
+      'носит в себе.', v => Math.round(v) + ' мин'));
+    b.appendChild(knob('Чувствительность', 'psyche.sensitivity',
+      DATA.sensitivity, 0, 3, 0.1,
+      'Насколько сильно события двигают настроение. 0 — ничем не проймёшь.',
+      v => '×' + v.toFixed(1)));
+    b.appendChild(knob('Сдаваться после', 'psyche.give_up_after',
+      DATA.give_up_after, 1, 8, 1,
+      'Сколько неудачных подходов к одной цели, прежде чем честно сказать ' +
+      '«не выходит» и позвать тебя. Молча долбиться она не будет.',
+      v => Math.round(v) + ' попыток'));
+
+    if((DATA.marks || []).length){
+      b.appendChild(sec('Последние отклики'));
+      const m = document.createElement('div');
+      m.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px 9px;' +
+        'font-size:11px';
+      m.innerHTML = DATA.marks.slice(-18).reverse().map(x => {
+        const [w, c] = MARK[x.kind] || ['?', 'var(--dim)'];
+        return '<span style="color:' + c + '">' + w + ' · ' +
+               esc(x.skill) + '</span>';
+      }).join('');
+      b.appendChild(m);
+    }
+    if((DATA.log || []).length){
+      b.appendChild(sec('Что её задело'));
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--dim);line-height:1.6';
+      l.innerHTML = DATA.log.slice(-12).reverse()
+        .map(x => esc(x.why)).join('<br>');
+      b.appendChild(l);
+    }
+  }
+
+  const rst = () => {};
+  ov.addEventListener('click', async e => {
+    if(e.target.id !== 'psy-reset') return;
+    (window.saikaAsk || ((m, y) => y()))(
+      'Обнулить настроение и всю накопленную веру в себя?', async () => {
+        await save({reset: true});
+        paint();
+        toast('Начала с чистого листа', {kind: 'ok'});
+      });
+  });
+
+  async function load(){
+    try{ DATA = await api('/api/psyche'); strip(); paint(); }
+    catch(e){ /* сервер ещё поднимается — попробуем на следующем тике */ }
+  }
+  load();
+  strip();
+  setInterval(() => { if(!document.hidden) load(); }, 7000);
+  const bar = $id('sysbar');
+  if(bar) new MutationObserver(() => strip()).observe(bar, {childList: true});
+  window.saikaPsyche = open;
+})();
+
 </script>
 </body>
 </html>

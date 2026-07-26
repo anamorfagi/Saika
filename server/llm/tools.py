@@ -29,6 +29,150 @@ _IMPULSE_SAFE = {"close_browser", "shutdown_self",
 
 # ЛОКАЛЬНЫЕ инструменты Сайки (не через HandsPC): дев-доска — чтобы она могла
 # свериться со своей историей разработки и дописывать в блокнот сама.
+# ───────────────── РУКИ В САМОЙ WINDOWS (2026-07-26) ─────────────────
+# Просьба владельца: «хочется с дивана общаться и чтобы она могла выполнить
+# любую команду». Каталог программ собирается сам из меню «Пуск» — белый
+# список путей руками никто не заполнял, он так и остался пустым.
+# Разрушительного тут нет намеренно: «закрыть» — вежливое WM_CLOSE, снятие
+# процесса живёт отдельно и требует подтверждения (server/trust.py).
+_PC_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "app_launch",
+        "description": ("Запустить установленную программу или игру по "
+                        "названию: «запусти блендер», «открой стим». Ищет "
+                        "среди всего, что стоит на компьютере."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string",
+                     "description": "название как его назвал человек"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "apps_list",
+        "description": ("Какие программы вообще установлены. Зови, когда "
+                        "человек спрашивает «что у меня есть» или ты не "
+                        "уверена, как называется нужная."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string",
+                      "description": "фильтр по названию, необязательно"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "window_list",
+        "description": ("Какие окна сейчас открыты, на каком мониторе и что "
+                        "свёрнуто. Зови ПЕРЕД тем, как что-то сворачивать "
+                        "или закрывать — иначе будешь гадать."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "window_minimize",
+        "description": "Свернуть окно по куску заголовка или имени программы.",
+        "parameters": {"type": "object", "properties": {
+            "match": {"type": "string"}}, "required": ["match"]}}},
+    {"type": "function", "function": {
+        "name": "window_focus",
+        "description": "Показать окно поверх остальных, развернуть свёрнутое.",
+        "parameters": {"type": "object", "properties": {
+            "match": {"type": "string"}}, "required": ["match"]}}},
+    {"type": "function", "function": {
+        "name": "window_close",
+        "description": ("Попросить окно закрыться. Программа сама спросит "
+                        "про несохранённое — это не принудительное снятие."),
+        "parameters": {"type": "object", "properties": {
+            "match": {"type": "string"}}, "required": ["match"]}}},
+    {"type": "function", "function": {
+        "name": "window_maximize",
+        "description": ("Развернуть окно во весь экран. Без match — то окно, "
+                        "что сейчас впереди. full=true дополнительно жмёт "
+                        "F11 (настоящий полноэкранный режим браузеров и "
+                        "плееров)."),
+        "parameters": {"type": "object", "properties": {
+            "match": {"type": "string"},
+            "full": {"type": "boolean"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "window_restore",
+        "description": "Вернуть окно из развёрнутого в обычный размер.",
+        "parameters": {"type": "object", "properties": {
+            "match": {"type": "string"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "find_folder",
+        "description": ("Найти папку на дисках по человеческому названию: "
+                        "«папка с играми», «проекты», «музыка». Возвращает "
+                        "несколько вариантов — ПОКАЖИ их человеку списком с "
+                        "номерами и спроси, какой нужен. Когда он ответит, "
+                        "позови remember_place, чтобы больше не искать."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "что ищем"},
+            "drive": {"type": "string",
+                      "description": "буква диска, например C — если назвали"}},
+            "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "remember_place",
+        "description": ("Запомнить папку под понятным именем («игровая», "
+                        "«проекты»), чтобы дальше открывать её мгновенно, "
+                        "не обыскивая диск заново."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"}, "path": {"type": "string"}},
+            "required": ["name", "path"]}}},
+    {"type": "function", "function": {
+        "name": "minimize_all",
+        "description": ("Свернуть всё лишнее, кроме названного окна. "
+                        "Для «убери всё, оставь только редактор»."),
+        "parameters": {"type": "object", "properties": {
+            "keep": {"type": "string",
+                     "description": "что НЕ сворачивать, необязательно"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "volume_set",
+        "description": ("Громкость системы. Либо процент, либо «громче/тише» "
+                        "через delta, либо выключить звук через mute."),
+        "parameters": {"type": "object", "properties": {
+            "percent": {"type": "integer", "description": "0..100"},
+            "delta": {"type": "integer",
+                      "description": "на сколько изменить, +10 / -10"},
+            "mute": {"type": "boolean"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "tab_control",
+        "description": ("Вкладки активного окна браузера: open, close, next, "
+                        "prev, go (с номером). Работает клавишами, поэтому "
+                        "нужное окно должно быть впереди."),
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string",
+                       "enum": ["open", "close", "next", "prev", "go"]},
+            "index": {"type": "integer", "description": "номер для go, с 1"}},
+            "required": ["action"]}}},
+    {"type": "function", "function": {
+        "name": "open_folder",
+        "description": ("Открыть папку в проводнике. Без пути — рабочую "
+                        "папку. За её пределы не пускают, если владелец не "
+                        "разрешил отдельно."),
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"}}, "required": []}}},
+]
+_PC_NAMES = {s["function"]["name"] for s in _PC_SCHEMAS}
+
+# ─────────────── СВОЙ СОБСТВЕННЫЙ ИНТЕРФЕЙС (2026-07-26) ───────────────
+# «Прошу её взять модель поумнее — она находит её в списке и переключает».
+# Без этого владельцу приходится вставать и лезть мышкой в меню — ровно то,
+# от чего он и хотел избавиться.
+_UI_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "model_list",
+        "description": ("Какие модели доступны и насколько они хороши "
+                        "(оценка, скорость, влезает ли в видеопамять). "
+                        "Зови перед сменой модели, чтобы не гадать."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "model_switch",
+        "description": ("Переключиться на другую модель. Можно назвать "
+                        "точное имя, а можно намерение: smarter (поумнее), "
+                        "faster (побыстрее), vision (со зрением). Если "
+                        "человек не назвал конкретную — выбери сама."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "имя модели"},
+            "want": {"type": "string",
+                     "enum": ["smarter", "faster", "vision"],
+                     "description": "если имя не названо"}},
+            "required": []}}},
+]
+_UI_NAMES = {s["function"]["name"] for s in _UI_SCHEMAS}
+
 _LOCAL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "devboard_read",
@@ -309,18 +453,30 @@ _MUTATING_INTENT = {
     "workshop_create": r"сдела|созда|сгенери|нарису|сверста|сайт|страниц|"
                        r"макет|визуализ|график|картинк|svg|html|напиши код|"
                        r"скрипт|программ",
-    # ЗРЕНИЕ (2026-07-25). Захват экрана ничего не МЕНЯЕТ на машине, но
-    # ЧИТАЕТ приватное: переписку, пароли, банк. Поэтому под тем же замком,
-    # что запись файлов — смотреть только по явной просьбе человека. Второй
-    # замок (чёрный список окон + тумблер 👁) живёт в server/vision.py.
-    "look_screen": r"экран|монитор|скрин|десктоп|рабоч\w+ стол|посмотр|"
-                   r"погляд|глян|взглян|смотр|видишь|окно|что у меня|"
-                   # «проверь, получилось?» — человек просит убедиться в
-                   # результате работы, а убедиться можно только посмотрев
-                   r"провер|получил|результат|сработал|вышло|как там|"
-                   r"открыл|запустил|работает ли",
-    "look_camera": r"камер|вебк|webcam|объектив|посмотр|погляд|глян|"
-                   r"взглян|смотр|видишь|на меня|комнат|выгляж",
+    # Руки в Windows (2026-07-26). Смотреть (window_list, apps_list) можно
+    # свободно — это ничего не меняет. А вот запускать, закрывать и крутить
+    # звук — только если человек об этом действительно заговорил: мелкая
+    # модель охотно «помогает» закрыть игру посреди разговора о погоде.
+    "app_launch":   r"запус|откр|вклю|поигра|стартуй|launch|run|врубb?и",
+    "window_close": r"закр|выйд|убер|заверш|close|сверн",
+    "window_minimize": r"сверн|убер|спрячь|minimi|скрой|убрать с глаз",
+    "minimize_all": r"сверн|убер|спрячь|очист|освободи|всё лишн|все лишн",
+    # «открой хром» — это тоже про окно: раньше сюда не попадало «откр», и
+    # предохранитель резал window_focus на живой просьбе (лог 2026-07-26)
+    "window_focus": r"покаж|подним|перекл|верни|разверн|откр|focus|"
+                    r"на передн|сверху|фокус",
+    "window_maximize": r"разверн|полн.{0,4}экран|максим|во весь экран|"
+                       r"на весь экран|maximi|fullscreen|f11|растян",
+    "window_restore": r"верни|обычн|уменьш|из полного|restore|сверн окно",
+    "volume_set":   r"громк|тише|громче|звук|тихо|погромч|потише|mute|"
+                    r"выключи звук|включи звук|убавь|прибавь",
+    "tab_control":  r"вкладк|tab|браузер|страниц|перейди на|закрой вкладк",
+    "open_folder":  r"папк|директор|провод|откр|folder|explorer",
+    "find_folder":  r"найд|ищи|поищ|где|искать|find|папк|директор",
+    "remember_place": r"запомн|это она|эта|номер|назов|сохрани|remember",
+    # Свой интерфейс: переключение модели меняет ход разговора, наугад — нет
+    "model_switch": r"модел|умн|быстр|поменяй|перекл|смени|другую|"
+                    r"мозг|переобуй|model",
 }
 
 
@@ -443,6 +599,14 @@ def schemas() -> list:
             local = local + [_outfit_schema()]
         except Exception as e:
             log.debug("outfit_schema недоступна: %s", e)
+    # РУКИ В WINDOWS и СВОЙ ИНТЕРФЕЙС. Без gating по tier: «сверни окно» и
+    # «включи модель поумнее» должна уметь и мелкая модель — ровно ради
+    # разговора с дивана это всё и делалось. От глупостей защищает не
+    # сокрытие схем, а проверка доверия в call() (server/trust.py).
+    if CFG.get("pc.enabled", True):
+        local = local + list(_PC_SCHEMAS)
+    if CFG.get("pc.self_ui", True):
+        local = local + list(_UI_SCHEMAS)
     # хоткеи по умолчанию ВЫКЛючены (2026-07-23): abliterated-модель дважды
     # навесила разрушительные бинды без просьбы (пробел→localhost, F8→Alt+F4
     # закрыла приложения). Инструмент не показываем модели вообще, пока
@@ -452,15 +616,6 @@ def schemas() -> list:
     # мастерская — только сильным (сайты/SVG/скрипты в workshop/)
     if tier == "full" and CFG.get("tools.workshop", True):
         local = local + [_WORKSHOP_SCHEMA]
-    # глаза: экран и вебки. Намеренно БЕЗ gating по tier — но основной путь
-    # зрения не здесь, а в main.py (vision.auto_look подкладывает кадр в
-    # запрос сам), потому что большинство наших моделей не умеет tool-calls.
-    if CFG.get("vision.enabled", True) and CFG.get("vision.tools", True):
-        try:
-            from server import vision as _vision
-            local = local + list(_vision.SCHEMAS)
-        except Exception as e:
-            log.debug("vision-схемы недоступны: %s", e)
     # файловые руки (рабочая папка files.roots) — только сильным моделям;
     # если у HandsPC вдруг есть инструменты с теми же именами, он главнее
     if tier == "full" and CFG.get("files.enabled", True):
@@ -471,16 +626,7 @@ def schemas() -> list:
                       if s["function"]["name"] not in hands_names]
         except Exception as e:
             log.debug("file_hands недоступен: %s", e)
-    out = local + hands
-    # ИМПУЛЬС (2026-07-25, живой инцидент): раньше опасные инструменты
-    # ОТДАВАЛИСЬ модели, а блокировались уже при вызове — в call(). Но у
-    # поиска в main.py есть свой обходной путь мимо call(), и Сайка на
-    # внутреннем импульсе открыла окно браузера и загуглила себя, хотя её
-    # никто не просил. Правильнее не давать соблазна: в импульсе модель
-    # видит ТОЛЬКО то, что ей и так разрешено (своё окно, дев-доска, тело).
-    if IMPULSE_MODE.get("on"):
-        out = [x for x in out if x["function"]["name"] in _IMPULSE_SAFE]
-    return out
+    return local + hands
 
 
 def _local_call(name: str, arguments) -> str:
@@ -572,7 +718,34 @@ def _browser_call(name: str, arguments) -> str:
     return "неизвестный браузерный инструмент"
 
 
+# Признаки того, что инструмент НЕ справился. Разбираем по тексту, потому
+# что все инструменты возвращают человеческую строку, а не код возврата —
+# так их читает и модель. Список консервативный: лучше не заметить провал,
+# чем записать в провалы успешный ответ.
+_FAIL_RE = _re_guard.compile(
+    r"^\s*(нельзя|отказ|не\s+смогла|не\s+нашла|не\s+получилось|не\s+вышло|"
+    r"не\s+удалось|ошибка|недоступ|не\s+знаю|ничего\s+не\s+наш|"
+    r"не\s+поддерж|нет\s+модуля|не\s+могу)", _re_guard.I)
+
+
 def call(name: str, arguments) -> str:
+    """Обёртка над _call: тот же результат, но с отметкой в самочувствии.
+
+    Мастерство — самый сильный источник веры в себя (Бандура), поэтому
+    каждый успешный и каждый провальный вызов должен доходить до psyche.
+    Разводить это по всем веткам _call было бы десятком копий одного и
+    того же — оборачиваем один раз здесь.
+    """
+    out = _call(name, arguments)
+    try:
+        from server import psyche
+        psyche.on_tool(name, ok=not bool(_FAIL_RE.match(str(out or ""))))
+    except Exception:
+        pass
+    return out
+
+
+def _call(name: str, arguments) -> str:
     if not _intent_ok(name):
         log.warning("Инструмент %s заблокирован предохранителем: в фразе "
                     "пользователя (%r) нет намерения его звать",
@@ -580,6 +753,19 @@ def call(name: str, arguments) -> str:
         return (f"отказ: пользователь не просил делать это ({name}) — "
                 "команда НЕ выполнена, ничего на его машине не изменено. "
                 "Просто ответь словами, без вызова инструмента.")
+    # ДОВЕРИЕ (2026-07-26). Пока у неё были только поиск и дев-доска, вопрос
+    # «спрашивать или делать» не стоял. С руками в системе он стал главным:
+    # мелкая модель на низком доверии обязана сперва проговорить план.
+    try:
+        from server import trust as _trust
+        ok, why = _trust.allowed(name, LAST_USER.get("text", ""))
+        if not ok:
+            log.info("Доверие не пустило %s: %s", name, why[:120])
+            return "нельзя без подтверждения: " + why
+    except ImportError:
+        pass
+    except Exception as e:
+        log.warning("проверка доверия сломалась (%s) — пропускаю", e)
     if IMPULSE_MODE.get("on") and name not in _IMPULSE_SAFE:
         return ("нельзя: это твой внутренний импульс, а не просьба "
                 "пользователя — его окна, файлы и интернет не трогаем. "
@@ -593,13 +779,6 @@ def call(name: str, arguments) -> str:
         except Exception as e:
             log.exception("workshop_create")
             return f"мастерская споткнулась: {e}"
-    if name in ("look_screen", "look_camera"):
-        try:
-            from server import vision as _vision
-            return _vision.call(name, arguments)
-        except Exception as e:
-            log.exception("%s", name)
-            return f"зрение споткнулось: {e}"
     if name == "shutdown_self":
         if not CFG.get("idle.allow_self_shutdown", True):
             return "самовыключение отключено в настройках"
@@ -640,6 +819,73 @@ def call(name: str, arguments) -> str:
         if name == "anim_hints":
             return anim_hub.hints()
         return anim_hub.list_local()
+    if name in _PC_NAMES:
+        import json as _json
+        from server import pc_control as _pc
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        a = a or {}
+        try:
+            if name == "app_launch":
+                return _pc.launch(str(a.get("name", "")))
+            if name == "apps_list":
+                items = _pc.apps(str(a.get("query", "")), limit=60)
+                if not items:
+                    return "ничего не нашла в каталоге программ"
+                return "; ".join(x["name"] for x in items)
+            if name == "window_list":
+                return _pc.screen_map()
+            if name == "window_minimize":
+                return _pc.window_minimize(str(a.get("match", "")))
+            if name == "window_focus":
+                return _pc.window_focus(str(a.get("match", "")))
+            if name == "window_close":
+                return _pc.window_close(str(a.get("match", "")))
+            if name == "window_maximize":
+                return _pc.window_maximize(str(a.get("match", "")),
+                                           bool(a.get("full")))
+            if name == "window_restore":
+                return _pc.window_restore(str(a.get("match", "")))
+            if name == "find_folder":
+                hits = _pc.find_folder(str(a.get("query", "")),
+                                       str(a.get("drive", "")))
+                if not hits:
+                    return ("ничего похожего не нашла — уточни название или "
+                            "назови диск")
+                return ("нашла варианты (покажи их человеку списком с "
+                        "номерами и спроси, какой нужен):\n"
+                        + "\n".join(f"{i + 1}. {h}"
+                                    for i, h in enumerate(hits)))
+            if name == "remember_place":
+                return _pc.remember_place(str(a.get("name", "")),
+                                          str(a.get("path", "")))
+            if name == "minimize_all":
+                return _pc.minimize_all(str(a.get("keep", "")))
+            if name == "volume_set":
+                return _pc.volume(percent=a.get("percent"),
+                                  delta=a.get("delta"), mute=a.get("mute"))
+            if name == "tab_control":
+                return _pc.tab(str(a.get("action", "")),
+                               int(a.get("index") or 0))
+            if name == "open_folder":
+                return _pc.open_folder(str(a.get("path", "")))
+        except Exception as e:
+            log.exception("pc tool %s", name)
+            return f"не получилось: {e}"
+    if name in _UI_NAMES:
+        import json as _json
+        from server import ui_control as _ui
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        a = a or {}
+        try:
+            if name == "model_list":
+                return _ui.model_list()
+            return _ui.model_switch(str(a.get("name", "")),
+                                    str(a.get("want", "")))
+        except Exception as e:
+            log.exception("ui tool %s", name)
+            return f"не получилось переключить: {e}"
     if name in _HOTKEY_NAMES:
         import json as _json
         from server import hotkeys

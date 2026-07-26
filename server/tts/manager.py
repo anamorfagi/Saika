@@ -24,6 +24,35 @@ def split_sentences(text: str) -> list[str]:
     return [s.strip() for s in SENTENCE_RE.findall(text) if s.strip()]
 
 
+# ─────────────── эмоция реплики (2026-07-26) ───────────────
+# Метку тона сервер уже считает для жестов аватара (server/tone.py,
+# _tone_cls в main.py). Раньше она влияла только на движение — теперь ещё
+# и на голос. Формулировки короткие и в императиве: модели читают их как
+# инструкцию, а не как описание.
+_EMOTION = {"cls": None}
+_EMO_TEXT = {
+    "hostile": "Скажи это резко и холодно, с раздражением.",
+    "vulgar":  "Скажи это грубовато и насмешливо.",
+    "flirt":   "Скажи это мягко и игриво, с улыбкой в голосе.",
+    "praise":  "Скажи это тепло и радостно.",
+    "provoke": "Скажи это с иронией и вызовом.",
+}
+
+
+def set_emotion(cls):
+    """Тон следующей реплики. Зовётся из main.py по tone.detect()."""
+    _EMOTION["cls"] = cls or None
+
+
+def _emotion_instruction():
+    if not CFG.get("tts.emotion", True):
+        return ""
+    manual = str(CFG.get("tts.emotion_instruct", "") or "").strip()
+    if manual:
+        return manual
+    return _EMO_TEXT.get(_EMOTION["cls"] or "", "")
+
+
 class Qwen3Engine:
     name = "qwen3"
 
@@ -135,13 +164,31 @@ class Qwen3Engine:
 
     def _stream(self, text):
         cfg = CFG.get("tts.qwen3", {})
-        return self.model.stream_generate_voice_clone(
+        kw = dict(
             text=text,
             language=cfg.get("language", "Russian"),
             voice_clone_prompt=self.prompt,
             emit_every_frames=cfg.get("emit_every_frames", 4),
             decode_window_frames=cfg.get("decode_window_frames", 80),
             overlap_samples=0)
+        # ЭМОЦИЯ (2026-07-26). У серии Qwen3-TTS есть чекпоинты VoiceDesign и
+        # CustomVoice, где тембр и эмоция задаются инструкцией на естественном
+        # языке. Но они НЕ клонируют голос по образцу — то есть переход на них
+        # означал бы потерю собственного голоса Сайки. Поэтому пробуем передать
+        # инструкцию прямо в клон-режим: если сборка её понимает — получаем и
+        # свой голос, и эмоцию; если нет, TypeError ловится и всё работает
+        # как раньше. Проверять руками не нужно, код разберётся сам.
+        instr = _emotion_instruction()
+        if instr:
+            for key in ("instruct", "instruction", "emotion", "style"):
+                try:
+                    return self.model.stream_generate_voice_clone(
+                        **kw, **{key: instr})
+                except TypeError:
+                    continue
+                except Exception:
+                    break        # сборка знает поле, но споткнулась — без него
+        return self.model.stream_generate_voice_clone(**kw)
 
     def speak(self, text):
         self.load()
@@ -164,21 +211,54 @@ class SileroEngine:
     def __init__(self):
         self.model = None
 
+    # ⚠️ ЛИЦЕНЗИЯ (2026-07-26). Был speaker="v4_ru" — он под CC-BY-NC, то
+    # есть коммерческое использование запрещено, а проект планируется
+    # монетизировать. MIT только у v5_cis_base / v5_cis_base_nostress.
+    # Поэтому дефолт сменён; старый пакет остаётся доступным через
+    # tts.silero.model, если кому-то важно именно его звучание.
+    DEFAULT_PACK = "v5_cis_base"
+
     def load(self):
         if self.model:
             return
         import torch
-
-        self.model, _ = torch.hub.load(
-            "snakers4/silero-models", "silero_tts",
-            language="ru", speaker="v4_ru", trust_repo=True)
+        cfg = CFG.get("tts.silero", {})
+        pack = cfg.get("model", self.DEFAULT_PACK)
+        # если запрошенного пакета нет (переименовали, не докачался) —
+        # честно пробуем запасной, но НЕ уходим молча на NC-версию:
+        # только на второй MIT-вариант
+        for cand in (pack, "v5_cis_base_nostress"):
+            try:
+                self.model, _ = torch.hub.load(
+                    "snakers4/silero-models", "silero_tts",
+                    language="ru", speaker=cand, trust_repo=True)
+                if cand != pack:
+                    log.warning("Silero: пакет %s не поднялся, взяла %s",
+                                pack, cand)
+                self.pack = cand
+                return
+            except Exception as e:
+                last = e
+        raise RuntimeError(f"Silero не загрузился: {last}")
 
     def speak(self, text):
         self.load()
         cfg = CFG.get("tts.silero", {})
         sr = cfg.get("sample_rate", 48000)
-        audio = self.model.apply_tts(
-            text=text, speaker=cfg.get("speaker", "xenia"), sample_rate=sr)
+        want = cfg.get("speaker", "")
+        # У v5_cis_base набор дикторов ДРУГОЙ, чем у v4_ru (xenia там нет).
+        # Не угадываем имена: спрашиваем модель и берём первого, если
+        # настроенного диктора в пакете не оказалось.
+        voices = list(getattr(self.model, "speakers", []) or [])
+        spk = want if want in voices else (voices[0] if voices else want)
+        if want and spk != want:
+            log.info("Silero: диктора «%s» в пакете нет — говорю голосом "
+                     "«%s» (есть: %s)", want, spk, ", ".join(voices[:8]))
+            try:
+                CFG.set("tts.silero.speaker", spk)   # чтобы не искать заново
+            except Exception:
+                pass
+        audio = self.model.apply_tts(text=text, speaker=spk, sample_rate=sr)
         yield audio.numpy().astype(np.float32).tobytes(), sr
 
     def unload(self):
@@ -225,11 +305,68 @@ class TTSManager:
     def __init__(self, on_problem=None):
         self.engines = {"qwen3": Qwen3Engine(), "silero": SileroEngine(),
                         "edge": EdgeEngine()}
+        # Доп. движки (2026-07-26): Piper (MIT, офлайн, CPU), XTTS-v2 и
+        # F5-TTS-ru (клонирование). Подмешиваются отдельным модулем, чтобы
+        # этот файл не разрастался и чтобы поломка нового движка не задела
+        # три проверенных. Не поставились зависимости — движок просто не
+        # появится в списке, озвучка работает как раньше.
+        try:
+            from server.tts import extra as _extra
+            for _n, _cls in _extra.EXTRA_ENGINES.items():
+                if _n in set(CFG.get("tts.hidden", [])):
+                    continue
+                try:
+                    self.engines[_n] = _cls()
+                except Exception as _e:
+                    log.debug("движок %s не создался: %s", _n, _e)
+            self.meta = dict(_extra.ENGINE_META)
+        except Exception as _e:
+            log.debug("доп. движки недоступны: %s", _e)
+            self.meta = {}
         self.health = {n: "unknown" for n in self.engines}
         self.last_error = {}  # name -> человеческая причина последней ошибки (UI)
         self.last_diag = {}   # name -> полный разбор diagnostics.classify
         self.on_problem = on_problem
         self._last_space_report = 0.0  # троттлинг совета «мало памяти»
+
+    def engine_meta(self, name=None):
+        """Название, лицензия, умеет ли клонировать голос, примечание.
+        Лицензия тут не формальность: у Silero она запрещает коммерческое
+        использование, и владелец должен видеть это ДО того, как построит
+        на нём билд на продажу."""
+        m = getattr(self, "meta", {}) or {}
+        if name:
+            return m.get(name, {})
+        return {n: m.get(n, {}) for n in self.engines}
+
+    def voices(self):
+        """Каталог голосов по движкам — для отдельной вкладки в интерфейсе."""
+        try:
+            from server.tts import extra as _extra
+            return _extra.voices_catalog(self.engines)
+        except Exception as e:
+            log.debug("каталог голосов недоступен: %s", e)
+            return {}
+
+    def set_voice(self, engine, voice):
+        from server.tts import extra as _extra
+        return _extra.set_voice(engine, voice)
+
+    def preview(self, engine, text=None):
+        """Синтез короткой фразы выбранным движком — «послушать» в интерфейсе.
+        Возвращает (float32-байты, частота). Ошибки НЕ глушим: человек нажал
+        кнопку и должен увидеть причину, а не тишину."""
+        name = engine or self.current_name
+        eng = self.engines.get(name)
+        if eng is None:
+            raise ValueError(f"нет движка {name}")
+        phrase = (text or CFG.get("tts.preview_text")
+                  or "Привет. Это мой голос — как тебе?")
+        chunks, sr = [], 24000
+        for pcm, rate in eng.speak(phrase):
+            chunks.append(pcm)
+            sr = rate
+        return b"".join(chunks), sr
 
     # ---------- ручная загрузка/выгрузка (кнопки в UI) ----------
     def load_engine(self, name):
@@ -414,4 +551,8 @@ class TTSManager:
                 loaded[name] = False
         return {"current": self.current_name, "health": self.health,
                 "engines": list(self.engines), "loaded": loaded,
-                "errors": self.last_error, "diag": self.last_diag}
+                "errors": self.last_error, "diag": self.last_diag,
+                # meta (2026-07-26): название, лицензия, умеет ли клонировать.
+                # Едет вместе со статусом, чтобы интерфейсу не нужен был
+                # второй запрос на каждое открытие меню голоса.
+                "meta": self.engine_meta()}

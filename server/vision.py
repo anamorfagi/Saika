@@ -418,6 +418,39 @@ def _cam_open(idx: int):
 # показываем в интерфейсе, а не даём владельцу выбирать вслепую.
 _cam_probe: dict = {}
 
+# Виртуальные камеры регистрируются в DirectShow навсегда, а создаются
+# только когда работает их программа. «Не открывается» тут почти всегда
+# значит «включи источник», а не «драйвер сломан». Подсказка по названию
+# полезнее общей фразы: владельцу сразу видно, что именно запустить.
+_CAM_HINTS = (
+    ("iriun",    "запусти клиент Iriun Webcam на ПК И приложение на "
+                 "телефоне, они должны быть в одной сети"),
+    ("droidcam", "запусти DroidCam Client на ПК и приложение на телефоне"),
+    ("epoccam",  "запусти EpocCam на телефоне и драйвер на ПК"),
+    ("obs",      "в OBS нажми «Запустить виртуальную камеру» "
+                 "(Start Virtual Camera)"),
+    ("nvidia",   "запусти NVIDIA Broadcast — без него его камера мертва"),
+    ("broadcast", "запусти NVIDIA Broadcast — без него его камера мертва"),
+    ("quest",    "нужен Meta Quest Link, гарнитура подключена и Link "
+                 "запущен; иначе эти камеры в списке просто висят"),
+    ("virtual",  "включи источник этой виртуальной камеры в её программе"),
+)
+
+
+def _cam_hint(name: str) -> str:
+    low = (name or "").lower()
+    for key, hint in _CAM_HINTS:
+        if key in low:
+            return hint
+    return ""
+
+
+def _cam_name(idx: int) -> str:
+    for c in list_cameras():
+        if int(c["id"]) == int(idx):
+            return c.get("name", "")
+    return ""
+
 
 def test_camera(idx: int, force=False) -> dict:
     """Открыть камеру, взять кадр, закрыть. {'ok': bool, 'error': str}."""
@@ -434,8 +467,9 @@ def test_camera(idx: int, force=False) -> dict:
         import cv2
         cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            res["error"] = "устройство не открывается (возможно, виртуальная " \
-                           "камера от незапущенной программы)"
+            hint = _cam_hint(_cam_name(idx))
+            res["error"] = ("устройство не открывается — " + hint) if hint \
+                else "устройство не открывается (занято или драйвер не готов)"
         else:
             ok, frame = cap.read()
             if ok and frame is not None:
@@ -451,11 +485,9 @@ def test_camera(idx: int, force=False) -> dict:
                     a = _np.asarray(frame)
                     if float(a.mean()) < 3.0 and float(a.std()) < 3.0:
                         res["black"] = True
+                        hint = _cam_hint(_cam_name(idx))
                         res["error"] = ("открывается, но отдаёт чёрный кадр — "
-                                        "источник не подключён (для Iriun/"
-                                        "DroidCam запусти приложение на "
-                                        "телефоне, для OBS — виртуальную "
-                                        "камеру)")
+                                        + (hint or "источник не подключён"))
                 except Exception:
                     pass
             else:
@@ -473,6 +505,17 @@ def test_camera(idx: int, force=False) -> dict:
     log.info("Проба камеры %s: %s", idx,
              "ок" if res["ok"] else res["error"])
     return res
+
+
+def test_all_cameras() -> dict:
+    """Пройтись по всем перечисленным камерам и запомнить, какие живые.
+    Дорого (открытие каждого устройства), поэтому только по кнопке."""
+    out = {}
+    for c in list_cameras():
+        out[int(c["id"])] = test_camera(int(c["id"]), force=True)
+    alive = [i for i, r in out.items() if r.get("ok") and not r.get("black")]
+    log.info("Проба всех камер: живых %d из %d", len(alive), len(out))
+    return out
 
 
 def working_cameras() -> list:

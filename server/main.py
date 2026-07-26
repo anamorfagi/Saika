@@ -22,7 +22,8 @@ from urllib.parse import urlparse
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import (FastAPI, File, Request, UploadFile, WebSocket,
+                     WebSocketDisconnect, HTTPException)
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from server.config import CFG, ROOT, resolve
@@ -64,6 +65,43 @@ threading.excepthook = _thread_crash_hook
 
 app = FastAPI(title="Saika")
 
+
+# ─────────────── ОХРАНА НА ВХОДЕ, КОГДА СЕРВЕР СМОТРИТ НАРУЖУ ───────────────
+# 2026-07-26. Пока Сайка слушала только 127.0.0.1, вопрос доступа не стоял:
+# достучаться могла лишь эта же машина. Как только владелец открывает её для
+# телефона, всё меняется — у неё теперь руки в системе (запуск программ,
+# окна, файлы), и любой в той же Wi-Fi получил бы их вместе с ней. Гость,
+# сосед через слабый пароль роутера, чужой ноутбук.
+#
+# Правило простое: с самого компьютера — как раньше, без единого вопроса.
+# Снаружи — только с токеном. Токен приезжает в ссылке из QR (?t=…), браузер
+# телефона запоминает его сам и дальше шлёт заголовком.
+@app.middleware("http")
+async def _guard(request, call_next):
+    from server import phone as _ph
+    if not _ph.is_open():
+        return await call_next(request)
+    client = (request.client.hostname if hasattr(request.client, "hostname")
+              else None) or (request.client.host if request.client else "")
+    if client in ("127.0.0.1", "::1", "localhost"):
+        return await call_next(request)
+    path = request.url.path
+    # Саму страницу отдаём всегда: иначе телефону негде было бы ввести код,
+    # если QR не сработал. Опасное — за токеном.
+    if path == "/" or path.startswith("/static") or path.startswith("/ui") \
+            or path.endswith((".css", ".js", ".png", ".svg", ".ico",
+                              ".woff2")):
+        return await call_next(request)
+    want = _ph.token()
+    got = (request.headers.get("x-saika-token")
+           or request.query_params.get("t") or "")
+    if want and got == want:
+        return await call_next(request)
+    return JSONResponse(
+        {"error": "нужен код доступа",
+         "hint": "открой Сайку на компьютере → Подключение с телефона и "
+                 "отсканируй QR заново"}, status_code=401)
+
 PROBLEMS: list[dict] = []          # лента проблем/починок для UI
 ACTIVE_LLM = {"backend": "", "model": ""}  # кто реально отвечал последним
 EVENT_CLIENTS: set = set()          # активные websockets
@@ -71,6 +109,23 @@ DIALOG_CUTOFF = {"ts": 0.0}         # «новый диалог»: контек�
 HISTORY_ANCHOR = {"ts": 0.0}        # якорь окна истории: стабильный префикс промпта => живой KV-кэш
 _SILENCE_REPORTED = {"ts": 0.0}     # троттлинг жалоб на молчание модели
 DIALOG_STATE = {"active_since": 0.0, "first_token_ts": 0.0}   # идёт ли сейчас ответ + успела ли выдать первый токен (для импульсов и живого контекста)
+
+# СКОЛЬКО РАЗ ПОДРЯД МОДЕЛЬ ПРОМОЛЧАЛА С ИНСТРУМЕНТАМИ (2026-07-26).
+# Инцидент: gemma-4-e4b-it на КАЖДУЮ фразу отдавала 0 токенов, срабатывал
+# аварийный повтор без инструментов — и человек ждал ДВА запроса вместо
+# одного. Хуже того, у этих двух запросов разный промпт (во втором нет
+# tools и добавлено служебное сообщение), поэтому они вышибали KV-кэш друг
+# друга: каждый ход шёл полный prefill дважды. В логе это выглядело как
+# «LLM prefill 4700мс» и читалось как «модель медленная», хотя в LM Studio
+# та же модель отвечает за десятые доли секунды.
+# Чиним как и остальные причуды — учимся на лету: две пустышки подряд и
+# модель уезжает в llm.tools_broken, дальше инструменты ей не даём вообще.
+_TOOLS_EMPTY: dict = {}
+_TOOLS_EMPTY_LIMIT = 2
+
+# Последний замер задержки — чтобы панель «Скорость» показывала эффект
+# правок сразу, а не «покрути и послушай ощущения».
+LAST_TIMING: dict = {}
 LAST_IMAGE = {"data": None, "ts": 0.0}  # последняя картинка (для OCR слепыми)
 # уникальный id этого запуска процесса: вкладка запоминает его при коннекте
 # и, если после переподключения видит другой id, значит сервер
@@ -162,7 +217,12 @@ def avatar_model():
         return JSONResponse(
             {"error": f"нет модели: {p} — укажи путь в avatar.web.model"},
             status_code=404)
-    return FileResponse(p, media_type="model/gltf-binary")
+    # no-store обязателен (2026-07-26). Адрес у модели ОДИН и тот же, а файл
+    # за ним теперь меняется — библиотека аватаров переключает его на лету.
+    # Без этого заголовка браузер отдавал закэшированный VRM, и человек
+    # выбирал модель за моделью, а на экране оставалась прежняя.
+    return FileResponse(p, media_type="model/gltf-binary",
+                        headers={"Cache-Control": "no-store"})
 
 
 def _anims_dir():
@@ -514,6 +574,13 @@ async def llm_model(payload: dict):
             ok = await asyncio.get_event_loop().run_in_executor(
                 None, llm.unload_model, backend, name)
         elif action == "delete":
+            if backend == "cloud":
+                # у облачной модели нет файла на диске — «удалить» значит
+                # убрать из списка настроенных (ключ провайдера остаётся:
+                # у одного провайдера моделей много)
+                detail = llm.forget_cloud(name, payload.get("base_url"))
+                log.info("Облачная модель убрана из списка: %s", name)
+                return {"ok": True, "detail": detail}
             # крестик ✕: стереть модель с диска (Ollama API / папка LM Studio)
             detail = await asyncio.get_event_loop().run_in_executor(
                 None, llm.delete_model, backend, name)
@@ -551,6 +618,11 @@ def llm_cloud_set(payload: dict):
         llm.save_cloud_key(payload["api_key"], payload.get("provider"))
     enabled = bool(payload.get("enabled"))
     CFG.set("llm.cloud.enabled", enabled)
+    # в реестр — чтобы модель осталась в списке и после настройки следующей
+    if payload.get("model"):
+        llm.remember_cloud(CFG.get("llm.cloud.provider", ""),
+                           CFG.get("llm.cloud.base_url", ""),
+                           payload["model"])
     if enabled and payload.get("model"):
         CFG.set("llm.backend", "cloud")
         CFG.set("llm.model", payload["model"])
@@ -564,10 +636,20 @@ def llm_cloud_set(payload: dict):
         import requests as _rq
         base = (CFG.get("llm.cloud.base_url") or "").rstrip("/")
         key = (llm._cloud() or {}).get("key", "")
+        verify = True
+        if base and key and llm._is_gigachat(base):
+            # У Сбера ключ из кабинета — это НЕ Bearer-токен, а Basic-строка
+            # для /oauth: сунуть её в /models = 401, и проверка врала, что
+            # ключ плохой. Плюс сертификат подписан российским УЦ, которого
+            # в Windows обычно нет — отсюда SSLCertVerificationError. Обмен
+            # ключа на access-токен и решение про verify уже сделаны в
+            # llm._gigachat_token, переиспользуем их.
+            key = llm._gigachat_token(key)
+            verify = llm._giga["verify"]
         if base and key:
             r = _rq.get(base + "/models",
                         headers={"Authorization": "Bearer " + key},
-                        timeout=8)
+                        timeout=8, verify=verify)
             if r.status_code in (401, 403):
                 check["key_ok"] = False
             else:
@@ -687,6 +769,15 @@ async def select(payload: dict):
     try:
         if kind == "model":
             backend = payload.get("backend", "ollama")
+            if backend == "cloud":
+                # у каждой облачной модели свой адрес и свой ключ — при
+                # клике переезжаем на них целиком, иначе Groq пошёл бы по
+                # адресу Mistral с чужим ключом
+                if not llm.use_cloud(value, payload.get("base_url")):
+                    return JSONResponse(
+                        {"error": f"облачная модель «{value}» не настроена — "
+                                  "добавь её через «Онлайн-модель»"},
+                        status_code=400)
             CFG.set("llm.backend", backend)
             CFG.set("llm.model", value)
             # переключение с защитой памяти: switch_model сперва выгрузит
@@ -774,6 +865,536 @@ def set_control(payload: dict):
     return {"ok": True, "control_enabled": on}
 
 
+@app.get("/api/llm/free")
+def llm_free():
+    """Каталог облаков с бесплатным тиром — чтобы можно было поговорить с
+    Сайкой без карты и без локальной модели на 8 гигабайт."""
+    from server.llm import free_tiers
+    return {"providers": free_tiers.catalog(),
+            "recommended": free_tiers.RECOMMENDED}
+
+
+# ------------------------------ голоса ------------------------------
+@app.get("/api/tts/voices")
+def tts_voices():
+    """Каталог голосов по движкам. Отдельный роут, а не часть /api/status:
+    Edge отдаёт свой список ПО СЕТИ, и тянуть это на каждый опрос статуса
+    (раз в пару секунд) — лишние запросы наружу в горячем цикле."""
+    return {"voices": tts.voices(), "meta": tts.engine_meta(),
+            "current": {"engine": tts.current_name,
+                        "piper": CFG.get("tts.piper.voice", ""),
+                        "silero": CFG.get("tts.silero.speaker", ""),
+                        "edge": CFG.get("tts.edge.voice", ""),
+                        "ref": str(CFG.get("tts.voice_ref_wav", "")).replace(
+                            "\\", "/").split("/")[-1]}}
+
+
+@app.post("/api/tts/voice")
+def tts_set_voice(payload: dict):
+    engine = str(payload.get("engine", "")).strip()
+    voice = str(payload.get("voice", "")).strip()
+    try:
+        msg = tts.set_voice(engine, voice)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if payload.get("select_engine"):
+        try:
+            tts.set_engine(engine)
+        except Exception:
+            pass
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/tts/voice/download")
+async def tts_voice_download(payload: dict):
+    """Скачать голос из витрины. В отдельном потоке: закачка идёт по сети и
+    в event loop заморозила бы /health и весь остальной сервер."""
+    engine = str(payload.get("engine", "")).strip()
+    key = str(payload.get("voice", "")).strip()
+    if engine != "piper":
+        return {"ok": False, "error": "скачивание есть только у Piper — "
+                                      "остальные движки либо облачные, либо "
+                                      "работают с образцами из папки voice/"}
+    try:
+        from server.tts import extra as _extra
+        msg = await asyncio.get_event_loop().run_in_executor(
+            None, _extra.piper_download, key)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/tts/voice/delete")
+def tts_voice_delete(payload: dict):
+    """Удалить скачанный голос. Не в потоке: удаление файлов мгновенное."""
+    engine = str(payload.get("engine", "")).strip()
+    key = str(payload.get("voice", "")).strip()
+    if engine != "piper":
+        return {"ok": False, "error": "удалять можно только скачанные голоса "
+                                      "Piper"}
+    try:
+        from server.tts import extra as _extra
+        msg = _extra.piper_delete(key)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/tts/preview")
+async def tts_preview(payload: dict):
+    """Короткая фраза выбранным движком — кнопка «послушать». Синтез идёт в
+    отдельном потоке: часть движков блокирующие, и в event loop они
+    заморозили бы весь сервер вместе с /health."""
+    from fastapi.responses import Response as _Resp
+    engine = str(payload.get("engine", "")).strip() or None
+    text = str(payload.get("text", "")).strip() or None
+    try:
+        pcm, sr = await asyncio.get_event_loop().run_in_executor(
+            None, tts.preview, engine, text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)[:300])
+    import io as _io
+    import struct as _struct
+    # собираем WAV вручную: float32 PCM, чтобы не тянуть soundfile в роут
+    n = len(pcm)
+    hdr = b"RIFF" + _struct.pack("<I", 36 + n) + b"WAVEfmt " \
+        + _struct.pack("<IHHIIHH", 16, 3, 1, sr, sr * 4, 4, 32) \
+        + b"data" + _struct.pack("<I", n)
+    return _Resp(content=hdr + pcm, media_type="audio/wav")
+
+
+# ------------------------------ лорбук ------------------------------
+@app.get("/api/lore")
+def lore_get():
+    from server import lorebook
+    return {"entries": lorebook.load(), "stats": lorebook.stats()}
+
+
+@app.post("/api/lore/save")
+def lore_save(payload: dict):
+    """Добавить или обновить запись. Без id — создастся по первому ключу."""
+    from server import lorebook
+    entries = lorebook.upsert(dict(payload.get("entry") or {}))
+    return {"entries": entries, "stats": lorebook.stats()}
+
+
+@app.post("/api/lore/delete")
+def lore_delete(payload: dict):
+    from server import lorebook
+    entries = lorebook.delete(str(payload.get("id", "")))
+    return {"entries": entries, "stats": lorebook.stats()}
+
+
+@app.get("/api/prompt/order")
+def prompt_order_get():
+    from server import prompt_blocks
+    return {"order": prompt_blocks.order(),
+            "all": prompt_blocks.DEFAULT_ORDER}
+
+
+@app.post("/api/prompt/order")
+def prompt_order_set(payload: dict):
+    """Порядок блоков промпта. Ближе к концу = весит больше: у языковых
+    моделей свежая инструкция перебивает раннюю, поэтому «заметки автора»
+    по умолчанию последние."""
+    from server import prompt_blocks
+    order = [x for x in (payload.get("order") or [])
+             if x in prompt_blocks.DEFAULT_ORDER]
+    if not order:
+        return {"error": "пустой порядок", "order": prompt_blocks.order()}
+    CFG.set("prompt.order", order)
+    log.info("Порядок блоков промпта: %s", " → ".join(order))
+    return {"order": prompt_blocks.order(),
+            "all": prompt_blocks.DEFAULT_ORDER}
+
+
+# ------------------------ заметки автора ------------------------
+@app.get("/api/notes")
+def notes_get():
+    return {"notes": CFG.get("persona.author_notes", "") or ""}
+
+
+@app.post("/api/notes")
+def notes_set(payload: dict):
+    """Скрытая инструкция «что делаем сейчас» — в отличие от персоны,
+    которая описывает, КТО она. Меняется часто, персона — почти никогда."""
+    CFG.set("persona.author_notes", str(payload.get("notes", ""))[:4000])
+    return {"ok": True}
+
+
+@app.post("/api/dialog/drop_last")
+def dialog_drop_last(payload: dict):
+    """Забыть последнюю реплику Сайки — для кнопки «↻ переспросить».
+    Именно удалить, а не пометить: иначе модель увидит и отвергнутый ответ,
+    и повторный вопрос, и выдаст то же самое, только с извинениями."""
+    role = payload.get("role", "saika")
+    n = int(payload.get("n", 1))
+    dropped = memory.drop_last(CFG.get("owner.id", "owner"), role=role, n=n)
+    log.info("Переспросить: забыла %d последних реплик (%s)", dropped, role)
+    return {"ok": True, "dropped": dropped}
+
+
+# --------------------------- сэмплинг LLM ---------------------------
+# Пресеты — главная ценность панели: крутить 16 ручек вслепую никто не будет,
+# а «живая речь» это один клик. Значения из практики llama.cpp-сообщества:
+# DRY против повторов, XTC против сползания в шаблон, min_p как основной
+# отсекатель хвоста вместо top_k/top_p.
+SAMPLING_PRESETS = {
+    "off": {"enabled": False},
+    "lively": {                     # живая речь — то, зачем это вообще нужно
+        "enabled": True, "top_p": 1.0, "top_k": 0, "min_p": 0.05,
+        "repeat_penalty": 1.0,      # DRY делает это лучше, дублировать вредно
+        "presence_penalty": 0.0, "frequency_penalty": 0.0,
+        "dry_multiplier": 0.8, "dry_base": 1.75, "dry_allowed_length": 2,
+        "xtc_probability": 0.3, "xtc_threshold": 0.1,
+        "dynatemp_range": 0.0,
+    },
+    "precise": {                    # факты, код, инструменты
+        "enabled": True, "top_p": 0.9, "top_k": 40, "min_p": 0.1,
+        "repeat_penalty": 1.05,
+        "presence_penalty": 0.0, "frequency_penalty": 0.0,
+        "dry_multiplier": 0.0, "xtc_probability": 0.0,
+        "dynatemp_range": 0.0,
+    },
+    "wild": {                       # эксперименты, максимум непредсказуемости
+        "enabled": True, "top_p": 1.0, "top_k": 0, "min_p": 0.02,
+        "repeat_penalty": 1.0,
+        "dry_multiplier": 1.0, "dry_base": 1.75, "dry_allowed_length": 2,
+        "xtc_probability": 0.5, "xtc_threshold": 0.1,
+        "dynatemp_range": 0.4, "dynatemp_exponent": 1.0,
+    },
+}
+
+
+@app.get("/api/llm/sampling")
+def sampling_get():
+    return {"sampling": CFG.get("llm.sampling", {}) or {},
+            "presets": list(SAMPLING_PRESETS)}
+
+
+# ─────────────────── САМОЧУВСТВИЕ ───────────────────
+@app.get("/api/psyche")
+def psyche_get():
+    from server import psyche
+    return psyche.state()
+
+
+@app.post("/api/psyche")
+def psyche_set(payload: dict):
+    from server import psyche
+    try:
+        return {"ok": True, **psyche.set_settings(payload or {})}
+    except (TypeError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ─────────────────── ДОСЬЕ НА МОДЕЛИ ───────────────────
+# Надёжность отдельно от скорости: бодрая мелкая модель, которая пишет
+# «запустила», ничего не запустив, хуже медленной и честной.
+@app.get("/api/models/dossier")
+def models_dossier():
+    from server import model_dossier as dos
+    dos.sync_all()          # новые модели заводят досье сами
+    return {"models": dos.rank(), "prefer_cheap":
+            bool(CFG.get("llm.prefer_cheap", True)),
+            "cost_word": dos.COST_WORD}
+
+
+@app.post("/api/models/dossier")
+def models_dossier_set(payload: dict):
+    from server import model_dossier as dos
+    name = str(payload.get("name", ""))
+    try:
+        if "prefer_cheap" in payload:
+            CFG.set("llm.prefer_cheap", bool(payload["prefer_cheap"]))
+        if name and "manual" in payload:
+            dos.set_manual(name, payload["manual"])
+        if name and "note" in payload:
+            dos.set_note(name, str(payload["note"]))
+        if name and "cost" in payload:
+            dos.set_cost(name, str(payload["cost"]))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "models": dos.rank(),
+            "prefer_cheap": bool(CFG.get("llm.prefer_cheap", True))}
+
+
+# ─────────────────── БИБЛИОТЕКА АВАТАРОВ ───────────────────
+# 2026-07-26. Раньше аватар был ОДИН файл, прописанный в config руками.
+# Теперь папка models/avatar/library: что положил — то и доступно, 2D и 3D
+# наравне, переключение кликом.
+@app.get("/api/avatar/library")
+def avatar_library():
+    from server import avatar_hub as ah
+    return {"models": ah.scan(), "settings": ah.settings(),
+            "dir": str(ah.lib_dir())}
+
+
+@app.post("/api/avatar/select")
+def avatar_select(payload: dict):
+    from server import avatar_hub as ah
+    msg = ah.select(str(payload.get("name", "")))
+    broadcast_event({"type": "avatar_reload"})   # окно аватара перечитает
+    return {"ok": True, "message": msg, "settings": ah.settings()}
+
+
+@app.post("/api/avatar/delete")
+def avatar_delete(payload: dict):
+    from server import avatar_hub as ah
+    return {"ok": True, "message": ah.delete(str(payload.get("name", "")))}
+
+
+@app.post("/api/avatar/folder")
+def avatar_folder():
+    from server import avatar_hub as ah
+    return {"ok": True, "message": ah.open_folder()}
+
+
+@app.post("/api/avatar/settings")
+def avatar_settings(payload: dict):
+    from server import avatar_hub as ah
+    try:
+        st = ah.set_settings(payload)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    broadcast_event({"type": "avatar_settings", **st})
+    return {"ok": True, "settings": st}
+
+
+@app.post("/api/avatar/upload")
+async def avatar_upload(file: UploadFile = File(...)):
+    """Загрузка своей модели. Читаем в память целиком — модели до 300 МБ,
+    а поточная запись усложнила бы проверку размера до сохранения."""
+    from server import avatar_hub as ah
+    data = await file.read()
+    try:
+        name = await asyncio.get_event_loop().run_in_executor(
+            None, ah.save_upload, file.filename, data)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        log.exception("загрузка аватара")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return {"ok": True, "name": name}
+
+
+@app.get("/api/avatar/current")
+def avatar_current():
+    """Что сейчас надето — окно аватара спрашивает это при старте, чтобы
+    понять, рисовать three.js или 2D-спрайт."""
+    from server import avatar_hub as ah
+    p = ah.current_path()
+    return {"kind": ah.current_kind(), "name": p.stem,
+            "url": "/avatar/model.vrm" if ah.current_kind() == "3d"
+                   else "/avatar/sprite",
+            "settings": ah.settings()}
+
+
+@app.get("/avatar/sprite")
+def avatar_sprite():
+    """Картинка 2D-аватара как есть."""
+    from server import avatar_hub as ah
+    p = ah.current_path()
+    if not p.exists() or ah.current_kind() != "2d":
+        return JSONResponse({"error": "сейчас надета не 2D-модель"},
+                            status_code=404)
+    mt = {".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
+          ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(p.suffix.lower(),
+                                                           "image/png")
+    return FileResponse(p, media_type=mt,
+                        headers={"Cache-Control": "no-store"})
+
+
+# ─────────────────── ДОСТУП С ТЕЛЕФОНА ───────────────────
+@app.get("/api/phone")
+def phone_get():
+    from server import phone as _ph
+    return _ph.state()
+
+
+@app.post("/api/phone")
+def phone_set(payload: dict):
+    from server import phone as _ph
+    if payload.get("new_token"):
+        _ph.new_token()
+    if "open" in payload:
+        _ph.set_open(bool(payload["open"]))
+    st = _ph.state()
+    st["restart_needed"] = True   # порт занимается один раз при старте
+    return st
+
+
+@app.get("/api/phone/qr")
+def phone_qr(url: str = ""):
+    from server import phone as _ph
+    if not url:
+        us = _ph.urls()
+        url = us[0]["url"] if us else ""
+    if not url:
+        return PlainTextResponse("", media_type="image/svg+xml")
+    svg = _ph.qr_svg(url)
+    if not svg:
+        return JSONResponse({"error": "нет библиотеки qrcode — она "
+                                      "поставится при следующем запуске "
+                                      "start.bat"}, status_code=503)
+    return PlainTextResponse(svg, media_type="image/svg+xml")
+
+
+# ─────────────────── УПРАВЛЕНИЕ КОМПЬЮТЕРОМ ───────────────────
+# 2026-07-26. Каталог программ собирается сам из меню «Пуск» — прежний
+# белый список путей надо было заполнять руками, и он так и остался пустым.
+# Здесь же ползунок доверия и рабочая папка: три вещи, которые вместе
+# отвечают на вопрос «что ей вообще позволено на этой машине».
+@app.get("/api/pc")
+def pc_get():
+    from server import pc_control as pc
+    from server import trust as _trust
+    from server import file_hands
+    try:
+        catalog = pc.build_index()
+    except Exception as e:
+        log.warning("каталог программ не собрался: %s", e)
+        catalog = {"apps": [], "built": 0}
+    bad = pc.blocked()
+    return {
+        "enabled": bool(CFG.get("pc.enabled", True)),
+        "self_ui": bool(CFG.get("pc.self_ui", True)),
+        "open_any_folder": bool(CFG.get("pc.open_any_folder", True)),
+        "apps": [{"name": a["name"], "blocked": a["name"].lower() in bad}
+                 for a in catalog.get("apps", [])],
+        "built": catalog.get("built", 0),
+        "trust": _trust.describe(),
+        "roots": [str(r) for r in file_hands.roots()],
+        "roots_raw": list(CFG.get("files.roots", ["F:/AI_load_work"])),
+    }
+
+
+@app.post("/api/pc/refresh")
+async def pc_refresh():
+    """Пересобрать каталог: обход «Пуска» это тысячи файлов, в event loop
+    он подвесил бы весь сервер вместе с /health."""
+    from server import pc_control as pc
+    idx = await asyncio.get_event_loop().run_in_executor(
+        None, pc.build_index, True)
+    return {"ok": True, "count": len(idx.get("apps", []))}
+
+
+@app.post("/api/pc/set")
+def pc_set(payload: dict):
+    from server import trust as _trust
+    for key, cfg in (("enabled", "pc.enabled"), ("self_ui", "pc.self_ui"),
+                     ("open_any_folder", "pc.open_any_folder")):
+        if key in payload:
+            CFG.set(cfg, bool(payload[key]))
+    if "trust_level" in payload:
+        try:
+            CFG.set("trust.level", max(1, min(10, int(payload["trust_level"]))))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "доверие — это число от 1 до 10"}
+    if "block" in payload:
+        from server import pc_control as pc
+        pc.set_blocked(str(payload["block"]), bool(payload.get("on", True)))
+    if "roots" in payload:
+        # рабочая папка: единственное место, где ей вообще можно создавать
+        # и править файлы. Проверяем, что путь существует — иначе человек
+        # опечатается и потом полчаса гадает, почему «она ничего не пишет»
+        from pathlib import Path as _P
+        roots, bad = [], []
+        for r in (payload["roots"] or []):
+            r = str(r).strip()
+            if not r:
+                continue
+            (roots if _P(r).is_dir() else bad).append(r)
+        if bad:
+            return {"ok": False,
+                    "error": "нет таких папок на диске: " + ", ".join(bad)}
+        if not roots:
+            return {"ok": False, "error": "нужна хотя бы одна рабочая папка"}
+        CFG.set("files.roots", roots)
+    return {"ok": True, "trust": _trust.describe()}
+
+
+@app.get("/api/pc/windows")
+def pc_windows():
+    """Карта рабочего стола — та же, что видит модель. В настройках она
+    нужна, чтобы владелец проверил: видит ли Сайка его второй монитор."""
+    from server import pc_control as pc
+    try:
+        return {"map": pc.screen_map(), "windows": pc.windows()[:40]}
+    except Exception as e:
+        return {"map": f"не смогла посмотреть окна: {e}", "windows": []}
+
+
+# ─────────────────────── СКОРОСТЬ ОТВЕТА ───────────────────────
+# 2026-07-26, просьба владельца: «не вижу настроек кешей, температуры».
+# Ручки, которые реально решают, сколько ждать до первого слова, были
+# раскиданы по config.json и наружу не показывались вообще. Собраны в одном
+# месте, каждая с честной ценой: почти все они — размен «помнит больше» на
+# «отвечает быстрее», и человек должен видеть, чем платит.
+_SPEED_FIELDS = (
+    ("llm.temperature", 0.8, float),
+    ("llm.context_chars", 0, int),          # 0 = считать от окна модели
+    ("llm.cloud.context_chars", 9000, int),
+    ("memory.context_chars", 2000, int),
+    ("llm.keep_alive", "30m", str),
+    ("llm.cache_prompt", True, bool),
+    ("llm.target_response_s", 0, float),
+    ("llm.max_gen_seconds", 180, int),
+)
+
+
+@app.get("/api/llm/speed")
+def speed_get():
+    vals = {k: CFG.get(k, d) for k, d, _t in _SPEED_FIELDS}
+    vals["think"] = bool(CFG.get("llm.think", False))
+    vals["backend"] = CFG.get("llm.backend")
+    # последний реальный замер — чтобы крутить ручки и сразу видеть эффект,
+    # а не гадать по ощущениям
+    vals["last"] = dict(LAST_TIMING)
+    return vals
+
+
+@app.post("/api/llm/speed")
+def speed_set(payload: dict):
+    types = {k: t for k, _d, t in _SPEED_FIELDS}
+    for k, v in (payload or {}).items():
+        if k == "think":
+            CFG.set("llm.think", bool(v))
+            continue
+        if k not in types:
+            continue
+        t = types[k]
+        try:
+            CFG.set(k, bool(v) if t is bool else t(v))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": f"«{k}»: не разобрала значение {v!r}"}
+    return {"ok": True, **speed_get()}
+
+
+@app.post("/api/llm/sampling")
+def sampling_set(payload: dict):
+    """Панель «Сэмплинг» в меню модели. preset накладывается поверх текущего,
+    отдельные поля — поверх пресета, чтобы можно было взять «живую речь» и
+    подкрутить одну ручку."""
+    cur = dict(CFG.get("llm.sampling", {}) or {})
+    name = payload.get("preset")
+    if name in SAMPLING_PRESETS:
+        cur.update(SAMPLING_PRESETS[name])
+        cur["preset"] = name
+    for k, v in (payload.get("fields") or {}).items():
+        if k in cur or k in ("stop", "seed"):
+            cur[k] = v
+            cur["preset"] = "custom"
+    if "enabled" in payload:
+        cur["enabled"] = bool(payload["enabled"])
+        if not cur["enabled"]:
+            cur["preset"] = "off"
+    CFG.set("llm.sampling", cur)
+    log.info("Сэмплинг: %s (%s)", "вкл" if cur.get("enabled") else "выкл",
+             cur.get("preset"))
+    return {"sampling": cur, "presets": list(SAMPLING_PRESETS)}
+
+
 # ------------------------------- зрение -------------------------------
 @app.get("/api/vision/state")
 def vision_state():
@@ -832,6 +1453,15 @@ def vision_shot(payload: dict):
                 "source": vision.state()["last_source"]}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/vision/test_cameras")
+def vision_test_cameras():
+    """Кнопка «проверить все камеры». Открывает каждое устройство по очереди,
+    поэтому занимает секунды — вешать это на открытие меню нельзя."""
+    from server import vision
+    vision.test_all_cameras()
+    return vision.state()
 
 
 @app.get("/api/vision/mjpeg")
@@ -1218,6 +1848,24 @@ class _ServerSpeaker:
 
 AUDIO_LEVEL = {"level": 0.0, "ts": 0.0}
 
+# Что Сайка только что произнесла — чтобы узнать собственный голос, если он
+# вернулся в микрофон из колонок. Живёт на уровне модуля: озвучка идёт в
+# run_dialog, а разбор речи — в обработчике вебсокета.
+SAID_RECENT: list = []
+
+# Каким умением она работала в прошлый ход — чтобы «молодец» через минуту
+# улучшало веру именно в то, за что похвалили, а не в «разговор» вообще.
+LAST_SKILL: dict = {"name": ""}
+
+
+def remember_said(text: str):
+    """Запомнить произнесённую фразу словами (для защиты от эха)."""
+    t = re.sub(r"[^а-яa-zё ]", " ", (text or "").lower())
+    words = [w for w in t.split() if len(w) > 2]
+    if words:
+        SAID_RECENT.append((time.time(), words))
+    del SAID_RECENT[:-8]
+
 
 @app.get("/api/audio_level")
 def audio_level():
@@ -1332,7 +1980,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     t0 = time.monotonic()   # старт пайплайна (для разбивки «думала N сек»)
     mem_context = ""
     try:
-        mem_context = memory.build_context(person_id, user_text)
+        mem_context = memory.build_context(
+            person_id, user_text,
+            limit_chars=int(CFG.get("memory.context_chars", 2000) or 0))
     except Exception as e:
         report_problem("memory", str(e), "продолжаю без контекста памяти")
     t_mem = time.monotonic()  # память (Chroma/SQLite) отработала
@@ -1346,7 +1996,35 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # теперь копится в dyn_parts и уходит В КОНЕЦ промпта, перед последней
     # фразой пользователя.
     system = build_system_prompt(None, person_name)
-    dyn_parts = []
+    # БЛОКИ ПРОМПТА (2026-07-26): порядок кусков теперь настройка, а не
+    # порядок строк в этом файле. Blocks ведёт себя как обычный список,
+    # поэтому все .append ниже работают как раньше — см. prompt_blocks.py.
+    from server import prompt_blocks as _pb
+    dyn_parts = _pb.Blocks()
+    # ЛОРБУК: факты о мире всплывают по упоминанию ключа, а не висят в
+    # персоне на каждой фразе. Ставим первым — это справочный контекст.
+    try:
+        from server import lorebook as _lore
+        _hist_txt = [t for _r, t in memory.recent_raw(person_id, limit=6)] \
+            if hasattr(memory, "recent_raw") else []
+        _lb = _lore.block(user_text, _hist_txt)
+        if _lb:
+            dyn_parts.add("lore", _lb)
+    except Exception as e:
+        log.debug("лорбук пропущен: %s", e)
+    # ОТКЛИК ВЛАДЕЛЬЦА (2026-07-26). Разбираем ДО генерации: похвала должна
+    # успеть попасть в самочувствие, которое уходит в этот же промпт.
+    # Привязываем к умению, которым она работала в прошлый ход — иначе
+    # «молодец» после запуска программы улучшало бы веру в разговор.
+    try:
+        from server import psyche as _psy
+        _fb = _psy.feedback(user_text, LAST_SKILL.get("name", ""))
+        if _fb:
+            log.info("Отклик владельца: %s (умение «%s»)", _fb,
+                     LAST_SKILL.get("name", "разговор"))
+    except Exception as e:
+        log.debug("разбор отклика пропущен: %s", e)
+    t_lore = time.monotonic()   # лорбук отработал (для разбивки задержки)
     # МЕТКА ТОНА (оболочка даёт ярлык поведения, остроумие — на модели):
     # хамство/провокация/пошлость/флирт/похвала -> разрешение вести себя
     # соответующе, коротко и в характере, без нотаций
@@ -1357,6 +2035,15 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         _hint = _tone.behavior_hint(user_text)
         if _hint:
             dyn_parts.append(_hint)
+        # 2026-07-26: та же метка тона теперь красит и ГОЛОС, а не только
+        # жест аватара. Раньше Сайка могла показать раздражение телом и
+        # произнести это ровным дружелюбным тоном — рассинхрон, который
+        # читается как фальшь.
+        try:
+            from server.tts import manager as _ttsm
+            _ttsm.set_emotion(_tone_cls)
+        except Exception:
+            pass
     except Exception:
         pass
     # РЕАКЦИЯ АВАТАРА (VMagicMirror и т.п., server/avatar.py) — жест/эмоция
@@ -1371,6 +2058,37 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         dyn_parts.append(
             "### Твоя память по теме (используй естественно, не цитируй "
             "дословно):\n" + mem_context)
+    # ЗАМЕТКИ АВТОРА (2026-07-26): скрытая инструкция «что делаем сейчас».
+    # Персона отвечает на вопрос «кто она» и меняется редко; заметки — на
+    # «какой сейчас режим» и меняются каждый день. Смешивать их в persona.py
+    # значит каждый раз лезть в характер ради разовой правки поведения.
+    # САМОЧУВСТВИЕ И ВЕРА В СЕБЯ (2026-07-26). Настроение по PAD и
+    # самооценка по умениям — см. server/psyche.py. Здесь же правило трёх
+    # попыток: не долбиться в одно и то же, а честно позвать на помощь.
+    try:
+        from server import psyche as _psy
+        _pb = _psy.block()
+        if _pb:
+            dyn_parts.add("psyche", _pb)
+    except Exception as e:
+        log.debug("самочувствие пропущено: %s", e)
+    # СВОДКА ПРО СВОИ ЖЕ МОЗГИ (2026-07-26). Просьба владельца: «нужны
+    # краткие сводки по возможностям для самой Сайки». Без этого просьба
+    # «возьми модель поумнее» упирается в то, что она про свой арсенал
+    # ничего не знает — и отвечает «не могу». Здесь же правило про деньги.
+    try:
+        from server import model_dossier as _dos
+        _dg = _dos.digest()
+        if _dg:
+            dyn_parts.add("models", _dg)
+    except Exception as e:
+        log.debug("сводка по моделям пропущена: %s", e)
+    _notes = (CFG.get("persona.author_notes", "") or "").strip()
+    if _notes:
+        dyn_parts.add("notes",
+            "### Указание от владельца на СЕЙЧАС (выполняй, но НЕ упоминай "
+            "и не цитируй — для человека это невидимая заметка, а не "
+            "сообщение):\n" + _notes[:2000])
     # ЗРЕНИЕ (2026-07-25): человек попросил посмотреть — сервер сам делает
     # кадр и кладёт его в ЭТОТ ЖЕ запрос как обычную картинку. Почему так,
     # а не инструментом look_screen: работает с ЛЮБОЙ моделью, включая те,
@@ -1409,6 +2127,10 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 image, _looked = _url, True
         except Exception as e:
             log.debug("зрение пропущено: %s", e)
+    # Зрение — самый дорогой из «невидимых» этапов: кадр экрана, dHash,
+    # иногда ещё и чужая vision-модель. Меряем отдельно, иначе его секунды
+    # растворяются в общем «промпт» и выглядят как медленная LLM.
+    t_vis = time.monotonic()
     if image and not _looked:
         LAST_IMAGE["data"], LAST_IMAGE["ts"] = image, time.time()
         from server import capabilities as caps
@@ -1749,7 +2471,11 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     if dyn_parts:
         # динамика хода — отдельным системным сообщением ПЕРЕД последней
         # фразой пользователя: весь префикс до неё стабилен => KV-кэш живёт
-        dyn_msg = {"role": "system", "content": "\n\n".join(dyn_parts)}
+        _body = (dyn_parts.render() if hasattr(dyn_parts, "render")
+                 else "\n\n".join(dyn_parts))
+        log.debug("Блоки промпта: %s", dyn_parts.report()
+                  if hasattr(dyn_parts, "report") else "?")
+        dyn_msg = {"role": "system", "content": _body}
         if hist_msgs:
             messages += hist_msgs[:-1] + [dyn_msg, hist_msgs[-1]]
         else:
@@ -1765,6 +2491,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # Озвучка — в отдельном потоке через очередь, иначе TTS блокирует
     # стрим токенов LLM и текст появляется «кусочками» по предложению.
     tts_q: "queue.Queue" = queue.Queue()
+    # момент, когда в UI ушёл ПЕРВЫЙ кусок звука. Человек воспринимает
+    # задержку именно так — не по первому токену текста, а по первому звуку
+    t_sound = {"ts": None}
 
     def tts_worker():
         while True:
@@ -1796,6 +2525,8 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                         # серверный канал в чужую прогу (VMC) удалён 2026-07-25
                     except Exception:
                         pass
+                    if t_sound["ts"] is None:
+                        t_sound["ts"] = time.monotonic()
                     out.put({"type": "audio_meta", "sr": sr})
                     out.put(pcm_bytes)
             except Exception as e:
@@ -1810,6 +2541,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         # гарантированно сработает даже у модели без tool-calls
         sentence = _apply_gesture_marks(sentence)
         if sentence:
+            remember_said(sentence)   # чтобы узнать себя в эхе из колонок
             # вопрос -> наклон головы у веб-аватара (co-speech, 2026-07-25)
             if sentence.rstrip().endswith("?"):
                 try:
@@ -1835,6 +2567,11 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
 
         def on_tool(name, args):
             _tool_used["any"] = True
+            try:
+                from server import psyche as _psy
+                LAST_SKILL["name"] = _psy.skill_of(name)
+            except Exception:
+                pass
             out.put({"type": "tool", "name": name,
                      "args": json.dumps(args, ensure_ascii=False)[:200]})
 
@@ -2093,11 +2830,36 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                     CFG.get("llm.tools_broken", []) + [bad_model])))
             full_reply, sentence_buf, n_tokens = [], "", 0
 
+        _cur = used_llm.get("model") or CFG.get("llm.model", "")
+        if n_tokens > 0:
+            _TOOLS_EMPTY.pop(_cur, None)   # заговорила — счётчик обнуляем
         if n_tokens == 0 and not stop_event.is_set() and not looped:
             # Модель потратила все раунды на инструменты и не сказала НИ
             # СЛОВА (или ответ пустой) — молчать нельзя: повторяем один раз
             # БЕЗ инструментов, чтобы она хотя бы ответила словами
             log.info("Пустой ответ (0 токенов) — повторяю без инструментов")
+            # Ни слова И НИ ОДНОГО вызова инструмента — значит модель
+            # ломается от самого факта, что ей дали tools (а не «потратила
+            # раунды на вызовы»). Считаем промахи: повторится — выключим ей
+            # инструменты навсегда, и следующий ход пойдёт ОДНИМ запросом.
+            if _cur and not _tool_used["any"] \
+                    and _cur not in set(CFG.get("llm.tools_broken", [])):
+                _TOOLS_EMPTY[_cur] = _TOOLS_EMPTY.get(_cur, 0) + 1
+                if _TOOLS_EMPTY[_cur] >= _TOOLS_EMPTY_LIMIT:
+                    CFG.set("llm.tools_broken", sorted(set(
+                        CFG.get("llm.tools_broken", []) + [_cur])))
+                    _TOOLS_EMPTY.pop(_cur, None)
+                    log.warning(
+                        "Модель %s молчит, когда ей дают инструменты (%d раза "
+                        "подряд) — выключаю ей инструменты навсегда. Это "
+                        "убирает второй запрос на каждый ход: было два "
+                        "полных prefill, станет один.",
+                        _cur, _TOOLS_EMPTY_LIMIT)
+                    report_problem(
+                        "llm", f"{_cur} не умеет инструменты — молчала на "
+                        "каждый запрос с ними",
+                        "выключила ей инструменты; ответы станут вдвое "
+                        "быстрее, поиск и руки возьмёт на себя сервер")
             try:
                 retry_msgs = messages + [{"role": "system", "content":
                     "(Служебно: инструменты сейчас недоступны — ответь "
@@ -2148,16 +2910,58 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             # «память» — Chroma/SQLite RAG; «промпт» — дев-доска/инструменты;
             # «prefill» — LM Studio/Ollama пережёвывает контекст до 1-го токена
             try:
+                _ms = lambda a, b: max(0, round((b - a) * 1000))
+                # Разбивку шлём и в лог, и В ИНТЕРФЕЙС. Раньше она была
+                # только в логе — чтобы понять, куда ушли секунды, надо было
+                # лезть в файл; на практике этого никто не делает, и
+                # «медленно» списывалось на LLM даже когда виновата была
+                # память или кадр экрана.
+                stg = {"mem": _ms(t0, t_mem), "lore": _ms(t_mem, t_lore),
+                       "vision": _ms(t_lore, t_vis),
+                       "prompt": _ms(t_vis, t_req),
+                       "prefill": _ms(t_req, t_first)}
+                if heard_ts is not None:
+                    stg["queue"] = _ms(heard_ts, t0)
+                if t_sound["ts"] is not None:
+                    stg["sound"] = _ms(t_first, t_sound["ts"])
+                stats["stages"] = stg
+                # размер промпта — без него «prefill 2.3с» нечем мерить:
+                # то ли контекст огромный, то ли кэш не сработал
+                _pch = sum(len(str(m.get("content", ""))) for m in messages)
+                LAST_TIMING.clear()
+                LAST_TIMING.update(stg)
+                LAST_TIMING["prompt_chars"] = _pch
+                LAST_TIMING["messages"] = len(messages)
+                # ОТПЕЧАТОК СТАБИЛЬНОЙ ЧАСТИ ПРОМПТА. KV-кэш живёт ровно до
+                # первого расхождения с прошлым запросом. Если этот хэш
+                # скачет от хода к ходу — значит что-то в начале промпта
+                # меняется, кэш не может сработать в принципе, и модель
+                # каждый раз жуёт все ~6 тысяч токенов заново. Один хэш в
+                # логе отвечает на этот вопрос без всяких догадок.
+                import hashlib as _hl
+                _h = lambda t: _hl.md5(t.encode("utf-8", "ignore")
+                                       ).hexdigest()[:8]
+                _stable = "".join(str(m.get("content", ""))
+                                  for m in messages[:-3])
+                # _body существует только если блоки были — считаем заново
+                _dyn_ch = sum(len(t) for t in dyn_parts) if dyn_parts else 0
+                _hist_ch = _pch - len(system) - _dyn_ch
+                log.info("Отпечаток промпта: система %s (%d симв) | добавки "
+                         "%s | история %d симв | стабильная часть %s",
+                         _h(system), len(system),
+                         dyn_parts.sizes() if hasattr(dyn_parts, "sizes")
+                         else "?", max(0, _hist_ch), _h(_stable))
                 log.info(
-                    "Тайминги ответа: очередь %sмс | память %dмс | промпт %dмс"
-                    " | LLM prefill %dмс | итого до 1-го токена %sмс",
-                    round((t0 - heard_ts) * 1000) if heard_ts else "-",
-                    round((t_mem - t0) * 1000),
-                    round((t_req - t_mem) * 1000),
-                    round((t_first - t_req) * 1000),
-                    stats.get("latency_ms", "-"))
+                    "Тайминги ответа: очередь %sмс | память %dмс | лор %dмс "
+                    "| зрение %dмс | промпт %dмс | LLM prefill %dмс | "
+                    "до 1-го звука +%sмс | итого до 1-го токена %sмс "
+                    "| промпт %d симв в %d сообщ. (~%d токенов)",
+                    stg.get("queue", "-"), stg["mem"], stg["lore"],
+                    stg["vision"], stg["prompt"], stg["prefill"],
+                    stg.get("sound", "-"), stats.get("latency_ms", "-"),
+                    _pch, len(messages), _pch // 3)
             except Exception:
-                pass
+                log.debug("разбивка таймингов не собралась", exc_info=True)
             out.put(stats)
             # копим оценку отзывчивости МОДЕЛИ, КОТОРАЯ ОТВЕЧАЛА (после
             # фолбэков) — раньше рейтинг приписывался выбранной в конфиге
@@ -2168,6 +2972,48 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                                        stats["tps"])
             except Exception:
                 pass
+
+    # ТРИ ПОПЫТКИ (2026-07-26). Считаем подходы к одной цели: провалился ли
+    # инструмент ИМЕННО в этом ходу — видно по отметке времени, не таща
+    # флаг через пять слоёв. На третьем провале Сайка получит в промпт
+    # прямое указание остановиться и позвать владельца.
+    try:
+        from server import psyche as _psy
+        _failed_now = _psy.LAST_FAIL_TS > 0 and (
+            time.time() - _psy.LAST_FAIL_TS) < (time.time() - t0 + 1)
+        _st = _psy.attempt(user_text, bool(_failed_now))
+        if _st.get("give_up"):
+            log.info("Три неудачи подряд по «%s» — прошу помощи у владельца",
+                     (user_text or "")[:50])
+    except Exception as e:
+        log.debug("счётчик попыток пропущен: %s", e)
+
+    # ДОСЬЕ МОДЕЛИ (2026-07-26). Владелец: «она часто ошибалась или наоборот
+    # не делала под видом что сделала». Ловим это ровно здесь, где видно и
+    # ответ, и был ли вызов инструмента: реплика в прошедшем времени про
+    # физическое действие без единого вызова = приписала себе чужую работу.
+    try:
+        from server import model_dossier as _dos
+        _who = used_llm.get("model") or CFG.get("llm.model", "")
+        _said = "".join(full_reply).strip()
+        if _dos.check_claim(_who, _said, _tool_used["any"]):
+            log.warning("Модель %s заявила о действии, которого не делала: %r",
+                        _who, _said[:120])
+            report_problem(
+                "llm", f"{_who} написала, что выполнила действие, но ни один "
+                "инструмент не вызывался",
+                "снизила ей надёжность в досье — при выборе модели это "
+                "теперь учитывается")
+        elif _tool_used["any"]:
+            _dos.record_ok(_who)
+        # прямая жалоба владельца — самый весомый сигнал, весит как десять
+        # автоматических
+        if re.search(r"\bты\s+(?:же\s+)?(?:не\s+)?(?:ошиб|соврал|обманул|"
+                     r"не\s+сделал|ничего\s+не\s+сделал|не\s+справ)",
+                     (user_text or ""), re.I):
+            _dos.record_complaint(_who, (user_text or "")[:80])
+    except Exception as e:
+        log.debug("досье не обновилось: %s", e)
 
     tts_q.put(None)
     tts_thread.join(timeout=600)
@@ -2414,6 +3260,20 @@ def _impulse_loop():
 # ---------------------- WebSocket ----------------------
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    # Вебсокет мимо http-middleware, поэтому охрана здесь отдельно: через
+    # него идёт весь живой диалог, а значит и все команды в систему.
+    try:
+        from server import phone as _ph
+        if _ph.is_open():
+            _cl = ws.client.host if ws.client else ""
+            if _cl not in ("127.0.0.1", "::1", "localhost"):
+                if (ws.query_params.get("t") or "") != _ph.token():
+                    await ws.close(code=4401)
+                    log.warning("Отклонила websocket без кода доступа: %s",
+                                _cl)
+                    return
+    except Exception as e:
+        log.debug("проверка кода доступа пропущена: %s", e)
     await ws.accept()
     out: "queue.Queue" = queue.Queue()
     EVENT_CLIENTS.add(out)
@@ -2587,9 +3447,13 @@ async def ws_endpoint(ws: WebSocket):
         ей замолчать). Ловим и «стоп», и «зайка остановись» (имя + стоп):
         сначала выкидываем обращение по имени, потом смотрим — короткая ли
         фраза, где есть стоп-слово."""
+        # «тише» и «потише» убраны из стоп-слов (2026-07-26, живой случай):
+        # владелец говорил про громкость СИСТЕМЫ, а Сайка глушила сама себя.
+        # По-русски «тише» почти всегда про звук, а «замолчи» — это «стоп»,
+        # «хватит», «молчи». Громкостью занимается разбор команд ниже.
         stops = set(CFG.get("attention.stop_words",
                             ["стоп", "стой", "хватит", "замолчи", "молчи",
-                             "помолчи", "тихо", "тише", "заткнись",
+                             "помолчи", "заткнись",
                              "остановись", "стопэ"]))
         names = tuple(CFG.get("attention.name_prefixes", ["сайк", "saik"]))
         words = re.findall(r"[а-яa-zё]+", text.lower())
@@ -2614,6 +3478,33 @@ async def ws_endpoint(ws: WebSocket):
         pairs = (a + b for a, b in zip(words, words[1:]))
         return any(p.startswith(n) for p in pairs for n in names)
 
+    def _echo_risk(now: float) -> bool:
+        """Играет ли прямо сейчас её собственный голос."""
+        if CFG.get("stt.echo_guard", True) is False:
+            return False
+        if CFG.get("tts.headphones", False):
+            return False          # в наушниках эха нет — глушить нечего
+        tail = float(CFG.get("stt.echo_tail_s", 0.9))
+        return (now - AUDIO_LEVEL.get("ts", 0.0)) < tail
+
+    def _echo_text(text: str) -> bool:
+        """Совпадает ли услышанное с тем, что она только что сказала."""
+        if CFG.get("stt.echo_guard", True) is False:
+            return False
+        t = re.sub(r"[^а-яa-zё ]", " ", (text or "").lower())
+        words = [w for w in t.split() if len(w) > 2]
+        if len(words) < 2:
+            return False        # на коротком совпадение ничего не значит
+        now = time.time()
+        for ts, said in list(SAID_RECENT):
+            if now - ts > 12:
+                continue
+            sw = set(said)
+            hit = sum(1 for w in words if w in sw)
+            if hit / len(words) >= 0.6:
+                return True
+        return False
+
     def _fire_voice_hotkey(text):
         try:
             from server import hotkeys
@@ -2631,6 +3522,25 @@ async def ws_endpoint(ws: WebSocket):
     def voice_phrase(r):
         now = time.time()
         heard_mono = r.pop("_heard_mono", None)  # внутреннее, не шлём в UI
+        # ЭХО ИЗ КОЛОНОК (2026-07-26, живой случай). Владелец говорит через
+        # колонки, микрофон слышит её же голос, GigaAM послушно его
+        # распознаёт — и Сайка отвечает сама себе обрывками своих реплик.
+        # Наушники это лечат, но требовать наушников нельзя: разговор с
+        # дивана и был смыслом всей затеи.
+        #
+        # Пока звук РЕАЛЬНО играет (AUDIO_LEVEL свежий) плюс хвост на
+        # затухание — пропускаем только то, ради чего человек и перебивает:
+        # стоп-слова и обращение по имени. Остальное это почти наверняка
+        # она сама. Полностью глушить микрофон нельзя — тогда «стоп»
+        # перестанет работать, а это худшее, что можно сделать.
+        if _echo_risk(now) and not _is_stop(r["text"]) \
+                and not _addressed(r["text"]):
+            log.info("Пропустила эхо из колонок: %r", r["text"][:60])
+            return
+        if _echo_text(r["text"]):
+            log.info("Пропустила своё же эхо (совпало с репликой): %r",
+                     r["text"][:60])
+            return
         # «стоп/хватит/молчи» — глушим генерацию и озвучку, в LLM не отправляем
         if _is_stop(r["text"]):
             _user_activity()
@@ -2994,6 +3904,16 @@ def main():
             except Exception as e:
                 log.debug("startup ai_doctor: %s", e)
         threading.Thread(target=_startup_ai_doctor, daemon=True).start()
+    # досье на модели заводим в фоне: list_models() опрашивает Ollama и LM
+    # Studio по сети, в главном потоке это задержало бы старт
+    def _sync_dossier():
+        time.sleep(6)
+        try:
+            from server import model_dossier
+            model_dossier.sync_all()
+        except Exception as e:
+            log.debug("синхронизация досье моделей: %s", e)
+    threading.Thread(target=_sync_dossier, daemon=True).start()
     # боты мессенджеров (Telegram/VK) — если включены и заполнены токены;
     # иначе тихо ничего не делает. Управление ПК с телефона.
     try:
@@ -3036,6 +3956,13 @@ def main():
             webbrowser.open(f"http://{host}:{port}")
 
         threading.Thread(target=_open_if_no_tab, daemon=True).start()
+    # запоминаем РЕАЛЬНЫЙ адрес прослушки: панель телефона по нему поймёт,
+    # что тумблер включён, а сервер ещё не перезапущен
+    try:
+        from server import phone as _ph
+        _ph.BOUND_HOST = host
+    except Exception:
+        pass
     log.info("Сайка запускается на http://%s:%s", host, port)
     # отметка «стек поднялся»: doctor.py --fast видит свежую метку и
     # пропускает полный осмотр (полный — после падения или раз в сутки)
