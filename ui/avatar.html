@@ -29,7 +29,17 @@ VRM-файла, three-vrm симулирует их сама (vrm.update).
 <title>Сайка — аватар</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:transparent}
-  #flat{position:fixed;inset:0;display:none;align-items:flex-end;
+  /* без этого браузер на телефоне перехватывает жест себе — страница
+   скроллится и зумится вместо модели */
+html,body,canvas{touch-action:none;overscroll-behavior:none}
+#avctl{position:fixed;right:10px;bottom:10px;display:flex;flex-direction:column;
+  gap:6px;z-index:20}
+#avctl button{width:38px;height:38px;border-radius:11px;cursor:pointer;
+  background:rgba(20,22,34,.72);border:1px solid rgba(255,255,255,.16);
+  color:#e9e9ed;font:16px/1 system-ui,sans-serif;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#avctl button:active{background:rgba(145,132,217,.4)}
+#flat{position:fixed;inset:0;display:none;align-items:flex-end;
   justify-content:center;pointer-events:none;overflow:hidden}
 #flat.on{display:flex}
 #flat img{max-width:100%;max-height:100%;object-fit:contain;
@@ -103,20 +113,87 @@ function applyView(){
   if (vrm) vrm.scene.position.set(view.x, view.y, view.z);
   camera.zoom = view.zoom; camera.updateProjectionMatrix();
 }
-let drag = null;
-addEventListener('mousedown', e=>{ drag={b:e.button, x:e.clientX, y:e.clientY}; });
+/* КАСАНИЯ, А НЕ ТОЛЬКО МЫШЬ (2026-07-26). Было mousedown/mousemove — на
+   телефоне таких событий не существует вовсе, поэтому модель нельзя было
+   ни подвинуть, ни отмасштабировать: она просто торчала обрезанной по краям.
+   Pointer Events покрывают мышь, палец и стилус одним кодом, а щипок двумя
+   пальцами считаем сами — стандартного события для него нет. */
+const clampZoom = z => Math.min(4, Math.max(0.35, z));
+const ptrs = new Map();
+let pinch0 = 0, zoom0 = 1, moved = 0, lastTap = 0;
+function pinchDist(){
+  const a = [...ptrs.values()];
+  if (a.length < 2) return 0;
+  return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+}
 addEventListener('contextmenu', e=>e.preventDefault());
-addEventListener('mouseup', ()=>{ drag=null; saveView(); });
-addEventListener('mousemove', e=>{
-  if(!drag) return;
-  const k = 2.2/(innerHeight*view.zoom);      // пиксели -> метры сцены
-  if (drag.b===0){ view.x += (e.clientX-drag.x)*k; view.y -= (e.clientY-drag.y)*k; }
-  else { camera.position.y += (e.clientY-drag.y)*k; }
-  drag.x=e.clientX; drag.y=e.clientY; applyView();
+addEventListener('pointerdown', e=>{
+  ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY, b:e.button});
+  if (ptrs.size === 2){ pinch0 = pinchDist(); zoom0 = view.zoom; }
+  moved = 0;
+  try{ e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId); }
+  catch(err){}
 });
-addEventListener('wheel', e=>{ view.zoom = Math.min(4, Math.max(0.35,
-  view.zoom * (e.deltaY<0 ? 1.08 : 0.925))); applyView(); saveView(); }, {passive:true});
-addEventListener('dblclick', ()=>{ view={x:0,y:0,z:0,zoom:1}; applyView(); saveView(); });
+addEventListener('pointermove', e=>{
+  const p = ptrs.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  moved += Math.abs(dx) + Math.abs(dy);
+  if (ptrs.size >= 2){                       // щипок — масштаб
+    const d = pinchDist();
+    if (pinch0 > 0 && d > 0){
+      view.zoom = clampZoom(zoom0 * d / pinch0);
+      applyView();
+    }
+    return;
+  }
+  const k = 2.2/(innerHeight*view.zoom);      // пиксели -> метры сцены
+  if (p.b === 2) camera.position.y += dy*k;   // ПКМ — вертикаль камеры
+  else { view.x += dx*k; view.y -= dy*k; }
+  applyView();
+});
+function ptrEnd(e){
+  ptrs.delete(e.pointerId);
+  if (ptrs.size < 2) pinch0 = 0;
+  if (ptrs.size) return;
+  saveView();
+  // двойное касание = сброс вида. dblclick на телефоне не приходит, а
+  // способ вернуть модель на место нужен обязательно: увёл за край —
+  // иначе не найдёшь
+  if (moved < 12){
+    const now = performance.now();
+    if (now - lastTap < 340){
+      view = {x:0, y:0, z:0, zoom:1};
+      applyView(); saveView(); flash('вид сброшен', 1200);
+      lastTap = 0;
+    } else lastTap = now;
+  }
+}
+addEventListener('pointerup', ptrEnd);
+addEventListener('pointercancel', ptrEnd);
+addEventListener('wheel', e=>{ view.zoom = clampZoom(
+  view.zoom * (e.deltaY<0 ? 1.08 : 0.925)); applyView(); saveView(); },
+  {passive:true});
+
+/* Кнопки для пальца. Жесты жестами, но человек должен видеть, чем управлять:
+   на телефоне «потяни и ущипни» не написано нигде. */
+(function(){
+  const box = document.createElement('div');
+  box.id = 'avctl';
+  box.innerHTML = '<button data-z="1.15">+</button>' +
+                  '<button data-z="0.87">−</button>' +
+                  '<button data-r="1">⟳</button>';
+  document.body.appendChild(box);
+  box.addEventListener('pointerdown', e => e.stopPropagation());
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.r){ view = {x:0, y:0, z:0, zoom:1}; }
+    else view.zoom = clampZoom(view.zoom * parseFloat(b.dataset.z));
+    applyView(); saveView();
+  });
+})();
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.75));
 const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(.6,1.6,1.2); scene.add(key);
@@ -302,46 +379,84 @@ const R = THREE.MathUtils.degToRad;
 function bone(name){ return vrm && vrm.humanoid ? vrm.humanoid.getNormalizedBoneNode(name) : null; }
 let ROT_K = 1, EXPR_K = 1;      // пересчитываются каждый кадр в loop() из dt
 
-/* ЗНАК ПОВОРОТА РУК (2026-07-26, живой баг: «у нескольких моделей руки
-   вверх»). Вся поза рук строится поворотом плеча по Z: +66° опускает левую
-   руку из T-позы, -64° правую. На нашей исходной модели это верно, но у
-   части чужих VRM нормализованный риг собран с другой ориентацией оси, и
-   тот же поворот УВОДИТ РУКИ ВВЕРХ. Гадать по версии VRM бесполезно —
-   встречается и там и там.
+/* ГДЕ У ЭТОЙ МОДЕЛИ «РУКИ ОПУЩЕНЫ» (2026-07-26, третий заход).
 
-   Поэтому не гадаем, а МЕРЯЕМ: после загрузки пробно поворачиваем плечо и
-   смотрим, куда уехала кисть. Уехала выше плеча — значит знак обратный, и
-   дальше все повороты рук у ЭТОЙ модели идут с минусом. Одна проба на
-   загрузку, дальше бесплатно. */
-let armSign = 1;
-const ARM_Z = /(UpperArm|LowerArm|Hand)$/;
+   Вся поза рук построена поворотом плеча по Z: +66° опускает левую руку из
+   T-позы, −64° правую. На нашей модели это верно, но чужие VRM собирают
+   нормализованный риг по-разному, и тот же поворот у них задирает руки
+   вверх или разводит в стороны.
+
+   Первые два захода угадывали ЗНАК — и оба раза мимо: сначала выгнулись
+   кисти, потом руки развело. Гадать тут нечего, потому что вариантов не
+   два: у разных ригов отличается и знак, и величина покоя.
+
+   Поэтому не угадываем, а МЕРЯЕМ. Перебираем поворот плеча по всему
+   диапазону и берём тот, при котором кисть оказывается ниже плеча и ближе
+   всего к телу — это и есть «рука висит вдоль тела» на любом риге, без
+   единого предположения о его устройстве. Отдельно проверяем, в какую
+   сторону от покоя рука ПОДНИМАЕТСЯ, чтобы жесты не сработали зеркально.
+
+   Дальше всё авторское остаётся как есть: поза считается как смещение от
+   авторского покоя, наложенное на измеренный. Локоть и кисть не трогаем
+   вообще — у них покой ноль, а ноль одинаков в любой системе координат.
+   Перебор идёт один раз на загрузку модели. */
+const REST_AUTH = {leftUpperArm: 66, rightUpperArm: -64};
+let armRest = null, armDir = 1;
+
 function calibrateArms(){
-  armSign = 1;
+  armRest = null; armDir = 1;
   if (!vrm || !vrm.humanoid) return;
-  const ua = bone('leftUpperArm');
-  if (!ua) return;
-  const save = ua.rotation.z;
-  ua.rotation.z = R(66);
+  const H = vrm.humanoid;
+  const a = new THREE.Vector3(), h = new THREE.Vector3();
+  const out = {};
   try{
-    vrm.humanoid.update();
-    vrm.scene.updateWorldMatrix(true, true);
-    const rawU = vrm.humanoid.getRawBoneNode('leftUpperArm');
-    const rawH = vrm.humanoid.getRawBoneNode('leftHand')
-              || vrm.humanoid.getRawBoneNode('leftLowerArm');
-    if (rawU && rawH){
-      const a = new THREE.Vector3(), b = new THREE.Vector3();
-      rawU.getWorldPosition(a); rawH.getWorldPosition(b);
-      // кисть выше плеча — рука задрана, значит наш плюс для неё минус
-      if (b.y > a.y + 0.01) armSign = -1;
+    const handY = (b, node, up, deg) => {
+      b.rotation.set(0, 0, R(deg));
+      H.update();
+      vrm.scene.updateWorldMatrix(true, true);
+      up.getWorldPosition(a); node.getWorldPosition(h);
+      return {drop: a.y - h.y, spread: Math.abs(h.x - a.x), y: h.y};
+    };
+    for (const side of ['left', 'right']){
+      const name = side + 'UpperArm';
+      const b = bone(name);
+      const rawU = H.getRawBoneNode(name);
+      const rawH = H.getRawBoneNode(side + 'Hand')
+                || H.getRawBoneNode(side + 'LowerArm');
+      if (!b || !rawU || !rawH) return;          // риг без сырых костей
+      const save = b.rotation.clone();
+      let best = REST_AUTH[name], bestScore = Infinity;
+      for (let deg = -120; deg <= 120; deg += 4){
+        const m = handY(b, rawH, rawU, deg);
+        // хотим: кисть НИЖЕ плеча и не отведена вбок
+        const score = m.spread - m.drop;
+        if (score < bestScore){ bestScore = score; best = deg; }
+      }
+      out[name] = R(best);
+      if (side === 'left'){
+        // куда рука поднимается: у автора её поднимает УМЕНЬШЕНИЕ z
+        const lo = handY(b, rawH, rawU, best - 15).y;
+        const hi = handY(b, rawH, rawU, best + 15).y;
+        armDir = (lo > hi) ? 1 : -1;
+      }
+      b.rotation.copy(save);
     }
-  }catch(e){ /* риг без сырых костей — оставляем как есть */ }
-  ua.rotation.z = save;
-  try{ vrm.humanoid.update(); }catch(e){}
-  if (armSign < 0) console.log('avatar: у модели обратный знак поворота рук');
+    H.update();
+  }catch(e){
+    armRest = null;
+    return;                                     // остаёмся на авторских
+  }
+  armRest = out;
+  console.log('avatar: покой рук', Math.round(out.leftUpperArm * 57.3),
+              Math.round(out.rightUpperArm * 57.3), 'направление', armDir);
 }
 
 function setRot(name, x, y, z){
-  if (armSign < 0 && ARM_Z.test(name)) z = -z;
+  // Плечо: авторскую позу пересчитываем на измеренный покой этой модели.
+  // Локоть и кисть не трогаем — там покой ноль в любой системе координат.
+  if (armRest && REST_AUTH[name] !== undefined){
+    z = armRest[name] + (z - R(REST_AUTH[name])) * armDir;
+  }
   const b = bone(name); if (!b) return;
   if (ROT_K >= 0.999){ b.rotation.set(x, y, z); return; }
   b.rotation.set(b.rotation.x + (x-b.rotation.x)*ROT_K,

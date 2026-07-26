@@ -6,18 +6,18 @@
     "token": "DRbZ5FaL"
   },
   "llm": {
-    "backend": "lmstudio",
+    "backend": "cloud",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "gemma-4-e4b-it",
+    "model": "GigaChat-2-Pro",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "mistral",
-      "base_url": "https://api.mistral.ai/v1",
-      "model": "mistral-medium-3-5"
+      "provider": "gigachat",
+      "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
+      "model": "GigaChat-2-Pro"
     },
     "tools_broken": [
       "gemma-4-e4b-it",
@@ -342,7 +342,7 @@
       }
     },
     "web": {
-      "model": "models/avatar/library/blueandorangebear.vrm",
+      "model": "models/avatar/library/Saika_v1.vrm",
       "anims_dir": "models/avatar/anims",
       "outfits_dir": "models/avatar/outfits",
       "kind": "3d"

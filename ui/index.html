@@ -664,6 +664,22 @@
   .ph-token{font-size:15px;letter-spacing:.08em;background:var(--panel2);
     padding:3px 9px;border-radius:8px}
   .ph-back{margin-bottom:10px}
+  /* ── окно ввода кода доступа (телефон без QR) ── */
+  #tok-ov{position:fixed;inset:0;z-index:300;display:flex;
+    align-items:center;justify-content:center;padding:16px;
+    background:rgba(6,7,13,.86);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px)}
+  .tok-card{max-width:420px;border-radius:20px;padding:20px 22px;
+    background:linear-gradient(165deg,rgba(30,32,48,.97),rgba(18,20,32,.99));
+    border:1px solid rgba(255,255,255,.14);font-size:13px;line-height:1.6}
+  .tok-card b{display:block;font-size:15px;margin-bottom:8px}
+  .tok-card p{margin:0 0 8px;color:rgba(233,233,237,.82)}
+  .tok-row{display:flex;gap:8px;margin-top:12px}
+  #tok-in{flex:1;background:var(--panel2);color:var(--text);
+    border:1px solid var(--border);border-radius:10px;padding:9px 12px;
+    font:15px inherit;letter-spacing:.08em;outline:none}
+  #tok-err{margin-top:7px;font-size:11.5px;color:var(--err)}
+
   /* ── самочувствие: полоска в колонке и полная панель ── */
   #psy-strip{margin-top:10px;padding:9px 10px;border-radius:12px;
     background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
@@ -951,8 +967,26 @@
     .chip{max-width:150px;height:38px}
     .iconbtn{width:38px;height:38px;font-size:16px}
     #eq{height:16px;margin-bottom:-8px}
-    .pop{min-width:min(300px,calc(100vw - 32px));
-      max-height:min(66vh,calc(100dvh - 150px))}
+    /* МЕНЮ НА ТЕЛЕФОНЕ (2026-07-26). Раньше они лежали absolute внутри
+       своей кнопки: у крайних кнопок дока меню уезжало за край экрана, и
+       половина подписей обрезалась («Скорость ответа — кэш, контекст,
+       температ…»). Прибиваем к самому экрану во всю ширину — читать
+       список из десяти пунктов на телефоне иначе невозможно. */
+    .pop{position:fixed;left:8px;right:8px;width:auto;min-width:0;
+      bottom:calc(env(safe-area-inset-bottom,0px) + 112px);
+      max-height:min(58vh,calc(100dvh - 200px))}
+    .pop.top{top:54px;bottom:auto;
+      max-height:min(70vh,calc(100dvh - 80px))}
+    /* длинные подписи переносим, а не режем: места по ширине теперь хватает */
+    .pop .item{align-items:flex-start}
+    .pop .item .mname{white-space:normal;overflow:visible;
+      text-overflow:clip;line-height:1.35}
+    /* полноэкранные шторки на телефоне — без внутренних полей */
+    #phone-ov,#skills-ov,#av-ov,#dos-ov,#psy-ov{padding:8px}
+    .ph-card,.sk-card{padding:14px 14px}
+    .sk-grid,.av-grid,.dos-grid,.psy-grid{grid-template-columns:1fr}
+    #sk-find,#dos-find{width:100%;order:5}
+    .ph-head,.sk-head{flex-wrap:wrap;gap:8px}
   }
   @media (max-width:520px){
     #btn-dreampc,#btn-train,#btn-githelp,#btn-control{display:none}
@@ -963,6 +997,74 @@
 </style>
 </head>
 <body>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · код доступа на телефоне (2026-07-26)
+
+   Две мелочи, без которых заход с телефона выглядит поломкой.
+
+   1. Убираем ?t=… из адресной строки. Токен к этому моменту уже закреплён
+      cookie на сервере, а в адресе он только мозолит глаза и утекает на
+      каждом скриншоте.
+
+   2. Если человек открыл адрес руками, без QR, все запросы вернут 401 и он
+      увидит пустой интерфейс без объяснений. Показываем окно с полем для
+      кода — он написан в панели «Подключение с телефона» на компьютере.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  // ── 1. чистим адрес ──
+  try{
+    const u = new URL(location.href);
+    if(u.searchParams.get('t')){
+      u.searchParams.delete('t');
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    }
+  }catch(e){}
+
+  // ── 2. окно ввода кода ──
+  let shown = false;
+  function ask(){
+    if(shown) return;
+    shown = true;
+    const ov = document.createElement('div');
+    ov.id = 'tok-ov';
+    ov.innerHTML =
+      '<div class="tok-card"><b>🔑 Нужен код доступа</b>' +
+      '<p>Сайка открыта наружу, и без кода она не отвечает — у неё руки в ' +
+      'системе, пускать в неё всю сеть нельзя.</p>' +
+      '<p>Код написан на компьютере: колонка системы → <b>Подключение с ' +
+      'телефона</b>. Или просто отсканируй QR оттуда — тогда код ' +
+      'подставится сам.</p>' +
+      '<div class="tok-row"><input id="tok-in" placeholder="код" ' +
+      'autocapitalize="off" autocorrect="off" spellcheck="false">' +
+      '<button class="chip" id="tok-go">войти</button></div>' +
+      '<div id="tok-err"></div></div>';
+    document.body.appendChild(ov);
+    const go = () => {
+      const v = (document.getElementById('tok-in').value || '').trim();
+      if(!v) return;
+      // токен уходит параметром — сервер увидит его и закрепит cookie
+      location.href = location.pathname + '?t=' + encodeURIComponent(v);
+    };
+    document.getElementById('tok-go').onclick = go;
+    document.getElementById('tok-in').addEventListener('keydown', e => {
+      if(e.key === 'Enter') go();
+    });
+    setTimeout(() => document.getElementById('tok-in').focus(), 80);
+  }
+
+  // Ловим 401 у ЛЮБОГО запроса страницы: перехватываем fetch один раз,
+  // вместо того чтобы дописывать проверку в два десятка мест.
+  const orig = window.fetch;
+  window.fetch = async function(...args){
+    const r = await orig.apply(this, args);
+    if(r.status === 401) ask();
+    return r;
+  };
+})();
+
+</script>
+
 <div id="toploader"><i></i></div>
 <div id="toasts"></div>
 <header>
@@ -5773,6 +5875,41 @@ eqFrame();
     return h;
   }
 
+  function micBlock(){
+    const d = DATA || {};
+    const live = d.https_live, want = d.https;
+    return card('🎙 Микрофон с телефона',
+      '<p>Браузеры отдают микрофон, камеру и список устройств ' +
+      '<b>только в защищённом контексте</b> — это https или localhost. ' +
+      'Обычный http на адрес 192.168.x.x защищённым не считается, и объект ' +
+      'просто отсутствует: поэтому кнопка микрофона не работает, а меню ' +
+      'слуха выглядит пустым. Это правило браузера, обойти его нельзя.</p>' +
+      '<p>Лечится единственным способом — поднять https. Сертификат я ' +
+      'сделаю сама и впишу в него все адреса этой машины сразу.</p>' +
+      '<div class="ph-toggle"><span>HTTPS</span>' +
+      '<button class="chip" id="ph-https" style="color:' +
+        (live ? 'var(--ok)' : want ? 'var(--warn)' : 'var(--dim)') + '">' +
+        (live ? 'работает' : want ? 'включён, нужен перезапуск'
+                                  : 'выключен') + '</button>' +
+      '<span class="ph-hint">' +
+        (d.crypto === false
+          ? 'Нет библиотеки cryptography — поставится при следующем ' +
+            'start.bat, тогда и включай.'
+          : 'Сертификат ' + (d.cert ? 'готов' : 'сделаю при включении') +
+            '. После включения перезапусти сервер.') +
+      '</span></div>' +
+      '<p class="ph-warn">Браузер один раз ругнётся: «подключение не ' +
+      'защищено». Это нормально и неизбежно — подтверждённый сертификат ' +
+      'бывает только у публичного домена, а у домашнего IP его взять ' +
+      'негде. Нажми «Дополнительно» → «Перейти». После этого микрофон ' +
+      'заработает.</p>' +
+      '<p class="ph-hint">Без предупреждений это можно сделать только ' +
+      'через Tailscale с их сертификатом (нужно включить HTTPS в его ' +
+      'админке и выполнить <code>tailscale cert</code>) — но это отдельная ' +
+      'возня, а самоподписанный работает сразу.</p>',
+      'ph-note');
+  }
+
   function firewallBlock(){
     const cmd = (DATA && DATA.firewall_cmd) || '';
     return card('Если QR открылся, но страница не грузится',
@@ -5826,6 +5963,7 @@ eqFrame();
         esc(u.virtual) + ', а не твой роутер. Телефона в ней нет — ' +
         'сканировать бесполезно.</div>' : '') +
       '</div>').join('') + '</div>';
+    body += micBlock();
     body += firewallBlock();
     body += card('Если QR не сработал',
       '<p>Набери адрес в браузере телефона руками — он написан под ' +
@@ -5862,6 +6000,7 @@ eqFrame();
         'связывает.',
         'Включи тумблер в приложении — телефон в сети.',
       ]));
+    body += micBlock();
     body += card('Здесь',
       steps([
         'Включи тумблер ниже и перезапусти сервер.',
@@ -5915,6 +6054,18 @@ eqFrame();
         toast(r.open ? 'Включила. Перезапусти сервер — и сканируй QR.'
                      : 'Выключила: снаружи Сайка больше не отвечает.',
               {kind: 'ok', ttl: 6000});
+      }
+    };
+    const hs = $id('ph-https');
+    if(hs) hs.onclick = async () => {
+      hs.disabled = true;
+      const r = await api('/api/phone', {https: !(DATA && DATA.https)});
+      hs.disabled = false;
+      if(r){
+        DATA = r; paint();
+        toast(r.message || (r.https
+          ? 'Включила. Перезапусти сервер — и заходи заново по https.'
+          : 'Выключила https.'), {kind: 'ok', ttl: 8000});
       }
     };
     const cp = $id('ph-copy');

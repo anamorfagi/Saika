@@ -83,8 +83,10 @@ FEATURES = {
         # поэтому библиотека в extra, а не в core.
         "core_modules": [],
         "core_pip": [],
-        "extra_modules": ["qrcode"],
-        "extra_pip": ["qrcode"],
+        # cryptography нужна для самоподписанного сертификата: без https
+        # браузер не отдаёт микрофон на телефоне (защищённый контекст)
+        "extra_modules": ["qrcode", "cryptography"],
+        "extra_pip": ["qrcode", "cryptography"],
     },
     "pdf": {
         "title": "Чтение PDF-чертежей",

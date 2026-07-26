@@ -86,21 +86,40 @@ async def _guard(request, call_next):
     if client in ("127.0.0.1", "::1", "localhost"):
         return await call_next(request)
     path = request.url.path
+    want = _ph.token()
+    # КУДА СМОТРИМ ЗА ТОКЕНОМ И ПОЧЕМУ ИМЕННО ТАК (2026-07-26).
+    # Заголовок ставит наш же JS. Параметр ?t= приезжает из QR. А cookie —
+    # единственное, что работает для ВЛОЖЕННЫХ запросов, которые браузер
+    # делает сам: <iframe src="/avatar">, картинки, шрифты, вебсокет. Их мы
+    # не контролируем, заголовок туда не подложить. Живой случай: телефон
+    # открылся, чат работал, а вкладка «Аватар» показывала голый JSON с
+    # ошибкой — iframe уходил на сервер без единого признака доступа.
+    got = (request.headers.get("x-saika-token")
+           or request.query_params.get("t")
+           or request.cookies.get("saika_token") or "")
+    ok = bool(want) and got == want
+    # ЗАКРЕПЛЯЕМ ДО ПРОВЕРКИ ПУТИ, а не после (иначе ссылка из QR ведёт на
+    # «/», а он разрешён всем — короткое замыкание срабатывало раньше, чем
+    # ставилась cookie, и телефон оставался без пропуска. Поймано живым
+    # тестом: Set-Cookie не приходил вообще).
+    set_ck = (ok and request.query_params.get("t") == want
+              and request.cookies.get("saika_token") != want)
     # Саму страницу отдаём всегда: иначе телефону негде было бы ввести код,
     # если QR не сработал. Опасное — за токеном.
-    if path == "/" or path.startswith("/static") or path.startswith("/ui") \
+    free = (path == "/" or path.startswith("/static")
+            or path.startswith("/ui")
             or path.endswith((".css", ".js", ".png", ".svg", ".ico",
-                              ".woff2")):
-        return await call_next(request)
-    want = _ph.token()
-    got = (request.headers.get("x-saika-token")
-           or request.query_params.get("t") or "")
-    if want and got == want:
-        return await call_next(request)
-    return JSONResponse(
-        {"error": "нужен код доступа",
-         "hint": "открой Сайку на компьютере → Подключение с телефона и "
-                 "отсканируй QR заново"}, status_code=401)
+                              ".woff2")))
+    if not (ok or free):
+        return JSONResponse(
+            {"error": "нужен код доступа",
+             "hint": "открой Сайку на компьютере → Подключение с телефона и "
+                     "отсканируй QR заново"}, status_code=401)
+    resp = await call_next(request)
+    if set_ck:
+        resp.set_cookie("saika_token", want, max_age=90 * 24 * 3600,
+                        httponly=True, samesite="lax", path="/")
+    return resp
 
 PROBLEMS: list[dict] = []          # лента проблем/починок для UI
 ACTIVE_LLM = {"backend": "", "model": ""}  # кто реально отвечал последним
@@ -1215,12 +1234,22 @@ def phone_get():
 @app.post("/api/phone")
 def phone_set(payload: dict):
     from server import phone as _ph
+    msg = ""
     if payload.get("new_token"):
         _ph.new_token()
+    if payload.get("make_cert"):
+        msg = _ph.make_cert(force=bool(payload.get("force")))
+    if "https" in payload:
+        on = bool(payload["https"])
+        if on and not _ph.cert_ready():
+            msg = _ph.make_cert()      # включаем — сразу и делаем
+        CFG.set("server.https", on)
     if "open" in payload:
         _ph.set_open(bool(payload["open"]))
     st = _ph.state()
     st["restart_needed"] = True   # порт занимается один раз при старте
+    if msg:
+        st["message"] = msg
     return st
 
 
@@ -3267,7 +3296,11 @@ async def ws_endpoint(ws: WebSocket):
         if _ph.is_open():
             _cl = ws.client.host if ws.client else ""
             if _cl not in ("127.0.0.1", "::1", "localhost"):
-                if (ws.query_params.get("t") or "") != _ph.token():
+                # у вебсокета заголовки не наши: смотрим параметр и cookie,
+                # которая ставится при первом заходе по ссылке из QR
+                _tok = (ws.query_params.get("t")
+                        or ws.cookies.get("saika_token") or "")
+                if _tok != _ph.token():
                     await ws.close(code=4401)
                     log.warning("Отклонила websocket без кода доступа: %s",
                                 _cl)
@@ -3953,7 +3986,19 @@ def main():
                              "новую не открываю")
                     return
                 time.sleep(0.25)
-            webbrowser.open(f"http://{host}:{port}")
+            # 0.0.0.0 — это «слушать на всех интерфейсах», а НЕ адрес, по
+            # которому можно зайти: браузер отвечает ERR_ADDRESS_INVALID
+            # (живой случай 2026-07-26, сразу после включения доступа с
+            # телефона). Себе всегда открываем петлю.
+            _h = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+            _s = "http"
+            try:
+                from server import phone as _ph
+                if _ph.https_on():
+                    _s = "https"
+            except Exception:
+                pass
+            webbrowser.open(f"{_s}://{_h}:{port}")
 
         threading.Thread(target=_open_if_no_tab, daemon=True).start()
     # запоминаем РЕАЛЬНЫЙ адрес прослушки: панель телефона по нему поймёт,
@@ -3963,7 +4008,20 @@ def main():
         _ph.BOUND_HOST = host
     except Exception:
         pass
-    log.info("Сайка запускается на http://%s:%s", host, port)
+    # в лог пишем адрес, по которому РЕАЛЬНО можно зайти, а не 0.0.0.0
+    _mine = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    _sch = "http"
+    try:
+        from server import phone as _phl
+        if _phl.https_on():
+            _sch = "https"
+    except Exception:
+        pass
+    if host in ("0.0.0.0", "::"):
+        log.info("Сайка слушает ВСЕ интерфейсы (доступ с телефона включён). "
+                 "Себе: %s://%s:%s", _sch, _mine, port)
+    else:
+        log.info("Сайка запускается на %s://%s:%s", _sch, host, port)
     # отметка «стек поднялся»: doctor.py --fast видит свежую метку и
     # пропускает полный осмотр (полный — после падения или раз в сутки)
     try:
@@ -3971,7 +4029,20 @@ def main():
             json.dumps({"ts": time.time()}), encoding="utf-8")
     except Exception:
         pass
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    # HTTPS, если включён и сертификат на месте. Без него микрофон с
+    # телефона не поднять: браузеры отдают navigator.mediaDevices только в
+    # защищённом контексте (https или localhost).
+    ssl_kw = {}
+    try:
+        from server import phone as _ph
+        if _ph.https_on():
+            _crt, _key = _ph._cert_paths()
+            ssl_kw = {"ssl_certfile": str(_crt), "ssl_keyfile": str(_key)}
+            log.info("Сайка поднимается по HTTPS (самоподписанный "
+                     "сертификат) — микрофон с телефона заработает")
+    except Exception as e:
+        log.warning("HTTPS не включился: %s", e)
+    uvicorn.run(app, host=host, port=port, log_level="warning", **ssl_kw)
 
 
 if __name__ == "__main__":

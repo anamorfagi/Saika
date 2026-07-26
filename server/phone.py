@@ -33,7 +33,7 @@ import secrets
 import socket
 import subprocess
 
-from server.config import CFG
+from server.config import CFG, ROOT
 
 log = logging.getLogger("saika.phone")
 
@@ -150,16 +150,17 @@ def urls() -> list:
     ips = lan_ips()
     # настоящую домашнюю сеть — первой: именно её и надо сканировать
     ips.sort(key=lambda ip: (bool(_iface_kind(ip)), ip))
+    sch = scheme()
     for ip in ips:
         virt = _iface_kind(ip)
-        out.append({"kind": "lan", "url": f"http://{ip}:{port}/?t={t}",
+        out.append({"kind": "lan", "url": f"{sch}://{ip}:{port}/?t={t}",
                     "virtual": virt,
                     "label": (f"{virt} · {ip}" if virt
                               else f"домашняя сеть · {ip}")})
     ts = tailscale()
     if ts.get("ip"):
         out.append({"kind": "tailscale",
-                    "url": f"http://{ts['ip']}:{port}/?t={t}",
+                    "url": f"{sch}://{ts['ip']}:{port}/?t={t}",
                     "label": f"Tailscale · {ts['ip']}"})
     return out
 
@@ -189,6 +190,9 @@ def state() -> dict:
             "bound": BOUND_HOST, "bound_open": bound_open(),
             "restart_needed": is_open() != bound_open(),
             "firewall_cmd": firewall_cmd(),
+            "https": bool(CFG.get("server.https", False)),
+            "https_live": https_on(), "cert": cert_ready(),
+            "crypto": _crypto_ok(),
             "port": int(CFG.get("server.port", 8765)),
             "token": token(), "urls": urls(),
             "tailscale": tailscale(), "qr": bool(_qr_lib())}
@@ -201,6 +205,103 @@ def set_open(on: bool) -> dict:
     if on:
         token()          # чтобы код уже был, когда человек откроет QR
     return state()
+
+
+# ───────────────── HTTPS: без него не работает микрофон ─────────────────
+# Живой случай 2026-07-26: телефон подключился, чат работает, а микрофон
+# включить нельзя и списки устройств пустые.
+#
+# Это не наша поломка. Браузеры отдают navigator.mediaDevices (микрофон,
+# камера, список устройств) ТОЛЬКО в защищённом контексте: https или
+# localhost. Обычный http на адрес 192.168.x.x защищённым не считается, и
+# объект просто отсутствует — поэтому меню слуха и выглядит пустым.
+#
+# Лечится единственным способом: поднять https. Сертификат делаем сами и
+# кладём в него все адреса машины сразу (домашний IP, Tailscale, localhost),
+# чтобы он подходил при любом способе захода. Браузер один раз ругнётся на
+# самоподписанный — это нормально и неизбежно: подтверждённый сертификат
+# бывает только у публичного домена, а у домашнего IP его взять негде.
+CERT_DIR = None
+
+
+def _cert_paths():
+    d = ROOT / "data" / "cert"
+    return d / "saika.crt", d / "saika.key"
+
+
+def cert_ready() -> bool:
+    c, k = _cert_paths()
+    return c.exists() and k.exists()
+
+
+def _crypto_ok() -> bool:
+    try:
+        import cryptography  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def make_cert(force=False) -> str:
+    """Сделать самоподписанный сертификат на все адреса этой машины."""
+    crt, key = _cert_paths()
+    if cert_ready() and not force:
+        return "Сертификат уже есть."
+    if not _crypto_ok():
+        return ("Нет библиотеки cryptography — без неё сертификат не "
+                "сделать. Она ставится сама при следующем запуске "
+                "start.bat, либо: .venv\\Scripts\\pip install cryptography")
+    import datetime
+    import ipaddress as _ip
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    names = [x509.DNSName("localhost")]
+    addrs = ["127.0.0.1"] + lan_ips()
+    ts = tailscale().get("ip")
+    if ts:
+        addrs.append(ts)
+    for a in dict.fromkeys(addrs):
+        try:
+            names.append(x509.IPAddress(_ip.ip_address(a)))
+        except ValueError:
+            pass
+
+    k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "Saika local"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Saika"),
+    ])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder()
+            .subject_name(subject).issuer_name(subject)
+            .public_key(k.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=825))
+            .add_extension(x509.SubjectAlternativeName(names), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None),
+                           critical=True)
+            .sign(k, hashes.SHA256()))
+    crt.parent.mkdir(parents=True, exist_ok=True)
+    crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key.write_bytes(k.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()))
+    log.info("Сделала самоподписанный сертификат на %d адресов", len(names))
+    return (f"Готово, сертификат на {len(names)} адресов. Включи https и "
+            "перезапусти сервер.")
+
+
+def https_on() -> bool:
+    return bool(CFG.get("server.https", False)) and cert_ready()
+
+
+def scheme() -> str:
+    return "https" if https_on() else "http"
 
 
 # ───────────────────────────── QR ─────────────────────────────

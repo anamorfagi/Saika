@@ -1,5 +1,5 @@
 {
-  "updated": "2026-07-26T22:10:54",
+  "updated": "2026-07-27T00:07:49",
   "items": [
     {
       "id": "s01",
@@ -651,86 +651,6 @@
     }
   ],
   "log": [
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
     {
       "ts": "2026-07-23T10:00:35",
       "text": "⚠ stt: работаю на faster_whisper",
@@ -1650,6 +1570,86 @@
       "ts": "2026-07-26T22:10:54",
       "text": "⚠ llm: переключилась на lmstudio/gemma-4-e4b-it",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:06:58",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:06:58",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:00",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:00",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:20",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:20",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:20",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:20",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:36",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:37",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:37",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:37",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:48",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:48",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T00:07:48",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T00:07:49",
+      "text": "✓ tts.omni: движок восстановлен",
+      "kind": "fix"
     }
   ],
   "bugs": {
@@ -1721,9 +1721,9 @@
     },
     "tts.omni": {
       "text": "«omni» упал с незнакомой мне ошибкой.",
-      "count": 1,
-      "resolved": false,
-      "last": "2026-07-26T18:42"
+      "count": 9,
+      "resolved": true,
+      "last": "2026-07-27T00:07"
     }
   }
 }
