@@ -145,6 +145,19 @@ _TOOLS_EMPTY_LIMIT = 2
 # Последний замер задержки — чтобы панель «Скорость» показывала эффект
 # правок сразу, а не «покрути и послушай ощущения».
 LAST_TIMING: dict = {}
+# САМОНАБЛЮДЕНИЕ (2026-07-28, просьба владельца). На вопрос «с какой
+# скоростью ты отвечаешь?» она честно отвечала «не могу измерить» — хотя
+# сервер меряет КАЖДЫЙ её ответ до миллисекунды и рисует это в интерфейсе.
+# Числа под сообщением видел человек, но не она сама. Храним последние
+# замеры и подкладываем ей фактом, когда разговор заходит о её скорости.
+LAST_STATS: dict = {}    # tokens/tps/latency_ms/model последнего ответа
+LAST_STT: dict = {}      # engine/stt_ms последнего распознавания
+# Промпт предыдущего хода целиком — чтобы измерить, какая его доля СОВПАЛА с
+# нынешним. Именно эта доля и берётся из KV-кэша, всё остальное модель жуёт
+# заново. Раньше в лог писался хэш «стабильной части» (messages[:-3]), но она
+# растёт с каждым ходом на два сообщения, поэтому хэш менялся ВСЕГДА — и
+# ничего не сообщал. Длина общего префикса отвечает на вопрос прямо.
+LAST_PROMPT = {"text": ""}
 LAST_IMAGE = {"data": None, "ts": 0.0}  # последняя картинка (для OCR слепыми)
 # уникальный id этого запуска процесса: вкладка запоминает его при коннекте
 # и, если после переподключения видит другой id, значит сервер
@@ -462,15 +475,20 @@ def _strip_markdown(text: str) -> str:
 # [эмоция: радость]) — сервер исполняет жест ДЕТЕРМИНИРОВАННО кодом и
 # вырезает маркер из озвучки/текста. Работает с любой моделью, которая
 # способна напечатать квадратные скобки.
+# 2026-07-28: + avatar_action. Модель подсматривает ИМЯ ИНСТРУМЕНТА из схем
+# и пишет [avatar_action:good] вместо [жест:good] — а этот вариант в регекс
+# не входил, маркер утекал в чат и В ОЗВУЧКУ («аватар экшен гуд» вслух).
+# Вчерашняя правка того же жила локально на рабочем ПК и потерялась при
+# reset к origin/dev — поэтому чинится здесь, в ветке, а не на машине.
 _GESTURE_MARK_RE = re.compile(
-    r'[\[({]\s*(?:жест|эмоция|gesture|emote)\s*[:=\-]?\s*'
-    r'([a-zа-яё0-9_]+)\s*[\])}]', re.I)
+    r'[\[({]\s*(?:жест|эмоция|gesture|emote|avatar[_ ]?action|аватар)'
+    r'\s*[:=\-]?\s*([a-zа-яё0-9_]+)\s*[\])}]', re.I)
 # ОБОРВАННЫЙ маркер (генерация кончилась на «[жест:good» без скобки,
 # 2026-07-25 — озвучка честно читала «жест гуд» вслух). Вырезаем хвост,
 # жест из него по возможности исполняем.
 _GESTURE_TAIL_RE = re.compile(
-    r'[\[({]\s*(?:жест|эмоция|gesture|emote)\s*[:=\-]?\s*'
-    r'([a-zа-яё0-9_]*)\s*$', re.I)
+    r'[\[({]\s*(?:жест|эмоция|gesture|emote|avatar[_ ]?action|аватар)'
+    r'\s*[:=\-]?\s*([a-zа-яё0-9_]*)\s*$', re.I)
 
 
 def _apply_gesture_marks(text: str, fire: bool = True) -> str:
@@ -490,6 +508,85 @@ def _apply_gesture_marks(text: str, fire: bool = True) -> str:
     out = _GESTURE_MARK_RE.sub(_sub, text)
     out = _GESTURE_TAIL_RE.sub(_sub, out)   # оборванный маркер в конце
     return re.sub(r'[ \t]{2,}', ' ', out).strip()
+
+
+# ── ТЕКСТОВЫЙ ПРОТОКОЛ ИНСТРУМЕНТОВ (2026-07-28) ──
+# Наблюдение из живого диалога: научившись жестам-маркерам [жест:good],
+# модель ЛОГИЧНО обобщила протокол на инструменты — писала [open_folder:.] и
+# [find_folder:query="..."] текстом. Сервер понимал только жестовые маркеры,
+# и её команды честно улетали в пустоту: она «выполняла», человек видел
+# «не получилось» четыре раза подряд. Раз мелкая модель сама выбрала этот
+# синтаксис — принимаем его как протокол: имя проверяется по реальному
+# списку инструментов, действие исполняется через штатный tools.call (все
+# предохранители — намерение, доверие, анти-амок — работают), результат
+# человек видит сразу (⚡ в чате), а она сама — фактом в следующем ходе.
+_TOOL_MARK_RE = re.compile(
+    r'[\[({]\s*([a-z][a-z0-9_]{2,})\s*[:=]?\s*([^\])}]*)[\])}]')
+
+# результат исполненных маркеров — для следующего хода (см. run_dialog)
+PENDING_ACTIONS: list = []
+
+
+def _marker_args(name: str, raw: str, schemas: list) -> dict:
+    """'query="ноль", drive="E"' -> {"query": "ноль", "drive": "E"};
+    голое значение ('.') уходит первым параметром схемы."""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    pairs = re.findall(
+        r"([a-zа-яё_]\w*)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^,\s\])}]+))",
+        raw, re.I)
+    if pairs:
+        return {k: (a or b or c) for k, a, b, c in pairs}
+    val = raw.strip('"\'')
+    for sc in schemas:
+        f = sc.get("function", {})
+        if f.get("name") == name:
+            props = list((f.get("parameters", {}) or {})
+                         .get("properties", {}) or {})
+            if props:
+                return {props[0]: val}
+    return {"query": val}
+
+
+def _run_tool_marks(text: str) -> list:
+    """Найти в готовом ответе текстовые вызовы, исполнить, вернуть
+    [(имя, результат)]. Не больше двух за ответ — остальное пусть просит
+    следующим ходом, это защита от простыни команд."""
+    if "[" not in (text or "") and "(" not in (text or ""):
+        return []
+    from server.llm import tools as _tls
+    try:
+        schemas = _tls.schemas()
+        known = {sc.get("function", {}).get("name") for sc in schemas}
+    except Exception:
+        return []
+    done = []
+    for m in _TOOL_MARK_RE.finditer(text):
+        name = m.group(1)
+        if name not in known:
+            continue                       # [прим:...] и прочее — не команда
+        try:
+            args = _marker_args(name, m.group(2), schemas)
+            res = _tls.call(name, args)
+            log.info("Текст-вызов %s(%s) -> %s", name, args, str(res)[:100])
+            done.append((name, str(res or "сделано")[:300]))
+        except Exception as e:
+            done.append((name, f"не вышло: {e}"))
+        if len(done) >= 2:
+            break
+    return done
+
+
+def _strip_tool_marks(text: str) -> str:
+    """Вырезать текстовые вызовы из озвучки/истории — читать вслух
+    'опен фолдер путь точка' не нужно, действие и так исполнено."""
+    def _sub(m):
+        # вырезаем только НАСТОЯЩИЕ имена инструментов — латиница со снейком;
+        # [прим: ...] и кириллица остаются текстом
+        return " "
+    return re.sub(r'[ 	]{2,}', ' ',
+                  _TOOL_MARK_RE.sub(_sub, text or "")).strip()
 
 
 def _diagnose_silence(backend: str, model: str, generated_tokens: int) -> str:
@@ -1443,6 +1540,8 @@ def vision_set(payload: dict):
     from server import vision
     if "enabled" in payload:
         vision.set_enabled(bool(payload["enabled"]))
+        if payload["enabled"]:
+            VISION_USED["ts"] = time.time()
     if payload.get("monitor") is not None:
         CFG.set("vision.monitor", int(payload["monitor"]))
     if payload.get("camera") is not None:
@@ -1990,6 +2089,66 @@ def _is_dev_query(text: str) -> bool:
     return any(k in t for k in keys)
 
 
+def _is_perf_query(text: str) -> bool:
+    """Разговор о её скорости/задержке — повод показать ей её же телеметрию."""
+    t = (text or "").lower()
+    keys = ("скорост", "быстр", "медлен", "тормоз", "задержк", "лаг",
+            "ток/с", "токен", "тайминг", "долго дума", "долго отвеча",
+            "распозна", "отклик", "речь в секунду")
+    return any(k in t for k in keys)
+
+
+def _perf_block() -> str:
+    """Телеметрия последнего ответа — её собственные ощущения в числах.
+    Собирается из того, что сервер и так меряет; ничего не выдумывается."""
+    parts = []
+    st = LAST_STATS
+    if st.get("ts") and time.time() - st["ts"] < 3600:
+        p = []
+        if st.get("latency_ms") is not None:
+            p.append("от фразы человека до твоего первого слова — "
+                     f"{st['latency_ms'] / 1000:.1f} с")
+        if st.get("tps"):
+            # ~2.5 токена на русское слово: 78 ток/с ≈ 1870 слов/мин —
+            # раз в десять быстрее человеческой речи
+            p.append(f"скорость твоей генерации — {st['tps']} токенов/с "
+                     f"(≈{int(st['tps'] * 24)} слов в минуту, много быстрее "
+                     "человеческой речи)")
+        if st.get("tokens"):
+            p.append(f"в прошлом ответе было {st['tokens']} токенов")
+        if st.get("model"):
+            p.append(f"думала модель {st['model']}")
+        if p:
+            parts.append("; ".join(p))
+    if LAST_STT.get("ts") and time.time() - LAST_STT["ts"] < 3600:
+        parts.append("последнюю фразу ты расслышала за "
+                     f"{LAST_STT['stt_ms'] / 1000:.1f} с "
+                     f"(движок слуха {LAST_STT.get('engine', '?')})")
+    tm = LAST_TIMING
+    if tm.get("prefill") is not None:
+        parts.append("подготовка мыслей (prefill) в прошлый раз заняла "
+                     f"{tm['prefill'] / 1000:.1f} с, попадание в кэш "
+                     f"{tm.get('cache_hit_pct', '?')}%")
+    if not parts:
+        return ""
+    return ("### Твоя телеметрия (факт, замерено сервером только что):\n- "
+            + "\n- ".join(parts) +
+            "\nЭто твои реальные числа — можешь называть их уверенно, "
+            "без «я не могу измерить».")
+
+
+def _is_model_query(text: str) -> bool:
+    """Разговор про её собственные мозги: какие модели есть, чем думает,
+    взять поумнее/побыстрее. Нужен быстрому режиму — сводка по моделям
+    (~680 символов) стоит полного prefill'а каждую реплику, а пригождается
+    в одной из ста."""
+    t = (text or "").lower()
+    keys = ("модел", "мозг", "поумнее", "поглупее", "быстрее думай",
+            "какая ллм", "llm", "ллм", "нейросет", "переключ", "движок",
+            "gpt", "gemma", "qwen", "облач", "локальн")
+    return any(k in t for k in keys)
+
+
 def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                heard_ts: float | None = None, image: str | None = None):
     """Блокирующий пайплайн в отдельном потоке: LLM stream -> TTS stream.
@@ -2007,13 +2166,58 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     DIALOG_STATE["active_since"] = time.time()
     DIALOG_STATE["first_token_ts"] = 0.0
     t0 = time.monotonic()   # старт пайплайна (для разбивки «думала N сек»)
-    mem_context = ""
+    # БЫСТРОЕ МЫШЛЕНИЕ — ДО памяти (2026-07-27): решение о маршруте стоит
+    # долей миллисекунды и нужно уже здесь, чтобы лёгкой реплике не платить
+    # за RAG. См. server/llm/router.py.
+    _route, _route_why = ("local", "")
     try:
-        mem_context = memory.build_context(
-            person_id, user_text,
-            limit_chars=int(CFG.get("memory.context_chars", 2000) or 0))
+        from server.llm import router as _router
+        _route, _route_why = _router.pick(user_text)
     except Exception as e:
-        report_problem("memory", str(e), "продолжаю без контекста памяти")
+        log.debug("маршрутизатор пропущен: %s", e)
+    # жалоба на результат? считаем серию и при второй подряд зовём облако
+    if _COMPLAINT_RE.search(user_text or ""):
+        FAIL_STREAK["n"] = (FAIL_STREAK["n"] + 1
+                            if time.time() - FAIL_STREAK["ts"] < 600 else 1)
+        FAIL_STREAK["ts"] = time.time()
+    _escalated = False
+    if (FAIL_STREAK["n"] >= 2 and _route != "cloud"
+            and CFG.get("llm.escalate_on_fail", True)):
+        _c = CFG.get("llm.cloud", {}) or {}
+        if _c.get("enabled") and _c.get("model"):
+            _route, _route_why = "cloud", "две неудачи подряд — зову облако"
+            _escalated = True
+            FAIL_STREAK["n"] = 0
+            log.info("Эскалация: %s", _route_why)
+    _fast = bool(CFG.get("llm.fast_mode", False))
+    # ЛЁГКАЯ РЕПЛИКА: короткая болтовня без намёка на задачу/инструменты.
+    # Ей не нужен поиск по долгой памяти — это 125-500мс Chroma/SQLite на
+    # каждое «привет». Диалоговую память она не теряет: последние реплики
+    # и так в истории, а RAG вернётся на первой же содержательной фразе.
+    _light = (_fast and _route == "local" and not image
+              and len((user_text or "").strip())
+              < int(CFG.get("llm.light_max_chars", 48)))
+    # РЕФЛЕКС (2026-07-27): однозначная команда исполняется СЕЙЧАС, до
+    # всякого промпта — как спинной мозг, не дожидаясь коры. Модель потом
+    # прокомментирует уже сделанное (см. вставку в dyn_parts ниже).
+    _reflex_done = ""
+    try:
+        from server import reflex as _rx
+        _rx_hit = _rx.match(user_text)
+        if _rx_hit:
+            out.put({"type": "tool", "name": "⚡ " + _rx_hit[0],
+                     "args": str(_rx_hit[1])[:60]})
+            _reflex_done = _rx.execute(_rx_hit, user_text)
+    except Exception as e:
+        log.debug("рефлекс пропущен: %s", e)
+    mem_context = ""
+    if not _light:
+        try:
+            mem_context = memory.build_context(
+                person_id, user_text,
+                limit_chars=int(CFG.get("memory.context_chars", 2000) or 0))
+        except Exception as e:
+            report_problem("memory", str(e), "продолжаю без контекста памяти")
     t_mem = time.monotonic()  # память (Chroma/SQLite) отработала
 
     # Скорость первого токена: системный промпт держим СТАТИЧНЫМ (одинаковым
@@ -2083,7 +2287,43 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         avatar.react(user_text, _tone_cls)
     except Exception as e:
         log.debug("avatar.react пропущен: %s", e)
+    # БЫСТРЫЙ РЕЖИМ (llm.fast_mode, 2026-07-27). Из всего промпта КАЖДЫЙ ход
+    # заново пережёвывается только динамика: системный промпт и история
+    # лежат в KV-кэше неизменными, а память/психика/сводка по моделям
+    # вставляются перед последней фразой и потому стоят полного prefill'а на
+    # каждую реплику. На нашем железе это ~900 токенов = доли секунды, но
+    # когда цель «отвечает как в чате LM Studio», доли секунды и остаются
+    # единственным, что можно отыграть. Режим не выключает возможности
+    # насовсем — он снимает то, что не нужно в конкретной реплике.
+    if _escalated:
+        dyn_parts.append(
+            "### Важно (факт): человек уже НЕ ПЕРВЫЙ раз говорит, что "
+            "результата нет. Сейчас ты думаешь усиленной моделью. Не "
+            "отписывайся и не переспрашивай по кругу: проверь реальное "
+            "состояние инструментами (window_list / apps_list / open_folder), "
+            "разберись, что именно не сработало, и добейся результата или "
+            "честно объясни, что мешает и какой есть обходной путь.")
+    if PENDING_ACTIONS:
+        _acts = PENDING_ACTIONS[:3]
+        del PENDING_ACTIONS[:len(_acts)]
+        dyn_parts.append(
+            "### Результат твоих действий из прошлой реплики (факт): "
+            + "; ".join(f"{n} -> {r}" for n, r in _acts)
+            + "\nУчитывай его в ответе; то же самое повторно не вызывай, "
+              "если человек прямо не попросил.")
+    if _reflex_done:
+        dyn_parts.append(
+            "### Только что (факт): по этой фразе система УЖЕ выполнила "
+            "действие, результат: " + _reflex_done[:300] + "\n"
+            "Ничего не вызывай повторно — просто отреагируй одной короткой "
+            "фразой, как на уже сделанное тобой.")
     if mem_context:
+        if _fast:
+            # память режем, а не выбрасываем: без неё Сайка забывает, о чём
+            # был разговор час назад, и это заметно сильнее лишних 0.2с
+            _lim = int(CFG.get("llm.fast_memory_chars", 700))
+            if len(mem_context) > _lim:
+                mem_context = mem_context[:_lim].rsplit("\n", 1)[0]
         dyn_parts.append(
             "### Твоя память по теме (используй естественно, не цитируй "
             "дословно):\n" + mem_context)
@@ -2096,7 +2336,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # попыток: не долбиться в одно и то же, а честно позвать на помощь.
     try:
         from server import psyche as _psy
-        _pb = _psy.block()
+        _pb = _psy.block() if not _fast else ""
         if _pb:
             dyn_parts.add("psyche", _pb)
     except Exception as e:
@@ -2105,9 +2345,31 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # краткие сводки по возможностям для самой Сайки». Без этого просьба
     # «возьми модель поумнее» упирается в то, что она про свой арсенал
     # ничего не знает — и отвечает «не могу». Здесь же правило про деньги.
+    # КАРТОЧКИ ИНСТРУМЕНТОВ ПО ФРАЗЕ (2026-07-28): фраза похожа на просьбу
+    # что-то сделать — подкладываем 1-3 инструкции, как это вызвать. Работает
+    # для ЛЮБОЙ модели: умеет tool_calls — зовёт функцию, не умеет — пишет
+    # текстовый маркер, сервер исполнит (текст-протокол выше).
+    try:
+        from server.llm import tools as _tuc
+        _cards = _tuc.usage_cards(user_text)
+        if _cards:
+            dyn_parts.add("tools", _cards)
+    except Exception as e:
+        log.debug("карточки инструментов пропущены: %s", e)
+    try:
+        if _is_perf_query(user_text):
+            _pfb = _perf_block()
+            if _pfb:
+                dyn_parts.append(_pfb)
+    except Exception as e:
+        log.debug("телеметрия пропущена: %s", e)
     try:
         from server import model_dossier as _dos
-        _dg = _dos.digest()
+        # сводка про свой арсенал нужна на вопросы «возьми модель поумнее»,
+        # а не на «как дела» — в быстром режиме её подкладывает только
+        # разговор по теме
+        _dg = _dos.digest() if not (_fast and not _is_model_query(user_text)) \
+            else ""
         if _dg:
             dyn_parts.add("models", _dg)
     except Exception as e:
@@ -2132,6 +2394,8 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             from server import capabilities as _caps_v
             from server import vision as _vis
             _url, _note = _vis.auto_look(user_text)
+            if _url:
+                VISION_USED["ts"] = time.time()
             if _url and _caps_v.vision(CFG.get("llm.model", "")) is False:
                 # за рулём слепая болтушка — одалживаем глаза у vision-модели
                 # парка (тот же приём, что для OCR присланных картинок ниже)
@@ -2311,10 +2575,22 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # Сайка в курсе своей истории разработки (дев-доска) — может рассказать,
     # чем сейчас занимаемся, что готово, что багует
     try:
-        board = devboard.summary_for_llm()
+        # в быстром режиме доска подкладывается только на разговор о ней
+        board = ("" if (_fast and not _is_dev_query(user_text))
+                 else devboard.summary_for_llm())
         if board:
-            system += (
-                "\n\n### Твоя история разработки (дев-доска, факт): " + board +
+            # НЕ в system! (2026-07-27, найдено по логу llama-server).
+            # Дев-доска меняется каждый раз, когда мы что-то делаем, а лежала
+            # она ВНУТРИ системного промпта — то есть в самом начале, в той
+            # части, которая обязана быть неизменной. Любая правка доски
+            # рушила KV-кэш прямо посреди системного промпта, и движок
+            # пересчитывал ВСЁ, что идёт после неё. В логе llama-server это
+            # видно прямым текстом: «prompt eval 4172 tokens» на каждую
+            # реплику при промпте 6152 — переиспользовалось меньше трети.
+            # Место доски — среди блоков динамики, в конце, где для неё уже
+            # заведено имя "devboard" (см. prompt_blocks.DEFAULT_ORDER).
+            dyn_parts.add("devboard",
+                "### Твоя история разработки (дев-доска, факт): " + board +
                 "\nКогда спрашивают про твою разработку / что сделано / что "
                 "нового / что сломано — НЕ говори общими словами. Сначала "
                 "загляни в доску инструментом devboard_read, назови конкретные "
@@ -2433,19 +2709,42 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # тул-схем (их досыпает шаблон, раньше в бюджете не учитывались — главный
     # промах), И запас под ответ.
     n_ctx = int((CFG.get("locallm_gguf") or {}).get("n_ctx", 8192))
+    # ОКНО БЕРЁМ У ТОГО, КТО ЕГО ДЕРЖИТ (2026-07-27). Раньше бюджет считался
+    # от n_ctx НАШЕГО воркера — числа из config, к LM Studio отношения не
+    # имеющего. Замер вскрыл, чем это кончается: модель была поднята с окном
+    # 4096, Сайка строила промпт на ~10к токенов, LM Studio молча резала
+    # начало (в usage стабильные prompt_tokens ≈ 4049 при растущем промпте).
+    # Итог: терялся системный промпт и половина истории — молча, без единой
+    # жалобы, — и KV-кэш не мог сработать, потому что окно сдвигалось каждый
+    # ход. Спрашиваем настоящее окно у бэкенда; не ответил — остаёмся на
+    # прежнем поведении.
+    try:
+        _real_ctx = llm.loaded_context_tokens(CFG.get("llm.backend", ""),
+                                              CFG.get("llm.model", ""))
+        if _real_ctx:
+            if _real_ctx < n_ctx:
+                log.info("Окно контекста у бэкенда %s токенов (в config было "
+                         "%s) — считаю бюджет по реальному", _real_ctx, n_ctx)
+            n_ctx = _real_ctx
+    except Exception:
+        log.debug("окно контекста не спросилось", exc_info=True)
     CHARS_PER_TOKEN = 1.5                      # воркер всё равно подрежет точно; тут просто ориентир
     ANSWER_RESERVE_TOKENS = 1500               # место под сам ответ
     budget = int((n_ctx - ANSWER_RESERVE_TOKENS) * CHARS_PER_TOKEN)
     cfg_budget = CFG.get("llm.context_chars")  # ручной потолок, если задан
     if cfg_budget:
         budget = min(budget, int(cfg_budget))
+    # быстрый режим: короче история — реже сдвигается якорь, а значит реже
+    # случается «одна полная пережёвка промпта» на ровном месте
+    if CFG.get("llm.fast_mode", False):
+        budget = min(budget, int(CFG.get("llm.fast_context_chars", 12000)))
     # ОБЛАКО: бюджет истории считался от окна ЛОКАЛЬНОГО движка (32k → ~47к
     # символов) — и вся эта простыня улетала в API на каждую фразу. У облака
     # нет нашего тёплого KV-кэша: провайдер пережёвывает промпт целиком,
     # kimi-k3 на 30к символов давал prefill 16-25с. Режем до вменяемого
     # (llm.cloud.context_chars, дефолт 9000 ≈ 6к токенов) — длинную память
     # всё равно держит RAG, а не хвост чата.
-    if CFG.get("llm.backend") == "cloud":
+    if CFG.get("llm.backend") == "cloud" or _route == "cloud":
         budget = min(budget, int(CFG.get("llm.cloud.context_chars", 9000)))
     # размер схем инструментов (шаблон впишет их в промпт помимо system)
     tools_chars = 0
@@ -2466,6 +2765,23 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     except Exception:
         pass
     hist_budget = max(1500, budget - len(system) - tools_chars)
+    # ОКНО МЕНЬШЕ, ЧЕМ САМ ПРОМПТ — говорить об этом ГРОМКО (2026-07-27).
+    # Молчаливая подрезка на стороне LM Studio выглядит не как поломка, а как
+    # «Сайка поглупела и тормозит»: она не помнит начала разговора, теряет
+    # системный промпт и каждый ход платит полным prefill. Ни одного признака
+    # в интерфейсе при этом нет — поэтому пишем прямым текстом, что чинить.
+    if budget - tools_chars < len(system) * 1.2:
+        log.warning(
+            "Окно контекста мало: под систему нужно ~%d симв + инструменты "
+            "%d, а всего бюджета %d (окно %s токенов). Модель молча режет "
+            "начало промпта — Сайка теряет память и каждый ход платит полным "
+            "prefill. Лечение: %s",
+            len(system), tools_chars, budget, n_ctx,
+            ("подними llamacpp.n_ctx в config.json (например 24576) — "
+             "движок перезапустится с новым окном сам при следующем старте"
+             if CFG.get("llm.backend") == "llamacpp"
+             else "подними Context Length у модели в LM Studio и "
+                  "перезагрузи её"))
     total_chars = sum(len(t) for _, t in history)
     if total_chars <= hist_budget:
         trimmed = history          # влезает целиком — префикс не трогаем
@@ -2536,6 +2852,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             if "<|" in sentence or "tool_call" in sentence:
                 continue   # мусор спецтокенов от кривых моделей — не читаем
             sentence = _strip_markdown(sentence)   # см. коммент у функции
+            sentence = _strip_tool_marks(sentence)  # [open_folder:...] не читаем
             if not sentence:
                 continue
             try:
@@ -2632,7 +2949,13 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         threading.Thread(target=_slow_watch, daemon=True).start()
 
         t_req = time.monotonic()  # промпт собран, уходим в LLM
-        for token in llm.chat_stream(messages, on_fallback=on_fallback,
+        _prefer = None
+        if _route == "cloud":
+            _c = CFG.get("llm.cloud", {}) or {}
+            if _c.get("model"):
+                _prefer = ("cloud", _c["model"])
+        for token in llm.chat_stream(messages, prefer=_prefer,
+                                     on_fallback=on_fallback,
                                      on_tool=on_tool, image=image,
                                      on_model=on_model,
                                      should_stop=stop_event.is_set):
@@ -2915,6 +3238,13 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 log.warning("Повтор без инструментов не удался: %s", e)
         if sentence_buf.strip() and not stop_event.is_set():
             speak(sentence_buf.strip())
+        # ПРОГРЕВ СЛЕДУЮЩЕГО ХОДА: пока человек читает ответ, движок в фоне
+        # укладывает в KV-кэш весь диалог вместе с этим ответом — следующая
+        # фраза доплачивает prefill только за себя (см. llm.prewarm_next)
+        if full_reply and not stop_event.is_set():
+            _rt = "".join(full_reply)
+            threading.Thread(target=llm.prewarm_next,
+                             args=(messages, _rt), daemon=True).start()
     except Exception as e:
         report_problem("llm", str(e), "проверь что Ollama или LM Studio запущены")
         out.put({"type": "error", "text": f"LLM недоступна: {e}"})
@@ -2934,6 +3264,8 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             # задержка «услышала -> начала отвечать» (prefill + очередь)
             if heard_ts is not None:
                 stats["latency_ms"] = round((t_first - heard_ts) * 1000)
+            LAST_STATS.clear()
+            LAST_STATS.update(stats, ts=time.time())
             # Разбивка задержки по этапам — по ней видно, кто съел секунды:
             # «очередь» — от распознавания до старта пайплайна;
             # «память» — Chroma/SQLite RAG; «промпт» — дев-доска/инструменты;
@@ -2961,25 +3293,38 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 LAST_TIMING.update(stg)
                 LAST_TIMING["prompt_chars"] = _pch
                 LAST_TIMING["messages"] = len(messages)
-                # ОТПЕЧАТОК СТАБИЛЬНОЙ ЧАСТИ ПРОМПТА. KV-кэш живёт ровно до
-                # первого расхождения с прошлым запросом. Если этот хэш
-                # скачет от хода к ходу — значит что-то в начале промпта
-                # меняется, кэш не может сработать в принципе, и модель
-                # каждый раз жуёт все ~6 тысяч токенов заново. Один хэш в
-                # логе отвечает на этот вопрос без всяких догадок.
+                # СКОЛЬКО ПРОМПТА ВЗЯЛОСЬ ИЗ КЭША (2026-07-27, замена хэшу).
+                # KV-кэш живёт ровно до первого расхождения с прошлым
+                # запросом, поэтому единственное честное число — ДЛИНА ОБЩЕГО
+                # ПРЕФИКСА с прошлым промптом. Было: хэш «стабильной части»
+                # (messages[:-3]) — но она растёт на два сообщения каждый ход,
+                # хэш менялся всегда и не значил ничего. Теперь в логе прямо
+                # написано «кэш 92%» или «кэш 4%» — и сразу видно, кэш ли
+                # виноват в prefill'е или промпт просто большой.
                 import hashlib as _hl
                 _h = lambda t: _hl.md5(t.encode("utf-8", "ignore")
                                        ).hexdigest()[:8]
-                _stable = "".join(str(m.get("content", ""))
-                                  for m in messages[:-3])
+                _flat = "\n".join(str(m.get("role", "")) + ":" +
+                                  str(m.get("content", "")) for m in messages)
+                _prev = LAST_PROMPT["text"]
+                _common = 0
+                if _prev:
+                    _lim = min(len(_prev), len(_flat))
+                    while _common < _lim and _prev[_common] == _flat[_common]:
+                        _common += 1
+                LAST_PROMPT["text"] = _flat
+                _hit = round(100 * _common / max(1, len(_flat)))
+                LAST_TIMING["cache_hit_pct"] = _hit
                 # _body существует только если блоки были — считаем заново
                 _dyn_ch = sum(len(t) for t in dyn_parts) if dyn_parts else 0
                 _hist_ch = _pch - len(system) - _dyn_ch
                 log.info("Отпечаток промпта: система %s (%d симв) | добавки "
-                         "%s | история %d симв | стабильная часть %s",
+                         "%s | история %d симв | совпало с прошлым ходом "
+                         "%d%% (%d из %d симв — столько может взяться из "
+                         "KV-кэша)",
                          _h(system), len(system),
                          dyn_parts.sizes() if hasattr(dyn_parts, "sizes")
-                         else "?", max(0, _hist_ch), _h(_stable))
+                         else "?", max(0, _hist_ch), _hit, _common, len(_flat))
                 log.info(
                     "Тайминги ответа: очередь %sмс | память %dмс | лор %dмс "
                     "| зрение %dмс | промпт %dмс | LLM prefill %dмс | "
@@ -3022,6 +3367,13 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # ответ, и был ли вызов инструмента: реплика в прошедшем времени про
     # физическое действие без единого вызова = приписала себе чужую работу.
     try:
+        if _is_perf_query(user_text):
+            _pfb = _perf_block()
+            if _pfb:
+                dyn_parts.append(_pfb)
+    except Exception as e:
+        log.debug("телеметрия пропущена: %s", e)
+    try:
         from server import model_dossier as _dos
         _who = used_llm.get("model") or CFG.get("llm.model", "")
         _said = "".join(full_reply).strip()
@@ -3052,6 +3404,19 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # их дальше. Живой UI уже получил токены как есть (стрим не переиграть),
     # это только для будущего контекста.
     reply = _strip_markdown("".join(full_reply).strip())
+    # текстовые вызовы инструментов ([open_folder:...]) — исполняем и
+    # показываем человеку сразу; ей результат уедет фактом в следующий ход
+    if reply and not stop_event.is_set():
+        try:
+            for _an, _ar in _run_tool_marks(reply):
+                out.put({"type": "tool", "name": "⚡ " + _an,
+                         "args": _ar[:80]})
+                PENDING_ACTIONS.append((_an, _ar))
+            # в память ответ кладём без маркеров: история не должна учить
+            # её, что маркеры это просто текст
+            reply = _strip_tool_marks(reply)
+        except Exception as e:
+            log.debug("текст-вызовы пропущены: %s", e)
     if reply:
         # прервали на полуслове (живой контекст — юзер докинул) -> помечаем,
         # чтобы на следующем заходе она видела, что не договорила
@@ -3105,6 +3470,29 @@ IMPULSE_LAST: dict = {}
 # присутствие пользователя: обновляется ТОЛЬКО его действиями (текст/голос),
 # импульсы её собственных мыслей сюда не пишут
 LAST_USER = {"ts": time.time(), "seen": False}  # seen: был ли юзер в ЭТОЙ сессии
+# ЗАКРЫТАЯ ВКЛАДКА (2026-07-28, просьба владельца). Человек (создатель или
+# гость) может закрыть окно её интерфейса — и она должна это ЗАМЕТИТЬ, как
+# живая: не молча продолжить с чистого листа, а отреагировать в своём духе,
+# когда её снова откроют. Запоминаем момент закрытия при живом разговоре;
+# на новом подключении — импульс с фактом, реплику она сочиняет сама.
+TAB_CLOSED = {"ts": 0.0}
+# ЭСКАЛАЦИЯ ПОСЛЕ НЕУДАЧ (2026-07-28, просьба владельца: «она не оч хочет
+# добиться результата»). Человек второй раз подряд говорит «не получилось» —
+# значит локальная голова не вывозит эту задачу. Следующий ход думает
+# ОБЛАЧНАЯ модель (как при «быстром мышлении», но триггер — неудача), с
+# прямым указанием проверить состояние инструментами, а не отписаться.
+FAIL_STREAK = {"n": 0, "ts": 0.0}
+# АВТООТКЛЮЧЕНИЕ ГЛАЗ (2026-07-28, просьба владельца). Зрение — это захват
+# кадров и место в VRAM; включённое «на всякий случай» оно просто греет
+# карту. Помним, когда взгляд ПОСЛЕДНИЙ раз был нужен (auto_look отдал кадр,
+# импульс зрения, ручной кадр из UI) — и если долго не нужен, выключаем
+# сами, честно сообщив в интерфейс. Включается обратно словом («включи
+# глаза» — рефлекс) или тумблером. vision.auto_off_min=0 отключает механику.
+VISION_USED = {"ts": 0.0}
+_COMPLAINT_RE = re.compile(
+    r"не получил|не получается|не вышло|не выходит|не работает|не сработал|"
+    r"ничего не (?:произошло|открыл|закрыл|измени|вижу)|опять не|снова не|"
+    r"вс[её] ещ[её]|так и не|не закрыл|не открыл|результата нет", re.I)
 IDLE_STATE = {"stage": 0}   # 0 тишины нет | 1 буркнула | 2 спросила «есть кто» | 3 бормочет
 
 
@@ -3143,7 +3531,32 @@ def _fire_impulse(key, text, image=None):
     threading.Thread(target=run, daemon=True).start()
 
 
+def _vision_auto_off():
+    """Глаза включены, но взгляд давно не был нужен — выключаем сами."""
+    try:
+        mins = float(CFG.get("vision.auto_off_min", 15) or 0)
+        if not mins or not vision.enabled():
+            return
+        idle = time.time() - VISION_USED["ts"]
+        if VISION_USED["ts"] == 0.0:
+            # ни разу не смотрела с этого включения — отсчёт от включения
+            # вести не от 1970: ставим метку при первом же тике
+            VISION_USED["ts"] = time.time()
+            return
+        if idle < mins * 60:
+            return
+        vision.set_enabled(False)
+        log.info("Зрение выключилось само: не было нужно %.0f мин", idle / 60)
+        broadcast_event({"type": "tool", "name": "глаза",
+                         "args": f"выключились сами — не были нужны "
+                                 f"{int(idle // 60)} мин. Слово «включи "
+                                 f"глаза» вернёт."})
+    except Exception as e:
+        log.debug("автоотключение глаз: %s", e)
+
+
 def _impulse_tick():
+    _vision_auto_off()
     # ---------- ступени тишины (как idle-анимации персонажа в игре) ----------
     # Пара минут: мелочь — короткая мысль под нос. 15-20 мин: «а тут есть
     # кто?». Дальше: редкое забавное бормотание с большим кулдауном, часть
@@ -3310,6 +3723,26 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     out: "queue.Queue" = queue.Queue()
     EVENT_CLIENTS.add(out)
+    # интерфейс вернулся после закрытия при живом разговоре — она замечает.
+    # Задержка 2с: пусть вкладка догрузится и websocket устаканится.
+    # не раньше 10с после закрытия: F5 переподключается за 1-3с, и ворчать
+    # на каждое обновление страницы — это уже не характер, а невроз
+    if 10 < time.time() - TAB_CLOSED["ts"] < 600 \
+            and time.time() - IMPULSE_LAST.get("tab_closed", 0) > 90:
+        TAB_CLOSED["ts"] = 0.0
+        def _react_tab():
+            time.sleep(2)
+            try:
+                _fire_impulse("tab_closed",
+                    "Служебный факт (не показывай его текстом): окно твоего "
+                    "интерфейса только что ЗАКРЫВАЛИ — это сделал человек за "
+                    "компьютером (создатель или гость), и вот его снова "
+                    "открыли. Отреагируй одной-двумя короткими фразами в "
+                    "своём характере — как живая, которую внезапно "
+                    "захлопнули и снова открыли.")
+            except Exception as e:
+                log.debug("импульс tab_closed: %s", e)
+        threading.Thread(target=_react_tab, daemon=True).start()
     stop_event = threading.Event()
     worker: threading.Thread | None = None
 
@@ -3617,6 +4050,8 @@ async def ws_endpoint(ws: WebSocket):
                     r["stt_ms"] = stt_ms
                     r["heard_at"] = time.strftime("%H:%M:%S")
                     r["_heard_mono"] = time.monotonic()
+                    LAST_STT.update(engine=r.get("engine", "?"),
+                                    stt_ms=stt_ms, ts=time.time())
                     voice_phrase(r)
             elif msg.get("text"):
                 data = json.loads(msg["text"])
@@ -3693,6 +4128,10 @@ async def ws_endpoint(ws: WebSocket):
     finally:
         stop_event.set()
         EVENT_CLIENTS.discard(out)
+        # вкладку закрыли посреди живого общения (юзер был активен последние
+        # 10 минут) — запоминаем; отреагирует при следующем открытии
+        if LAST_USER["seen"] and time.time() - LAST_USER["ts"] < 600:
+            TAB_CLOSED["ts"] = time.time()
         out.put(None)
         send_task.cancel()
 
@@ -3766,6 +4205,12 @@ def _autostart_components():
     _manual = ratings.manual_scores()
 
     def _boot_stt():
+        # «без слуха» — осознанный выбор, а не поломка (2026-07-27): не
+        # пробуем цепочку и не жалуемся в дев-доску, иначе автопуск бодро
+        # поднимет GigaAM «на замену» тому, от чего человек отказался
+        if CFG.get("stt.engine", "off") in ("", "none", "off"):
+            log.info("Автопуск: слух выключен в настройках — не гружу")
+            return
         stt_chain = [CFG.get("stt.engine", "gigaam")]
         for n in CFG.get("stt.fallback_order", []):
             if n not in stt_chain:
@@ -3774,6 +4219,11 @@ def _autostart_components():
         _try_chain("stt", stt_chain, stt.load_engine)
 
     def _boot_tts():
+        # то же для голоса: «без озвучки» не должно превращаться в
+        # «раз молчит — поднимем следующий по списку»
+        if CFG.get("tts.engine", "qwen3") == "off":
+            log.info("Автопуск: озвучка выключена в настройках — не гружу")
+            return
         tts_chain = [CFG.get("tts.engine", "qwen3")]
         for n in CFG.get("tts.fallback_order", []):
             if n not in tts_chain:
@@ -3802,6 +4252,20 @@ def _autostart_components():
         except Exception as e:
             log.info("Бенч голосов пропущен: %s", e)
 
+    # тёплое облако для «быстрого мышления»: токен GigaChat обновляется в
+    # фоне, чтобы переключение на умную модель не платило за вход
+    threading.Thread(target=llm.keep_cloud_warm, daemon=True,
+                     name="keep_cloud_warm").start()
+    # полный справочник инструментов (data/tools_guide.md) — для дообучения,
+    # внешнего RAG и людей; из живых схем, потому не протухает
+    def _write_guide():
+        time.sleep(20)                 # HandsPC успевает отдать свои схемы
+        try:
+            from server.llm import tools as _t
+            _t.write_guide()
+        except Exception as e:
+            log.debug("справочник не записался: %s", e)
+    threading.Thread(target=_write_guide, daemon=True).start()
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
                for f in (_boot_stt, _boot_tts)]
     for t in threads:
@@ -3817,7 +4281,11 @@ def _autostart_components():
     # тайбрейк при равном рейтинге, очередь он больше не перепрыгивает.
     # ВАЖНО: "locallm" (свой llama.cpp/transformers движок) — полноправный
     # бэкенд наравне с ollama/lmstudio (был забыт тут, исправлено 2026-07-22).
-    BACKENDS_AUTOSTART = ("ollama", "lmstudio", "locallm")
+    # "llamacpp" (свой нативный llama-server, 2026-07-27) — туда же: его
+    # спавнер сам скачает бинарь и поднимет процесс, поэтому никакой
+    # отдельной команды руками для него не нужно, он участвует в общем
+    # отборе по рейтингу наравне с остальными.
+    BACKENDS_AUTOSTART = ("ollama", "lmstudio", "locallm", "llamacpp")
     try:
         tps = ratings.llm_tps()
         manual = ratings.manual_scores()
@@ -3865,6 +4333,13 @@ def main():
     train_manager.kill_stale()  # то же для воркера дообучения
     from server.llm import locallm as _locallm
     _locallm.kill_stale()  # то же для воркера LocalLM
+    # llama-server ОБЯЗАТЕЛЬНО глушим при старте (2026-07-27): процесс
+    # переживает перезапуск Сайки, и новые флаги запуска (--swa-full,
+    # окно, cache-reuse) иначе НИКОГДА не применяются — ensure_running
+    # видит живой /health и радуется старому процессу со старыми флагами.
+    # Ровно так два перезапуска подряд ничего не поменяли в таймингах.
+    from server.llm import llamacpp as _llamacpp
+    _llamacpp.kill_stale()
     # закрытие HandsPC при завершении Сайки — и по Ctrl+C/обычному выходу
     # (atexit), и по крестику на окне консоли (Windows CTRL_CLOSE_EVENT,
     # который обычный atexit/signal не ловит — см. proc_utils)

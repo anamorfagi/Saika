@@ -46,6 +46,17 @@ def _plant(node, path, value):
 _MISSING = object()
 
 
+def _deep_merge(base: dict, over: dict) -> dict:
+    """base, поверх — over; словари сливаются вглубь, остальное замещается."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 class Config:
     def __init__(self):
         self._data = {}
@@ -68,7 +79,22 @@ class Config:
             self._data = data
 
     def save(self):
+        """Сохранение БЕЗ затирания чужих правок (2026-07-27, третий раз
+        те же грабли). save() писал ВЕСЬ объект из памяти процесса — и любая
+        правка файла на диске, сделанная, пока Сайка работает (руками, из
+        другого чата, скриптом), жила ровно до первого CFG.set() о чём-нибудь
+        постороннем: 2026-07-22 так затёрся ручной фикс, 2026-07-27 —
+        fast_mode, маршрутизатор облака и переезд на свой движок разом.
+        Теперь диск — БАЗА, память накладывается ПОВЕРХ: ключи, добавленные
+        на диске и неизвестные этому процессу, переживают сохранение. Ключи,
+        которые процесс знает, побеждают — это его законные настройки."""
         with _lock:
+            base = {}
+            try:
+                base = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            self._data = _deep_merge(base, self._data)
             CONFIG_PATH.write_text(
                 json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
@@ -78,6 +104,10 @@ class Config:
         """Слепок машинных настроек рядом, в файл вне git. Пишем ТОЛЬКО те
         ключи, что реально есть в конфиге, — чтобы не плодить пустышки."""
         local = {}
+        try:  # чужие ключи в local-файле не выбрасываем (та же логика, что в save)
+            local = json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
         for path in LOCAL_KEYS:
             val = _dig(self._data, path, _MISSING)
             if val is not _MISSING:

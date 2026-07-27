@@ -33,9 +33,40 @@ def roots() -> list[Path]:
     return out
 
 
-def _resolve(user_path: str) -> Path:
+# СИСТЕМНЫЕ ПУТИ (2026-07-28, просьба владельца). files.roots задаёт, КУДА
+# пускать, но если владелец однажды разрешит широкий корень (C:\ целиком),
+# «удали лишнее» не должно уметь снести Windows. Каталоги ниже закрыты для
+# ИЗМЕНЕНИЙ всегда, независимо от roots; читать/смотреть — можно, это
+# безопасно и нужно для «что у меня в системе».
+def _danger_roots() -> list:
+    import os as _o
+    out = []
+    for env, fb in (("SystemRoot", r"C:\Windows"),
+                    ("ProgramFiles", r"C:\Program Files"),
+                    ("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                    ("ProgramData", r"C:\ProgramData")):
+        try:
+            out.append(Path(_o.environ.get(env, fb)).resolve())
+        except Exception:
+            pass
+    return out
+
+
+def _deny_if_dangerous(p: Path):
+    for r in _danger_roots():
+        if p == r or r in p.parents:
+            raise PermissionError(
+                f"отказ: {p} — системный путь, менять там что-либо опасно "
+                "для Windows. Читать можно, менять — нет.")
+    low = str(p).lower()
+    if "$recycle.bin" in low or "system volume information" in low:
+        raise PermissionError("отказ: служебная область диска")
+
+
+def _resolve(user_path: str, write: bool = False) -> Path:
     """Путь пользователя -> абсолютный, строго внутри разрешённых корней.
-    Относительный путь трактуем от первого корня."""
+    Относительный путь трактуем от первого корня. write=True — операция
+    меняет диск, для неё системные каталоги закрыты всегда."""
     if not user_path:
         raise PermissionError("пустой путь")
     p = Path(str(user_path).strip().strip('"'))
@@ -47,6 +78,8 @@ def _resolve(user_path: str) -> Path:
     p = p.resolve()
     for r in rs:
         if p == r or r in p.parents:
+            if write:
+                _deny_if_dangerous(p)
             return p
     raise PermissionError(
         f"путь вне разрешённых папок ({', '.join(str(r) for r in rs)})")
@@ -82,20 +115,20 @@ def fs_read(path: str) -> str:
 
 
 def fs_write(path: str, text: str = "") -> str:
-    p = _resolve(path)
+    p = _resolve(path, write=True)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text or "", encoding="utf-8")
     return f"записала {p} ({len(text or '')} символов)"
 
 
 def fs_mkdir(path: str) -> str:
-    p = _resolve(path)
+    p = _resolve(path, write=True)
     p.mkdir(parents=True, exist_ok=True)
     return f"папка готова: {p}"
 
 
 def fs_rename(path: str, new_name: str) -> str:
-    p = _resolve(path)
+    p = _resolve(path, write=True)
     if not p.exists():
         return f"нет такого пути: {p}"
     if any(ch in new_name for ch in r'\/:*?"<>|'):
@@ -106,8 +139,8 @@ def fs_rename(path: str, new_name: str) -> str:
 
 
 def fs_move(src: str, dst: str) -> str:
-    s = _resolve(src)
-    d = _resolve(dst)
+    s = _resolve(src, write=True)
+    d = _resolve(dst, write=True)
     if not s.exists():
         return f"нет такого пути: {s}"
     if d.is_dir():
@@ -119,7 +152,7 @@ def fs_move(src: str, dst: str) -> str:
 
 def fs_delete(path: str) -> str:
     """Не удаляем безвозвратно — переносим в _trash внутри корня."""
-    p = _resolve(path)
+    p = _resolve(path, write=True)
     if not p.exists():
         return f"нет такого пути: {p}"
     root = next(r for r in roots() if p == r or r in p.parents)

@@ -26,6 +26,16 @@ def _lmstudio_url():
     return CFG.get("llm.lmstudio_url", "http://127.0.0.1:1234").rstrip("/")
 
 
+def _llamacpp_url():
+    """Свой llama-server (server/llm/llamacpp.py). Адрес — настройкой, чтобы
+    движок можно было унести на другую машину, не трогая код."""
+    u = CFG.get("llamacpp.url", "")
+    if u:
+        return u.rstrip("/")
+    from server.llm import llamacpp
+    return llamacpp.base_url()
+
+
 def _locallm_url():
     """Свой воркер LocalLM (workers/locallm_worker.py) — OpenAI-совместимый,
     как LM Studio, только модель живёт прямо в проекте (без Ollama/LM Studio)."""
@@ -153,9 +163,49 @@ def save_cloud_key(key: str, provider: str | None = None):
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# СПИСОК МОДЕЛЕЙ — В КЭШ (2026-07-27). list_models() опрашивает по сети ВСЕ
+# бэкенды: Ollama, два эндпоинта LM Studio, свой воркер. На каждую реплику
+# он зовётся дважды (сам по себе и изнутри _pick_model), плюс loaded_models()
+# — это под десяток localhost-запросов ПЕРЕД тем, как уйти в модель, и все
+# они лежат внутри замеряемого «prefill». Пока все бэкенды подняты, это
+# миллисекунды; стоит одному из них быть закрытым, но с висящим портом (или
+# просто задуматься) — и каждый такой запрос ждёт свой таймаут.
+# Список моделей меняется редко: держим его несколько секунд.
+_MODELS_CACHE: dict = {"t": 0.0, "val": None}
+
+# ПАМЯТЬ О МЁРТВЫХ ПОРТАХ (2026-07-28). Симметричные грабли дважды за день:
+# утром неустановленный LocalLM стоил 2с на каждую реплику, вечером владелец
+# закрыл LM Studio (она больше не нужна — мозги на своём движке), и опросы
+# ЕЁ мёртвого порта стали жечь по 3с таймаута на каждый из двух эндпоинтов.
+# Файрвол Windows на закрытом порту молча ест SYN — «отказа» не приходит,
+# запрос честно ждёт весь таймаут. Правило: порт не ответил — не трогаем его
+# N секунд, потом пробуем снова (вернувшаяся программа обнаружится за минуту).
+_DOWN: dict = {}
+
+
+def _down(key: str) -> bool:
+    return time.time() < _DOWN.get(key, 0)
+
+
+def _mark_down(key: str):
+    _DOWN[key] = time.time() + float(CFG.get("llm.down_retry_s", 60))
+
+
+def _mark_up(key: str):
+    _DOWN.pop(key, None)
+
+
+def invalidate_models_cache():
+    _MODELS_CACHE["val"] = None
+
+
 def list_models() -> list[dict]:
     """Объединённый список моделей обоих бэкендов: [{backend, name, size}].
     size (байты) нужен UI для индикатора нагрузки на систему."""
+    ttl = float(CFG.get("llm.models_cache_s", 5) or 0)
+    if ttl and _MODELS_CACHE["val"] is not None \
+            and time.time() - _MODELS_CACHE["t"] < ttl:
+        return list(_MODELS_CACHE["val"])
     out = []
     # эвристика зрения по имени для Ollama (там нет поля capabilities)
     vhint = ("llava", "vision", "gemma3", "gemma-3", "gemma4", "gemma-4",
@@ -163,7 +213,10 @@ def list_models() -> list[dict]:
              "moondream", "bakllava", "pixtral", "mllama", "-vl")
     rhint = ("r1", "qwq", "reason", "thinking", "deepseek-r")
     try:
+        if _down("ollama"):
+            raise ConnectionError("порт недавно молчал")
         r = requests.get(_ollama_url() + "/api/tags", timeout=3)
+        _mark_up("ollama")
         for m in r.json().get("models", []):
             nm = m["name"]
             low = nm.lower()
@@ -171,12 +224,17 @@ def list_models() -> list[dict]:
                         "caps": {"vision": any(h in low for h in vhint),
                                  "tools": False,
                                  "reasoning": any(h in low for h in rhint)}})
+    except ConnectionError:
+        pass
     except Exception as e:
+        _mark_down("ollama")
         log.debug("ollama offline: %s", e)
     # LM Studio: сперва REST API v1 — там есть size_bytes (для индикатора веса),
     # если версия старая и его нет, откатываемся на OpenAI-совместимый /v1/models
-    lm_ok = False
+    lm_ok = _down("lmstudio")   # молчал недавно — не пробуем ни один эндпоинт
     try:
+        if lm_ok:
+            raise ConnectionError("порт недавно молчал")
         r = requests.get(_lmstudio_url() + "/api/v1/models", timeout=3)
         r.raise_for_status()
         for m in r.json().get("models", []):
@@ -190,15 +248,20 @@ def list_models() -> list[dict]:
                                  "tools": bool(caps.get("trained_for_tool_use")),
                                  "reasoning": bool(caps.get("reasoning"))}})
         lm_ok = True
+        _mark_up("lmstudio")
+    except ConnectionError:
+        pass
     except Exception as e:
         log.debug("lmstudio REST v1 unavailable: %s", e)
     if not lm_ok:
         try:
             r = requests.get(_lmstudio_url() + "/v1/models", timeout=3)
+            _mark_up("lmstudio")
             for m in r.json().get("data", []):
                 out.append({"backend": "lmstudio", "name": m["id"],
                             "size": None})
         except Exception as e:
+            _mark_down("lmstudio")
             log.debug("lmstudio offline: %s", e)
     # своя LocalLM: показываем, если окружение установлено ИЛИ она выбрана
     # основным бэкендом (тогда спавнер сам поставит окружение при первом
@@ -212,6 +275,19 @@ def list_models() -> list[dict]:
                                  "reasoning": True}})
     except Exception as e:
         log.debug("locallm unavailable: %s", e)
+    # свой llama-server: показываем, если бинарь скачан ИЛИ он выбран
+    # основным бэкендом (тогда спавнер поставит его при первом запросе)
+    try:
+        from server.llm import llamacpp
+        if llamacpp.installed() or CFG.get("llm.backend") == "llamacpp":
+            out.append({"backend": "llamacpp",
+                        "name": (CFG.get("llamacpp.model")
+                                 or CFG.get("llm.model", "local")),
+                        "size": None,
+                        "caps": {"vision": False, "tools": True,
+                                 "reasoning": True}})
+    except Exception as e:
+        log.debug("llamacpp unavailable: %s", e)
     # ОБЛАЧНЫЕ: показываем ВСЕ настроенные, а не только активную. Раньше в
     # списке была одна — та, что записана в llm.cloud прямо сейчас, — и
     # выглядело это так, будто прежние «куда-то исчезли».
@@ -223,61 +299,154 @@ def list_models() -> list[dict]:
                     "current": (e["base_url"], e["model"]) == cur,
                     "caps": {"vision": False, "tools": True,
                              "reasoning": False}})
+    _MODELS_CACHE.update(t=time.time(), val=list(out))
     return out
+
+
+# кэш как у list_models и по той же причине (2026-07-27): loaded_models()
+# зовётся перед КАЖДОЙ репликой, а внутри — сетевые опросы всех бэкендов.
+# Замер поймал ровно её: «загруженные 2000мс» на каждый ответ — это проба
+# /health НЕУСТАНОВЛЕННОГО LocalLM выедала свой таймаут 2с целиком (порт
+# мёртв, а файрвол Windows молча ест SYN вместо мгновенного отказа).
+_LOADED_CACHE: dict = {"t": 0.0, "val": None}
 
 
 def loaded_models() -> list[str]:
     """Модели, реально сидящие в памяти: Ollama — /api/ps,
     LM Studio — /api/v0/models (поле state)."""
+    ttl = float(CFG.get("llm.models_cache_s", 5) or 0)
+    if ttl and _LOADED_CACHE["val"] is not None \
+            and time.time() - _LOADED_CACHE["t"] < ttl:
+        return list(_LOADED_CACHE["val"])
     out = []
     try:
-        r = requests.get(_ollama_url() + "/api/ps", timeout=3)
-        for m in r.json().get("models", []):
-            name = m.get("name") or m.get("model")
-            if name:
-                out.append(name)
+        if not _down("ollama"):
+            r = requests.get(_ollama_url() + "/api/ps", timeout=3)
+            for m in r.json().get("models", []):
+                name = m.get("name") or m.get("model")
+                if name:
+                    out.append(name)
+    except Exception:
+        _mark_down("ollama")
+    try:
+        if not _down("lmstudio"):
+            r = requests.get(_lmstudio_url() + "/api/v0/models", timeout=3)
+            for m in r.json().get("data", []):
+                if m.get("state") == "loaded" and m.get("id"):
+                    out.append(m["id"])
+    except Exception:
+        _mark_down("lmstudio")
+    try:
+        # мёртвый порт не опрашиваем вовсе: нет окружения — нечего спрашивать
+        from server.llm import locallm
+        if locallm.installed():
+            r = requests.get(_locallm_url() + "/health", timeout=2)
+            if r.ok and r.json().get("model_loaded"):
+                out.append(locallm.model_name())
     except Exception:
         pass
     try:
-        r = requests.get(_lmstudio_url() + "/api/v0/models", timeout=3)
-        for m in r.json().get("data", []):
-            if m.get("state") == "loaded" and m.get("id"):
-                out.append(m["id"])
+        from server.llm import llamacpp
+        if llamacpp.installed():
+            r = requests.get(_llamacpp_url() + "/v1/models", timeout=2)
+            if r.ok:
+                out.append(CFG.get("llamacpp.model")
+                           or CFG.get("llm.model", "local"))
     except Exception:
         pass
-    try:
-        r = requests.get(_locallm_url() + "/health", timeout=2)
-        if r.ok and r.json().get("model_loaded"):
-            from server.llm import locallm
-            out.append(locallm.model_name())
-    except Exception:
-        pass
+    _LOADED_CACHE.update(t=time.time(), val=list(out))
     return out
+
+
+# СКОЛЬКО КОНТЕКСТА РЕАЛЬНО ЗАГРУЖЕНО (2026-07-27).
+# Замер вскрыл главное: у Сайки промпт ~10к токенов, а модель в LM Studio
+# была загружена с окном 4096 — и LM Studio МОЛЧА резала начало промпта
+# (usage стабильно показывал prompt_tokens ≈ 4049 при промпте вдвое больше).
+# Отсюда сразу две беды: (1) Сайка теряла системный промпт и половину
+# истории, не подавая виду; (2) KV-кэш не мог сработать в принципе — окно
+# каждый ход сдвигается, префикс не совпадает, и каждая фраза стоила полного
+# prefill. Гадать об этом нельзя — спрашиваем у самой LM Studio.
+# Ответ кэшируем: это горячий путь, лишний HTTP на каждую фразу не нужен.
+_CTX_CACHE: dict = {"t": 0.0, "val": {}}
+_CTX_TTL_S = 120
+
+
+def loaded_context_tokens(backend: str, model: str) -> int:
+    """Окно контекста загруженной модели в токенах. 0 — не удалось узнать."""
+    if backend == "llamacpp":
+        # свой сервер отвечает честно и сразу: /props отдаёт настройки, с
+        # которыми модель РЕАЛЬНО поднята, а не то, что мы просили в конфиге
+        try:
+            r = requests.get(_llamacpp_url() + "/props", timeout=3)
+            g = (r.json() or {}).get("default_generation_settings") or {}
+            return int(g.get("n_ctx") or 0)
+        except Exception:
+            return int((CFG.get("llamacpp", {}) or {}).get("n_ctx", 0) or 0)
+    if backend != "lmstudio":
+        return 0                       # у Ollama окно задаётся нами в options
+    now = time.time()
+    if now - _CTX_CACHE["t"] > _CTX_TTL_S:
+        vals = {}
+        try:
+            if _down("lmstudio"):
+                raise ConnectionError("порт недавно молчал")
+            r = requests.get(_lmstudio_url() + "/api/v0/models", timeout=3)
+            for m in r.json().get("data", []):
+                if not m.get("id"):
+                    continue
+                # loaded_context_length — то, с чем модель РЕАЛЬНО поднята
+                # (ползунок Context Length в LM Studio); max_context_length —
+                # потолок модели. Нас интересует первое.
+                n = (m.get("loaded_context_length")
+                     or m.get("context_length")
+                     or m.get("max_context_length") or 0)
+                if n:
+                    vals[m["id"]] = int(n)
+        except Exception as e:
+            log.debug("окно контекста LM Studio не спросилось: %s", e)
+        _CTX_CACHE["val"] = vals or _CTX_CACHE["val"]
+        _CTX_CACHE["t"] = now
+    return int(_CTX_CACHE["val"].get(model, 0))
 
 
 def _loaded_with_backend() -> list[tuple]:
     """Список реально загруженных локальных моделей с бэкендом: [(backend,name)]."""
     out = []
     try:
-        r = requests.get(_ollama_url() + "/api/ps", timeout=3)
-        for m in r.json().get("models", []):
-            n = m.get("name") or m.get("model")
-            if n:
-                out.append(("ollama", n))
+        if not _down("ollama"):
+            r = requests.get(_ollama_url() + "/api/ps", timeout=3)
+            for m in r.json().get("models", []):
+                n = m.get("name") or m.get("model")
+                if n:
+                    out.append(("ollama", n))
     except Exception:
-        pass
+        _mark_down("ollama")
     try:
-        r = requests.get(_lmstudio_url() + "/api/v0/models", timeout=3)
-        for m in r.json().get("data", []):
-            if m.get("state") == "loaded" and m.get("id"):
-                out.append(("lmstudio", m["id"]))
+        if not _down("lmstudio"):
+            r = requests.get(_lmstudio_url() + "/api/v0/models", timeout=3)
+            for m in r.json().get("data", []):
+                if m.get("state") == "loaded" and m.get("id"):
+                    out.append(("lmstudio", m["id"]))
     except Exception:
-        pass
+        _mark_down("lmstudio")
     try:
         r = requests.get(_locallm_url() + "/health", timeout=2)
         if r.ok and r.json().get("model_loaded"):
             from server.llm import locallm
             out.append(("locallm", locallm.model_name()))
+    except Exception:
+        pass
+    # свой llama-server (2026-07-27): без этой записи keep_only_one не видел
+    # его в списке «кто в памяти» — при переключении на другую модель наш
+    # движок оставался жить со своей копией, и в VRAM висели две больших LLM
+    # одновременно (ровно то, от чего keep_only_one и должен защищать)
+    try:
+        from server.llm import llamacpp
+        if llamacpp.installed():
+            r = requests.get(_llamacpp_url() + "/v1/models", timeout=2)
+            if r.ok:
+                out.append(("llamacpp", CFG.get("llamacpp.model")
+                            or CFG.get("llm.model", "local")))
     except Exception:
         pass
     return out
@@ -316,10 +485,63 @@ def switch_model(backend: str, model: str) -> dict:
     отдавался голый bool, и молчаливый провал выгрузки старой модели (см.
     unload_others) никак не долетал до UI/чата."""
     unload_failed = []
+    invalidate_models_cache()   # состав загруженного сейчас изменится
+    _LOADED_CACHE["val"] = None
     if backend != "cloud" and CFG.get("llm.keep_only_one", True):
         unload_failed = unload_others(backend, model)
     ok = warmup(backend, model)
     return {"ok": ok, "unload_failed": unload_failed}
+
+
+def keep_cloud_warm():
+    """«Облако запущено одновременно» (2026-07-27). Запущенного процесса у
+    облака не бывает — но бывает холодный вход: у GigaChat это OAuth-токен
+    (живёт 30 минут), и без прогрева ПЕРВАЯ настоящая задача платила бы
+    лишние секунды за его получение. Держим токен вечно тёплым: обновляем
+    в фоне до истечения. Остальным провайдерам греть нечего — вход по
+    статичному ключу, а постоянная HTTP-сессия и так живёт.
+    Зовётся фоновым потоком из автопуска, только при включённом
+    маршрутизаторе — без него облако может вообще не использоваться."""
+    while True:
+        try:
+            if CFG.get("llm.router.enabled", False):
+                c = _cloud()
+                if c["enabled"] and c["key"] and _is_gigachat(c["base_url"]):
+                    _gigachat_token(c["key"])
+        except Exception as e:
+            log.debug("прогрев облака: %s", e)
+        time.sleep(20 * 60)          # токен живёт 30 мин — обновляем за 10 до
+
+
+def prewarm_next(messages: list, reply_text: str):
+    """ПРОГРЕВ СЛЕДУЮЩЕГО ХОДА (2026-07-27, гонка за <0.1с «обдумывания»).
+
+    Сразу после того как Сайка договорила, отправляем движку ВЕСЬ диалог
+    вместе с её свежим ответом и max_tokens=1. Пока человек читает и думает,
+    что сказать, сервер уже уложил в KV-кэш всё, включая последний обмен
+    репликами. Следующая фраза человека доплачивает prefill только за себя
+    и блок динамики — это десятки миллисекунд, а не сотни.
+
+    Это того же рода приём, что prefetch в браузерах: работа делается в
+    паузе, которая всё равно случится. Стоимость — один короткий запрос к локальному
+    серверу в фоне; облаку такое не шлём (там это деньги)."""
+    backend = CFG.get("llm.backend", "")
+    if backend not in ("llamacpp", "lmstudio", "locallm"):
+        return
+    if not CFG.get("llm.prewarm_next", True):
+        return
+    try:
+        url = {"llamacpp": _llamacpp_url, "lmstudio": _lmstudio_url,
+               "locallm": _locallm_url}[backend]()
+        body = {"model": CFG.get("llm.model", ""),
+                "messages": list(messages) + [
+                    {"role": "assistant", "content": reply_text or "…"}],
+                "max_tokens": 1, "stream": False, "cache_prompt": True,
+                "chat_template_kwargs": {"enable_thinking": False}}
+        _HTTP.post(url + "/v1/chat/completions", json=body, timeout=120)
+        log.debug("KV-кэш прогрет следующим ходом")
+    except Exception as e:
+        log.debug("прогрев следующего хода пропущен: %s", e)
 
 
 def prewarm_context(backend: str, model: str, system_text: str):
@@ -334,6 +556,8 @@ def prewarm_context(backend: str, model: str, system_text: str):
             url = _locallm_url()
         elif backend == "lmstudio":
             url = _lmstudio_url()
+        elif backend == "llamacpp":
+            url = _llamacpp_url()
         else:
             return
         requests.post(url + "/v1/chat/completions",
@@ -358,6 +582,18 @@ def warmup(backend: str, model: str) -> bool:
             requests.post(_ollama_url() + "/api/generate",
                           json={"model": model, "prompt": "",
                                 "keep_alive": CFG.get("llm.keep_alive", "30m")},
+                          timeout=900)
+        elif backend == "llamacpp":
+            from server.llm import llamacpp
+            st = llamacpp.ensure_running()
+            if st.get("error"):
+                raise LLMError(st["error"])
+            if st.get("installing"):
+                return False           # ещё качается — грелка не при чём
+            requests.post(_llamacpp_url() + "/v1/chat/completions",
+                          json={"model": model, "max_tokens": 1,
+                                "messages": [{"role": "user",
+                                              "content": "hi"}]},
                           timeout=900)
         elif backend == "locallm":
             from server.llm import locallm
@@ -395,6 +631,17 @@ def unload_model(backend: str, model: str) -> bool:
                       json={"model": model, "keep_alive": 0}, timeout=30)
         log.info("Модель %s выгружена", model)
         return True
+    if backend == "llamacpp":
+        # у llama-server нет ручки «выгрузи модель, но живи» — модель живёт
+        # ровно столько, сколько процесс. Гасим процесс: это и есть выгрузка,
+        # и VRAM освобождается полностью (важно — карту делим с TTS и STT).
+        try:
+            from server.llm import llamacpp
+            log.info("%s", llamacpp.unload())
+            return True
+        except Exception as e:
+            log.warning("llama-server: выгрузка не удалась: %s", e)
+            return False
     if backend == "locallm":
         try:
             requests.post(_locallm_url() + "/admin/unload", timeout=30)
@@ -477,12 +724,18 @@ def backend_status() -> dict:
         ("ollama", _ollama_url(), "/api/tags"),
         ("lmstudio", _lmstudio_url(), "/v1/models"),
         ("locallm", _locallm_url(), "/v1/models"),
+        ("llamacpp", _llamacpp_url(), "/v1/models"),
     ):
+        if _down(name):
+            st[name] = False       # молчал недавно — перепроба через минуту
+            continue
         try:
             requests.get(url + probe, timeout=2)
             st[name] = True
+            _mark_up(name)
         except Exception:
             st[name] = False
+            _mark_down(name)
     # облако: «на связи», если включено и есть ключ (не пингуем — это платно/долго)
     c = _cloud()
     st["cloud"] = bool(c["enabled"] and c["key"])
@@ -673,6 +926,33 @@ def _stream_lmstudio(messages, model, temperature, tools=None, image=None):
                               messages, model, temperature, tools, image)
 
 
+def _stream_llamacpp(messages, model, temperature, tools=None, image=None):
+    """Свой llama-server: сперва убеждаемся, что он поднят (спавнер сам
+    скачает бинарь и запустит процесс), дальше — обычный OpenAI-стрим.
+
+    Отдельного разбора ответа не нужно: llama.cpp говорит на том же
+    OpenAI-диалекте, что LM Studio и облако. Больше того, chat_template_kwargs
+    здесь РАБОТАЕТ (это родное поле llama.cpp, а не расширение) — то самое,
+    которое OpenAI-слой LM Studio молча выбрасывал, из-за чего gemma-4
+    думала по 4-9 секунд перед каждым словом."""
+    from server.llm import llamacpp
+    if not CFG.get("llamacpp.url"):        # свой процесс, а не чужая машина
+        st = llamacpp.ensure_running()
+        if st.get("error"):
+            raise LLMError("llama-server: " + st["error"])
+        if st.get("installing"):
+            raise LLMError("llama-server " + st.get(
+                "note", "ещё устанавливается — попробуй через минуту"))
+    _T["t_engine"] = time.monotonic()
+    for ev in _stream_openai(_llamacpp_url() + "/v1", None,
+                             messages, model, temperature, tools, image):
+        if ev.get("type") == "token":
+            # настоящий ответ дошёл — значит сервер жив, отдельная проверка
+            # перед следующей репликой не нужна
+            llamacpp.note_alive()
+        yield ev
+
+
 def _stream_locallm(messages, model, temperature, tools=None, image=None):
     """Свой воркер LocalLM: сперва убеждаемся, что он поднят (спавнер сам
     поставит окружение/запустит процесс), затем — обычный OpenAI-стрим.
@@ -790,7 +1070,25 @@ def is_busy(backend: str, model: str) -> bool:
 # 400 «invalid temperature: only 1 is allowed» на наш temperature=0.8).
 # Выучив один раз, дальше строим запрос сразу без неугодного поля — без
 # трёх холостых запросов на каждую фразу.
+# ОДНА HTTP-СЕССИЯ НА ВСЕ ЛОКАЛЬНЫЕ ЗАПРОСЫ (2026-07-27, охота за 300мс).
+# requests.post() без сессии на каждый вызов: (1) лезет в реестр Windows за
+# системным прокси (getproxies — это сотни миллисекунд на некоторых
+# машинах), (2) заново открывает TCP-соединение. Для облака это шум на фоне
+# сети, для localhost — БОЛЬШАЯ часть задержки. Session с trust_env=False
+# держит соединение открытым и не трогает реестр вообще.
+_HTTP = requests.Session()
+_HTTP.trust_env = False
+
+
 _API_QUIRKS: dict = {}
+
+# отсечки одного вызова: выбор моделей -> сборка запроса -> ответ сервера ->
+# первый токен. Живут между chat_stream и _stream_openai, поэтому модульные.
+_T: dict = {}
+
+# модели, про которые уже сказали «размышления не выключились» — предупреждаем
+# один раз на модель, а не на каждую фразу
+_THINK_WARNED: set = set()
 
 # ФОРМА СООБЩЕНИЙ, а не поля запроса (2026-07-26). GigaChat отвечает
 # 422 «Invalid params: system message must be the first message» — он
@@ -932,7 +1230,27 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         # выключенные «размышления» (тумблер 💭 в меню модели): просим шаблон
         # не включать thinking-фазу. llama.cpp/LM Studio понимают
         # chat_template_kwargs, остальные молча игнорируют поле.
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        payload["chat_template_kwargs"] = {"enable_thinking": False,
+                                           "thinking": False}
+        # ВТОРОЙ ЗАМОК НА ТУ ЖЕ ДВЕРЬ (2026-07-27, подтверждено замером).
+        # gemma-4 в LM Studio думает ДАЖЕ когда мы просим не думать: её
+        # OpenAI-совместимый слой выбрасывает chat_template_kwargs (поле
+        # придумано llama.cpp, в API LM Studio его нет). В логе это видно
+        # как completion_tokens_details.reasoning_tokens = 243..546 — то
+        # есть секунды генерации мыслей до первого видимого слова.
+        #
+        # tools/latency_bench.py прогнал все известные способы на живой
+        # сборке. Итог (reasoning_tokens в ответе):
+        #   chat_template_kwargs enable_thinking=false ... 202  — НЕ работает
+        #   reasoning: {"effort": "none"} (вложенное) ....... 254  — НЕ работает
+        #   reasoning: {"effort": "minimal"} ................ 180  — НЕ работает
+        #   reasoning_effort: "none"  (ПЛОСКОЕ поле) ........   0  — работает
+        # Поэтому шлём именно плоское поле. Вложенный вариант из changelog
+        # LM Studio (0.3.29, «reasoning.effort») её же слоем и игнорируется —
+        # не возвращать его обратно, это уже проверено.
+        if not api_key:
+            payload["reasoning_effort"] = CFG.get("llm.reasoning_effort",
+                                                  "none")
         # целевое время ответа (llm.target_response_s, 0 = выкл): если
         # паспорт знает скорость модели — считаем потолок токенов под цель.
         # ТОЛЬКО при выключенных размышлениях: думающий режим съедает лимит
@@ -945,6 +1263,18 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
                 payload["max_tokens"] = max(96, int(tps * target * 0.8))
         except Exception:
             pass
+    # ТРЕТИЙ ЗАМОК — ДОСЫЛ НАЧАТОГО ХОДА (llm.nothink_prefill, по умолчанию
+    # выключен). Если сборка игнорирует и chat_template_kwargs, и
+    # reasoning.effort — остаётся приём, который не зависит от полей вообще:
+    # последним сообщением кладём УЖЕ НАЧАТЫЙ ответ ассистента с закрытым
+    # блоком мыслей («<think>\n\n</think>»). Шаблон продолжает начатый ход,
+    # фаза размышления оказывается пройденной ещё до первого токена.
+    # Включать только если замер (tools/latency_bench.py) показал, что поля
+    # не работают: приём ломает tool-calling у части шаблонов.
+    _prefill = CFG.get("llm.nothink_prefill", "") if not api_key else ""
+    if _prefill and not CFG.get("llm.think", False):
+        payload["messages"] = list(payload["messages"]) + [
+            {"role": "assistant", "content": _prefill}]
     if tools:
         payload["tools"] = tools
     # ПОВТОРНОЕ ИСПОЛЬЗОВАНИЕ KV-КЭША. llama.cpp-server (и LM Studio на нём)
@@ -976,6 +1306,7 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
     # выученные причуды этого API: неугодные поля не кладём с самого начала
     for f in _API_QUIRKS.get((base_url, model), ()):
         payload.pop(f, None)
+    _T["t_build"] = time.monotonic()
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     # у GigaChat та же история с российским УЦ, что и у его OAuth —
@@ -983,9 +1314,12 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
     _verify = _giga["verify"] if _is_gigachat(base_url) else True
 
     def _do_request(body):
-        r = requests.post(base_url + "/chat/completions", json=body,
-                          headers=headers, stream=True, timeout=(10, 600),
-                          verify=_verify)
+        # локальный сервер — через постоянную сессию (см. _HTTP выше);
+        # облако — обычным requests: там свои прокси и env уместны
+        _req = _HTTP.post if not api_key else requests.post
+        r = _req(base_url + "/chat/completions", json=body,
+                 headers=headers, stream=True, timeout=(10, 600),
+                 verify=_verify)
         if not r.ok:
             # тело ответа — единственное место, где провайдер объясняет,
             # ЧТО ему не понравилось («unknown field», «model not found»…).
@@ -1004,6 +1338,7 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
 
     try:
         r = _do_request(payload)
+        _T["t_resp"] = time.monotonic()
     except requests.exceptions.HTTPError as e0:
         # 400/422 бывает по РАЗНЫМ причинам у разных облаков: строгий
         # temperature у Moonshot («only 1 is allowed»), незнакомый
@@ -1031,8 +1366,11 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             except requests.exceptions.HTTPError as e1:
                 last = e1
         suspects = [] if recovered else [
-            f for f in ("tools", "chat_template_kwargs", "cache_prompt",
-                                "max_tokens", "temperature", "stream_options")
+            # «reasoning» — первым: поле новое (LM Studio 0.3.29+), и если
+            # сборка старше, ругаться она будет именно на него
+            f for f in ("reasoning_effort", "tools", "chat_template_kwargs",
+                        "cache_prompt", "max_tokens", "temperature",
+                        "stream_options")
                     if payload.get(f) is not None]
         # «sampling» — не поле, а целая группа: снимаем её ОДНИМ ходом.
         # Иначе перебор по одному стоил бы до 16 холостых запросов на фразу,
@@ -1093,6 +1431,29 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         if _usage:
             log.info("API %s usage: %s", model,
                      json.dumps(_usage, ensure_ascii=False))
+            # ГЛАВНЫЙ ПОЖИРАТЕЛЬ СЕКУНД, ЕСЛИ ОН ВЕРНЁТСЯ (2026-07-27).
+            # Размышления не видно ни в чате, ни в счётчике токенов ответа —
+            # они всплывают ТОЛЬКО здесь, отдельным полем usage. Пока это
+            # лежало сырым JSON'ом в логе, «Сайка думает 6 секунд» месяц
+            # списывалось на «модель медленная». Теперь: просили не думать,
+            # а мысли всё равно есть -> кричим один раз на модель, с
+            # рецептом, а не с загадкой.
+            try:
+                _rt = int(((_usage.get("completion_tokens_details") or {})
+                           .get("reasoning_tokens") or 0))
+            except Exception:
+                _rt = 0
+            if _rt and not CFG.get("llm.think", False) \
+                    and model not in _THINK_WARNED:
+                _THINK_WARNED.add(model)
+                log.warning(
+                    "Размышления НЕ выключились: %s потратила %d токенов "
+                    "мыслей до первого слова (это ~%.1fс на 60 ток/с). "
+                    "Поля запроса сборка игнорирует. Лечение: в LM Studio "
+                    "открыть модель -> Prompt Template и первой строкой "
+                    "добавить {%%- set enable_thinking = false %%}, либо "
+                    "включить в config llm.nothink_prefill. Проверить: "
+                    "python tools/latency_bench.py", model, _rt, _rt / 60.0)
         if not chunk.get("choices"):
             continue
         try:
@@ -1101,6 +1462,25 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             continue
         token = delta.get("content") or ""
         if token:
+            if not _T.get("logged"):
+                _T["logged"] = True
+                _ms = lambda a, b: max(0, round((b - a) * 1000))
+                _now = time.monotonic()
+                t0 = _T.get("t0", _now)
+                _g = lambda k, d=None: _T.get(k, d if d is not None else t0)
+                _pick = _g("t_pick")
+                _load = _g("t_loaded", _pick)
+                _tls = _g("t_tools", _load)
+                _eng = _g("t_engine", _tls)
+                log.info(
+                    "LLM разбивка: список моделей %dмс | загруженные %dмс "
+                    "| инструменты %dмс | движок %dмс | сборка %dмс "
+                    "| ответ сервера %dмс | стрим до 1-го токена %dмс "
+                    "| итого %dмс",
+                    _ms(t0, _pick), _ms(_pick, _load), _ms(_load, _tls),
+                    _ms(_tls, _eng), _ms(_eng, _g("t_build", _eng)),
+                    _ms(_g("t_build", _eng), _g("t_resp", _eng)),
+                    _ms(_g("t_resp", _eng), _now), _ms(t0, _now))
             yield {"type": "token", "text": token}
         for tc in delta.get("tool_calls") or []:
             idx = tc.get("index", 0)
@@ -1127,11 +1507,13 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
 # chat_stream, но ask_specific() обращался к нему снаружи — NameError при
 # первом же «одалживании» способностей моделей оркестратором. Теперь модульный.
 _FNS = {"ollama": _stream_ollama, "lmstudio": _stream_lmstudio,
-        "locallm": _stream_locallm, "cloud": _stream_cloud}
+        "locallm": _stream_locallm, "llamacpp": _stream_llamacpp,
+        "cloud": _stream_cloud}
 
 
 def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
-                on_model=None, use_tools=True, should_stop=None):
+                on_model=None, use_tools=True, should_stop=None,
+                prefer=None):
     """Стрим токенов. При падении основного бэкенда — автопереход на второй.
 
     Если запущен HandsPC (server/llm/tools.py), модель получает инструменты
@@ -1146,6 +1528,12 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     from server.llm import tools as handspc
     from server import ratings
 
+    # РАЗБИВКА «prefill» (2026-07-27). В логе Сайки время от отправки до
+    # первого токена — одно число, и когда движок отчитывается о 0.9с, а
+    # число показывает 3.0с, спорить не с чем: неизвестно, где эти секунды.
+    # Здесь ставим отсечки, чтобы разбивка была видна прямым текстом.
+    _T.clear()
+    _T["t0"] = time.monotonic()
     primary = CFG.get("llm.backend", "ollama")
     temperature = CFG.get("llm.temperature", 0.8)
     last_err = None
@@ -1159,9 +1547,16 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     except Exception:
         scores = {}
     candidates = []
+    # prefer=(backend, model) — выбор «быстрого мышления» НА ЭТОТ ход
+    # (server/llm/router.py): облако для настоящей задачи, локальная для
+    # болтовни. Конфиг не меняется, фолбэк обычный: не ответило — следом
+    # пойдёт штатная модель.
+    if prefer:
+        candidates.append(tuple(prefer))
     try:
         primary_model = _pick_model(primary)
-        candidates.append((primary, primary_model))
+        if (primary, primary_model) not in candidates:
+            candidates.append((primary, primary_model))
     except Exception as e:
         last_err = e
     locals_ = []
@@ -1174,12 +1569,14 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 locals_.append((m["backend"], m["name"]))
     except Exception:
         pass
+    _T["t_pick"] = time.monotonic()
     # уже загруженные в память — раньше по списку: фолбэк не должен
     # устраивать карусель JIT-загрузок в LM Studio
     try:
         loaded = set(loaded_models())
     except Exception:
         loaded = set()
+    _T["t_loaded"] = time.monotonic()
     locals_.sort(key=lambda bm: (bm[1] not in loaded, -scores.get(bm[1], 0)))
     for bm in locals_:
         if bm not in candidates:
@@ -1200,6 +1597,7 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
         try:
             fn = _fns.get(backend, _stream_lmstudio)
             tools = handspc.schemas() if use_tools else []
+            _T["t_tools"] = time.monotonic()
             # модели с нечитаемым форматом tool_calls (ловятся автоматически
             # ниже и запоминаются в конфиге) — инструменты не даём вообще
             if model in set(CFG.get("llm.tools_broken", [])):

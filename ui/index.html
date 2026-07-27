@@ -939,8 +939,8 @@
     header{height:46px;padding:0 8px 0 12px;gap:7px}
     header .name::after{display:none}
     #net,#problems{display:none}
-    /* системная колонка уезжает в шторку «Система» из шапки */
-    #main>#sysbar{display:none}
+    /* системная колонка уезжает в шторку «Система» из шапки —
+       но только на сенсорном экране, см. правило под этим блоком */
     /* на мобиле одновременно живёт что-то одно: чат ИЛИ визуал */
     #av-split,#av-tab,#chat-tab{display:none!important}
     #mob-tabs{display:flex;flex:none;gap:4px;padding:4px;border-radius:16px;
@@ -993,6 +993,15 @@
   }
   /* ноутбучные экраны: системная колонка уже */
   @media (max-width:1280px) and (min-width:901px){#sysbar{width:214px}}
+  /* КОЛОНКА НАГРУЗКИ ПРИ МАСШТАБИРОВАНИИ (2026-07-27, замечено владельцем).
+     Ctrl+«+» в браузере уменьшает ШИРИНУ ОКНА В CSS-пикселях: на 200% зума
+     монитор 1920 превращается в 960, а дальше — в мобильную вёрстку, где
+     системная колонка намеренно уезжает в шторку «Система». Со стороны это
+     выглядит не как смена вёрстки, а как «индикаторы пропали».
+     Различаем не по ширине, а по устройству ввода: палец (pointer:coarse) —
+     шторка, мышь — колонка остаётся, просто уже. */
+  @media (max-width:900px) and (pointer:coarse){#main>#sysbar{display:none}}
+  @media (max-width:900px) and (pointer:fine){#sysbar{width:180px;padding:12px 10px}}
 
 </style>
 </head>
@@ -1469,13 +1478,26 @@ function connect(){
 let curSaikaMsg=null;
 /* Полный маркер и оборванный хвост — те же выражения, что в main.py
    (_GESTURE_MARK_RE / _GESTURE_TAIL_RE). Держать синхронно. */
-const MARK_FULL = /[\[({]\s*(?:жест|эмоция|gesture|emote)\s*[:=\-]?\s*[a-zA-Zа-яёА-ЯЁ0-9_]+\s*[\])}]/gi;
-const MARK_TAIL = /[\[({]\s*(?:ж|же|жес|жест|э|эм|эмо|эмоц|эмоци|эмоция|g|ge|ges|gest|gestu|gestur|gesture|e|em|emo|emot|emote)\s*(?:[:=\-]\s*[a-zA-Zа-яёА-ЯЁ0-9_]*)?\s*$/i;
+// 2026-07-28: + avatar_action — модель подсматривает имя инструмента из схем
+const MARK_FULL = /[\[({]\s*(?:жест|эмоция|gesture|emote|avatar[_ ]?action|аватар)\s*[:=\-]?\s*[a-zA-Zа-яёА-ЯЁ0-9_]+\s*[\])}]/gi;
+// текстовые вызовы инструментов [open_folder:...] — исполняются сервером,
+// в чате их сырой вид не нужен (результат приходит строкой с ⚡)
+const TOOL_MARK_FULL = /[\[({]\s*[a-z][a-z0-9_]{2,}\s*[:=][^\])}]*[\])}]/g;
+const TOOL_MARK_TAIL = /[\[({]\s*[a-z][a-z0-9_]*\s*(?:[:=][^\])}]*)?$/;
+const MARK_TAIL = /[\[({]\s*(?:ж|же|жес|жест|э|эм|эмо|эмоц|эмоци|эмоция|g|ge|ges|gest|gestu|gestur|gesture|e|em|emo|emot|emote|a|av|ava|avat|avata|avatar|avatar[_ ]?a\w*|аватар)\s*(?:[:=\-]\s*[a-zA-Zа-яёА-ЯЁ0-9_]*)?\s*$/i;
 function stripMarks(s){
   if(!s) return s;
   let out = s.replace(MARK_FULL, ' ');
+  out = out.replace(TOOL_MARK_FULL, ' ');
   out = out.replace(MARK_TAIL, '');       // недописанный маркер в конце
-  return out.replace(/[ \t]{2,}/g, ' ').replace(/\s+$/, m => m.includes('\n') ? m : '');
+  out = out.replace(TOOL_MARK_TAIL, '');
+  // ПРОПУСКИ В НАЧАЛЕ РЕПЛИКИ (2026-07-28): модель почти всегда начинает
+  // ответ с маркера жеста — после вырезания оставался пробел/пустая строка,
+  // и каждая реплика выглядела «отодвинутой». Начало сообщения чистим.
+  out = out.replace(/^\s+/, '');
+  return out.replace(/[ \t]{2,}/g, ' ')
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/\s+$/, m => m.includes('\n') ? m : '');
 }
 let bootId=null;
 function handleJson(m){
@@ -2011,7 +2033,8 @@ async function fillOutputs(){
 }
 
 function fillSttEngines(){
-  const names={faster_whisper:'Faster-Whisper (large-v3-turbo)',
+  const names={off:'Без слуха — ничего не грузится',
+    faster_whisper:'Faster-Whisper (large-v3-turbo)',
     gigaam:'GigaAM v3 (Сбер)', vosk:'Vosk (лёгкий, офлайн)',
     whispercpp:'Whisper.cpp', tone:'T-one (Т-Банк)',
     voxtral:'Voxtral Realtime 4B (Mistral)',
@@ -2037,7 +2060,9 @@ function fillSttEngines(){
     const stIcon = h==='broken' ? '<span class="st bad">✗</span>'
                  : loaded ? '<span class="st ok">● в памяти</span>'
                  : '<span class="st">—</span>';
-    el.innerHTML=`${scoreBar(nm, sttScore(nm,st),'качество слуха')}${weightDotBytes(STT_WEIGHT[nm],1,true)}👂 ${names[nm]||nm} ${stIcon}
+    el.innerHTML = nm==='off'
+      ? `🚫 ${names[nm]||nm}`
+      : `${scoreBar(nm, sttScore(nm,st),'качество слуха')}${weightDotBytes(STT_WEIGHT[nm],1,true)}👂 ${names[nm]||nm} ${stIcon}
       <button class="mini" title="${loaded?'Выгрузить модель из памяти'
         :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
     const b=el.querySelector('.mini');
@@ -2049,7 +2074,7 @@ function fillSttEngines(){
       await api('/api/select',{kind:'stt',value:nm});
       await refresh();
     };
-    b.onclick=async(e)=>{
+    if(b) b.onclick=async(e)=>{
       e.stopPropagation();
       b.textContent='⏳'; b.disabled=true;
       await api('/api/stt/model',{name:nm, action: loaded?'unload':'load'});
@@ -2377,6 +2402,7 @@ document.addEventListener('click', e=>{
 
 /* оценка движка слуха 1..10: точность/качество, скорректированное здоровьем */
 function sttScore(nm, st){
+  if(nm==='off') return 1;   // не движок, а отказ от него — держим сверху
   if((st.health||{})[nm]==='broken') return 2;
   let base=({faster_whisper:9, gigaam:9, voxtral:8, whispercpp:7, tone:6, vosk:5})[nm];
   if(base==null) base=6;
@@ -2385,6 +2411,7 @@ function sttScore(nm, st){
 }
 /* оценка озвучки 1..10: качество голоса, скорректированное здоровьем */
 function ttsScore(nm, st){
+  if(nm==='off') return 1;   // не движок, а отказ от него — держим сверху
   const h=(st.health||{})[nm], loaded=(st.loaded||{})[nm];
   if(h==='broken') return 2;
   let base=({qwen3:9, silero:7, edge:5})[nm]; if(base==null) base=6;
@@ -2396,7 +2423,8 @@ function fillTtsPop(){
   // список движков растёт, дублировать его в двух местах было ошибкой
   const st=status.tts||{};
   const meta=st.meta||{};
-  const names={qwen3:'Qwen3-TTS — голос Сайки', silero:'Silero (запасной)',
+  const names={off:'Без озвучки — ничего не грузится',
+    qwen3:'Qwen3-TTS — голос Сайки', silero:'Silero (запасной)',
     edge:'Edge-TTS (онлайн)', piper:'Piper (офлайн, MIT)',
     omni:'OmniVoice — клон голоса, Apache-2.0',
     xtts:'XTTS-v2 — клон голоса', f5ru:'F5-TTS русский — клон'};
@@ -2431,7 +2459,9 @@ function fillTtsPop(){
         + 'title="Клонирует голос Сайки по образцу">🎭</span>' : '';
     el.title = [mt.title||names[nm]||nm, mt.license?('Лицензия: '+mt.license):'',
                 mt.note||''].filter(Boolean).join('\n\n');
-    el.innerHTML=`${scoreBar(nm, ttsScore(nm,st),'качество голоса')}${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 <span class="mname">${mt.title||names[nm]||nm}</span>${clone}${lic}${stIcon}${btn}`;
+    el.innerHTML = nm==='off'
+      ? `🚫 <span class="mname">${names[nm]||nm}</span>`
+      : `${scoreBar(nm, ttsScore(nm,st),'качество голоса')}${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 <span class="mname">${mt.title||names[nm]||nm}</span>${clone}${lic}${stIcon}${btn}`;
     const b=el.querySelector('.mini');
     // клик по строке — только переключить (мгновенно). Загрузка — по ⬇ или
     // лениво при первой озвучке, чтобы зависшая загрузка не блокировала выбор

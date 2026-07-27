@@ -20,6 +20,9 @@ _PROTECTED = {
     "system", "system idle process", "registry", "smss.exe", "csrss.exe",
     "wininit.exe", "winlogon.exe", "services.exe", "lsass.exe", "svchost.exe",
     "fontdrvhost.exe", "dwm.exe", "explorer.exe", "python.exe",  # сама Сайка
+    # llama-server — её мозги (2026-07-28): убить его = Сайка замолкает на
+    # полуслове и «думает» бесконечно. Выключается он сам, вместе с ней.
+    "llama-server.exe",
 }
 
 
@@ -211,9 +214,14 @@ def kill(queries, allow=None, deny=None) -> str:
     if not targets:
         return f"Не нашла процессов по запросу «{', '.join(map(str, queries))}»."
 
+    import os as _os
+    _self = {_os.getpid(), _os.getppid()}   # сервер и консоль start.bat
     killed, skipped, to_wait = [], [], []
     for p in targets:
         try:
+            if p.pid in _self:
+                skipped.append(f"pid {p.pid} (это я сама)")
+                continue
             nm = (p.name() or "").lower()
             if nm in protected:
                 skipped.append(nm + " (защищён)")

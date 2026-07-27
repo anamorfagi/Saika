@@ -1,5 +1,5 @@
 {
-  "updated": "2026-07-27T00:07:49",
+  "updated": "2026-07-27T22:02:28",
   "items": [
     {
       "id": "s01",
@@ -651,106 +651,6 @@
     }
   ],
   "log": [
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:35",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
     {
       "ts": "2026-07-23T10:00:37",
       "text": "⚠ stt: работаю на faster_whisper",
@@ -1650,14 +1550,114 @@
       "ts": "2026-07-27T00:07:49",
       "text": "✓ tts.omni: движок восстановлен",
       "kind": "fix"
+    },
+    {
+      "ts": "2026-07-27T14:25:37",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T14:26:47",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T14:32:22",
+      "text": "⚠ llm: выключила ей инструменты; ответы станут вдвое быстрее, поиск и руки возьмёт на себя сервер",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T20:18:43",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T20:19:28",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T20:27:31",
+      "text": "⚠ llm: переключилась на lmstudio/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T20:32:52",
+      "text": "⚠ llm: переключилась на llamacpp/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:24:34",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:49:43",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:56:03",
+      "text": "⚠ llm: переключилась на llamacpp/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:56:52",
+      "text": "⚠ llm: переключилась на llamacpp/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:57:06",
+      "text": "⚠ llm: переключилась на llamacpp/google/gemma-4-e4b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:57:27",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:1.5b-base",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:58:10",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:1.5b-base",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:58:40",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:1.5b-base",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:58:42",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T21:59:46",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:7b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T22:00:57",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:7b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T22:01:53",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:7b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-27T22:02:28",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:7b",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "основной бэкенд не ответил: 403 от https://models.github.ai/inference: {\"error\":{\"code\":\"no_access\",\"message\":\"No access to model: openai/gpt-4.1-mini\",\"details\":\"No access to model: openai/gpt-4.1-mini\"}}\n",
-      "count": 113,
+      "text": "основной бэкенд не ответил: llama-server: не нашла .gguf для модели «mistral-medium-3-5». Положи файл в models/gguf или пропиши путь в config: llamacpp.model_path",
+      "count": 132,
       "resolved": false,
-      "last": "2026-07-26T22:10"
+      "last": "2026-07-27T22:02"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
@@ -1702,10 +1702,10 @@
       "last": "2026-07-23T16:48"
     },
     "llm.silence": {
-      "text": "модель промолчала: модель вернула пустой ответ без ошибки — чаще всего это переполненное окно контекста или зависший prefill; попробуй 🧹 новый диалог или перезагрузи модель ⏏/⬇",
-      "count": 6,
+      "text": "модель промолчала: я ГЕНЕРИРОВАЛА ответ (15 токенов), но всё сгенерированное оказалось служебным — размышления или псевдо-вызовы инструментов, показать нечего",
+      "count": 7,
       "resolved": false,
-      "last": "2026-07-26T01:54"
+      "last": "2026-07-27T21:49"
     },
     "stt.gigaam": {
       "text": "«gigaam» упал с незнакомой мне ошибкой.",

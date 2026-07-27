@@ -10,6 +10,7 @@
 """
 import importlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -140,6 +141,30 @@ def _lmstudio_running():
         return True, f"работает, моделей: {n}"
     except Exception:
         return False, "не отвечает"
+
+
+def _llamacpp_ready():
+    """СВОЙ движок мозгов (2026-07-27). Отдельная строка в отчёте нужна
+    потому, что это единственный бэкенд, который проект держит сам: если
+    бинаря нет или сервер не поднялся, человек должен видеть это здесь, а
+    не гадать, почему Сайка снова думает через чужую программу."""
+    exe = ROOT / "third_party" / "llamacpp" / (
+        "llama-server.exe" if os.name == "nt" else "llama-server")
+    if not exe.exists():
+        return False, ("не установлен (поставится сам при следующем "
+                       "запуске start.bat)")
+    ver = ""
+    try:
+        ver = (ROOT / "third_party" / "llamacpp" / "VERSION.txt").read_text(
+            encoding="utf-8").splitlines()[0].strip()
+    except Exception:
+        pass
+    import requests
+    try:
+        requests.get("http://127.0.0.1:8771/health", timeout=2)
+        return True, f"работает{' (' + ver + ')' if ver else ''}"
+    except Exception:
+        return True, f"установлен{' (' + ver + ')' if ver else ''}, не запущен"
 
 
 def _start_ollama():
@@ -335,6 +360,7 @@ def run_checks(fix=False):
         report.append(_check("Модель в Ollama", False, _ollama_has_model,
                              _pull_default_model, fix))
     report.append(_check("LM Studio", False, _lmstudio_running))
+    report.append(_check("Свой движок (llama.cpp)", False, _llamacpp_ready))
 
     REPORT_PATH.parent.mkdir(exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2),

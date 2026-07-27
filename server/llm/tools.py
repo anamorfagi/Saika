@@ -38,9 +38,11 @@ _IMPULSE_SAFE = {"close_browser", "shutdown_self",
 _PC_SCHEMAS = [
     {"type": "function", "function": {
         "name": "app_launch",
-        "description": ("Запустить установленную программу или игру по "
-                        "названию: «запусти блендер», «открой стим». Ищет "
-                        "среди всего, что стоит на компьютере."),
+        "description": ("Запустить программу по человеческому названию. "
+                        "ВАЖНО: «открой X» = запустить (это создаст НОВОЕ "
+                        "окно, даже если программа уже работает). Переключить "
+                        "на уже открытое окно — это window_focus, зови его "
+                        "только если попросили «переключись/покажи окно»."),
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string",
                      "description": "название как его назвал человек"}},
@@ -90,6 +92,33 @@ _PC_SCHEMAS = [
         "description": "Вернуть окно из развёрнутого в обычный размер.",
         "parameters": {"type": "object", "properties": {
             "match": {"type": "string"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "window_place",
+        "description": ("Поставить окно в нужное место экрана и задать "
+                        "размер. Для «размести по центру», «в правый нижний "
+                        "угол», «на пол-экрана слева»."),
+        "parameters": {"type": "object", "properties": {
+            "match": {"type": "string",
+                      "description": "кусок заголовка окна или имя программы"},
+            "position": {"type": "string",
+                         "enum": ["center", "left", "right", "top", "bottom",
+                                  "topleft", "topright", "bottomleft",
+                                  "bottomright"],
+                         "description": "куда поставить (по умолчанию center)"},
+            "width": {"type": "integer",
+                      "description": "ширина в % экрана (10-100), 0 = не менять"},
+            "height": {"type": "integer",
+                       "description": "высота в % экрана, 0 = не менять"}},
+            "required": ["match"]}}},
+    {"type": "function", "function": {
+        "name": "eyes",
+        "description": ("Включить или выключить СВОЁ зрение (глаза: кадры "
+                        "экрана/вебки). Зови, когда просят «включи глаза», "
+                        "«посмотри…», а зрение выключено."),
+        "parameters": {"type": "object", "properties": {
+            "on": {"type": "boolean",
+                   "description": "true = включить, false = выключить"}},
+            "required": ["on"]}}},
     {"type": "function", "function": {
         "name": "find_folder",
         "description": ("Найти папку на дисках по человеческому названию: "
@@ -459,6 +488,9 @@ _MUTATING_INTENT = {
     # модель охотно «помогает» закрыть игру посреди разговора о погоде.
     "app_launch":   r"запус|откр|вклю|поигра|стартуй|launch|run|врубb?и",
     "window_close": r"закр|выйд|убер|заверш|close|сверн",
+    "window_place": r"центр|угол|слева|справа|сверху|снизу|размест|постав|"
+                    r"растян|размер|маштаб|масштаб|полов|экран",
+    "eyes": r"глаз|зрен|смотр|посмотр|включи вид|видеть",
     "window_minimize": r"сверн|убер|спрячь|minimi|скрой|убрать с глаз",
     "minimize_all": r"сверн|убер|спрячь|очист|освободи|всё лишн|все лишн",
     # «открой хром» — это тоже про окно: раньше сюда не попадало «откр», и
@@ -487,7 +519,20 @@ def _intent_ok(name: str) -> bool:
     pat = _MUTATING_INTENT.get(name)
     if not pat:
         return True  # инструмент не в списке изменяющих — не наше дело
-    return bool(_re_guard.search(pat, LAST_USER.get("text", ""), _re_guard.I))
+    txt = LAST_USER.get("text", "")
+    # СОГЛАСИЕ = НАМЕРЕНИЕ (2026-07-28, реальный случай). Она спросила
+    # «хочешь, включу глаза?», человек ответил «Да-да» — и предохранитель
+    # зарубил вызов: в слове «да» нет корня «глаз». Короткое подтверждение
+    # после ЕЁ ЖЕ вопроса — это и есть просьба сделать предложенное; иначе
+    # каждый диалог с уточнением упирается в отказ. Осторожность разумная:
+    # согласие принимаем только КОРОТКОЕ и чистое — «да, но не сейчас»
+    # содержит лишние слова и согласием не считается.
+    if _re_guard.fullmatch(
+            r"\s*(да+[\s,!.-]*)+|\s*(давай|ага|угу|конечно|ок|окей|"
+            r"хорошо|можно|валяй|делай|попробуй)[\s!.]*",
+            txt.lower()):
+        return True
+    return bool(_re_guard.search(pat, txt, _re_guard.I))
 
 
 def _shutdown_call() -> str:
@@ -728,6 +773,41 @@ _FAIL_RE = _re_guard.compile(
     r"не\s+поддерж|нет\s+модуля|не\s+могу)", _re_guard.I)
 
 
+# АНТИ-АМОК МЕЖДУ ХОДАМИ (2026-07-28, просьба владельца). Внутри одного
+# ответа от зацикливания защищает seen_calls в chat_stream, но глюкнувшая
+# модель может звать одно и то же действие КАЖДЫЙ ход — десять раз открыть
+# браузер, десять раз запустить программу. Человек в это время видит только
+# мельтешение окон. Правило: одинаковый вызов (имя+аргументы) чаще N раз за
+# окно — отказ с прямым текстом; жесты аватара не считаем, они повторяются
+# законно. Счётчик общий на процесс, чинится сам по истечении окна.
+from collections import deque as _deque
+_CALL_HISTORY: "_deque" = _deque(maxlen=64)
+_AMOK_EXEMPT = {"avatar_action"}
+
+
+def _amok_check(name: str, arguments) -> str:
+    if name in _AMOK_EXEMPT:
+        return ""
+    try:
+        import json as _json
+        key = name + ":" + _json.dumps(arguments, ensure_ascii=False,
+                                       sort_keys=True, default=str)
+    except Exception:
+        key = name + ":" + str(arguments)
+    now = time.time()
+    window = float(CFG.get("tools.repeat_window_s", 90))
+    limit = int(CFG.get("tools.repeat_max", 3))
+    recent = [1 for ts, k in _CALL_HISTORY if k == key and now - ts < window]
+    _CALL_HISTORY.append((now, key))
+    if len(recent) >= limit:
+        return (f"отказ: ты уже вызывала {name} с теми же аргументами "
+                f"{len(recent)} раза за последние {int(window)} секунд — "
+                "это выглядит как зацикливание, действие НЕ выполнено. "
+                "Остановись и скажи человеку, что происходит, обычными "
+                "словами. Если он попросит ещё раз — можно.")
+    return ""
+
+
 def call(name: str, arguments) -> str:
     """Обёртка над _call: тот же результат, но с отметкой в самочувствии.
 
@@ -736,6 +816,10 @@ def call(name: str, arguments) -> str:
     Разводить это по всем веткам _call было бы десятком копий одного и
     того же — оборачиваем один раз здесь.
     """
+    _stop = _amok_check(name, arguments)
+    if _stop:
+        log.warning("Анти-амок: %s заблокирован (повторы)", name)
+        return _stop
     out = _call(name, arguments)
     try:
         from server import psyche
@@ -846,6 +930,21 @@ def _call(name: str, arguments) -> str:
                                            bool(a.get("full")))
             if name == "window_restore":
                 return _pc.window_restore(str(a.get("match", "")))
+            if name == "window_place":
+                return _pc.window_place(str(a.get("match", "")),
+                                        str(a.get("position", "center")),
+                                        int(a.get("width") or 0),
+                                        int(a.get("height") or 0))
+            if name == "eyes":
+                # СВОИ ГЛАЗА (2026-07-28): «включи глаза» голосом раньше
+                # упиралось в философствование — тумблер был только в UI.
+                # Настройка та же, что дёргает тумблер (vision.enabled),
+                # поэтому интерфейс увидит смену состояния сам.
+                _on = bool(a.get("on", True))
+                CFG.set("vision.enabled", _on)
+                return ("зрение ВКЛЮЧЕНО — теперь ты можешь смотреть на "
+                        "экран и вебку" if _on
+                        else "зрение выключено")
             if name == "find_folder":
                 hits = _pc.find_folder(str(a.get("query", "")),
                                        str(a.get("drive", "")))
@@ -948,3 +1047,105 @@ def _call(name: str, arguments) -> str:
         return result
     except Exception as e:
         return f"HandsPC недоступен: {e}"
+
+
+# ═══════════ КАРТОЧКИ ИНСТРУМЕНТОВ: инструкции как RAG (2026-07-28) ═══════════
+# Просьба владельца: инструкции по инструментам должны читаться ЛЮБОЙ моделью
+# моментально, как раг-файл, и работать даже там, где function calling сломан.
+# Карточки СТРОЯТСЯ ИЗ ЖИВЫХ СХЕМ (не пишутся руками — не протухают), в промпт
+# уходит не вся простыня, а 1-3 карточки, релевантные фразе человека. Каждая
+# показывает ОБА способа вызова: настоящий tool_call и текстовый маркер
+# [имя:парам="значение"] — сервер исполняет оба (см. main.py, текст-протокол).
+
+# фраза человека -> какие инструменты ему сейчас могут понадобиться
+_TOOL_HINTS = {
+    "open_folder":  ("папк", "проводник", "директори", "каталог"),
+    "find_folder":  ("найди папк", "поищи папк", "где папк", "найти папк"),
+    "app_launch":   ("запусти", "открой программ", "включи программ"),
+    "apps_list":    ("какие программ", "список программ"),
+    "window_close": ("закрой окно", "закрой прог"),
+    "window_focus": ("переключись на", "покажи окно", "разверни"),
+    "window_place": ("по центру", "в угол", "размести", "поставь окно",
+                     "масштаб", "маштаб", "пол-экрана", "слева", "справа"),
+    "window_maximize": ("разверни", "полный экран", "на весь экран",
+                        "максимизируй"),
+    "eyes": ("включи глаза", "выключи глаза", "включи зрение", "посмотри"),
+    "minimize_all": ("сверни", "убери окна"),
+    "volume_set":   ("громк", "звук", "тише", "громче"),
+    "tab_control":  ("вкладк",),
+    "web_search":   ("загугли", "найди в интернете", "поищи в", "погугли"),
+    "web_research": ("изучи", "исследуй", "разберись про"),
+    "open_page":    ("открой сайт", "открой страниц", "зайди на"),
+    "close_browser": ("закрой браузер",),
+    "model_switch": ("модель", "поумнее", "побыстрее"),
+    "remember_place": ("запомни папк", "запомни мест"),
+}
+
+
+def _one_card(sc: dict) -> str:
+    f = sc.get("function", {})
+    name = f.get("name", "?")
+    desc = (f.get("description") or "").split("\n")[0][:160]
+    params = (f.get("parameters") or {}).get("properties") or {}
+    req = set((f.get("parameters") or {}).get("required") or [])
+    lines = [f"• {name} — {desc}"]
+    if params:
+        ps = []
+        for k, v in list(params.items())[:4]:
+            mark = "*" if k in req else ""
+            ps.append(f"{k}{mark} ({(v.get('description') or v.get('type') or '')[:40]})")
+        lines.append("  параметры: " + "; ".join(ps) + ("  (* — обязателен)" if req else ""))
+        k0 = (sorted(req)[0] if req else list(params)[0])
+        lines.append(f'  вызов текстом: [{name}:{k0}="значение"]')
+    else:
+        lines.append(f"  вызов текстом: [{name}]")
+    return "\n".join(lines)
+
+
+def usage_cards(user_text: str, limit: int = 3) -> str:
+    """1-3 карточки инструментов, релевантных фразе. Пусто = фраза не про
+    инструменты, промпт не раздуваем."""
+    t = (user_text or "").lower()
+    if not t:
+        return ""
+    hits = [n for n, keys in _TOOL_HINTS.items()
+            if any(k in t for k in keys)]
+    if not hits:
+        return ""
+    cards, known = [], {}
+    for sc in schemas():
+        known[sc.get("function", {}).get("name")] = sc
+    for n in hits[:limit]:
+        if n in known:
+            cards.append(_one_card(known[n]))
+    if not cards:
+        return ""
+    return ("### Как вызвать нужный инструмент (инструкция, факт):\n"
+            + "\n".join(cards) +
+            "\nЗови как настоящую функцию (tool_call), а если не умеешь — "
+            "напиши маркер в квадратных скобках прямо в ответе: сервер "
+            "исполнит его сам и покажет результат.")
+
+
+def write_guide() -> str:
+    """Полный справочник ВСЕХ инструментов в data/tools_guide.md — для
+    дообучения, внешнего RAG и любой модели, которой дадут файл целиком.
+    Перегенерируется на каждом старте: источник — живые схемы."""
+    from server.config import resolve as _resolve
+    lines = ["# Инструменты Сайки — как вызывать (автогенерация, не править)",
+             "",
+             "Два равноправных способа: настоящий tool_call (если модель "
+             "умеет) или текстовый маркер [имя:парам=\"значение\"] прямо в "
+             "ответе — сервер исполняет оба.", ""]
+    for sc in schemas():
+        lines.append(_one_card(sc))
+        lines.append("")
+    p = _resolve("data/tools_guide.md")
+    try:
+        p.parent.mkdir(exist_ok=True)
+        p.write_text("\n".join(lines), encoding="utf-8")
+        log.info("Справочник инструментов обновлён: %s (%d шт.)",
+                 p, len(schemas()))
+    except Exception as e:
+        log.warning("справочник инструментов не записался: %s", e)
+    return str(p)

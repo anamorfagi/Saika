@@ -200,7 +200,25 @@ def launch(query: str) -> str:
             subprocess.Popen(["xdg-open", best["path"]])
     except Exception as e:
         return f"Не смогла запустить «{best['name']}»: {e}"
-    msg = f"Запустила {best['name']}."
+    # проверка результата: ждём до 3с, появилось ли ОКНО этой программы —
+    # «запустила» без окна на экране человек читает как «ничего не произошло»
+    seen = ""
+    try:
+        want = (best["name"] or "").lower().split()[0]
+        for _ in range(6):
+            time.sleep(0.5)
+            for w in windows(include_minimized=False):
+                hay = (w["title"] + " " + (w["proc"] or "")).lower()
+                if want and want in hay:
+                    seen = w["title"][:50]
+                    break
+            if seen:
+                break
+    except Exception:
+        pass
+    msg = (f"Запустила {best['name']} — окно «{seen}» уже на экране." if seen
+           else f"Запустила {best['name']}, но окна пока не вижу — она может "
+                "грузиться или живёт в трее. Скажи человеку как есть.")
     if others:
         msg += " Похожие, если промахнулась: " + ", ".join(others) + "."
     return msg
@@ -342,8 +360,52 @@ def screen_map() -> str:
     return "\n".join(lines)
 
 
+# ИНСТИНКТ САМОСОХРАНЕНИЯ (2026-07-28, реальный инцидент). Гость попросил
+# «закрой всё» — Сайка честно закрыла и СВОЁ окно: консоль сервера и вкладку
+# собственного интерфейса. WM_CLOSE консоли = смерть процесса, она
+# «минуснула сама себя» посреди разговора. Живое существо не отрезает себе
+# голову, выполняя просьбу прибраться: свои жизненно важные окна — не цель
+# для window_close/kill. Явное «выключись» при этом работает как и раньше —
+# для этого есть shutdown_self с собственным предохранителем и прощанием.
+import os as _os
+
+
+def _is_self_window(w: dict) -> bool:
+    """Окно, без которого Сайка умрёт или ослепнет: её собственная консоль
+    (тот же PID, что у сервера, или родительский cmd из start.bat) и
+    вкладка/окно её интерфейса (порт 8765 в заголовке)."""
+    try:
+        if int(w.get("pid", 0)) == _os.getpid():
+            return True
+    except Exception:
+        pass
+    title = (w.get("title") or "").lower()
+    # окно её веб-интерфейса: заголовок вкладки содержит адрес или имя
+    if "127.0.0.1:8765" in title or "сайка —" in title \
+            or title.startswith("сайка"):
+        return True
+    # консоль, из которой запущен start.bat (заголовок задаёт start.bat)
+    if "start.bat" in title or "saika" in title:
+        return True
+    return False
+
+
+# РУССКИЕ ИМЕНА ПРОГРАММ (2026-07-28, реальный случай). «Разверни
+# проводник» не находило окно: заголовок окна проводника — имя ПАПКИ
+# («Saika», «Загрузки»), а процесс — explorer.exe; слова «проводник» нет
+# нигде. Голосом говорят по-русски — переводим на имена процессов.
+_APP_ALIASES = {
+    "проводник": "explorer", "папка": "explorer",
+    "хром": "chrome", "гугл хром": "chrome", "браузер": "chrome",
+    "блокнот": "notepad", "калькулятор": "calc",
+    "телеграм": "telegram", "телега": "telegram",
+    "диспетчер": "taskmgr", "диспетчер задач": "taskmgr",
+    "корзина": "explorer",
+}
+
+
 def _match(query: str):
-    """Найти окно по куску заголовка или имени процесса."""
+    """Найти окно по куску заголовка или имени процесса (+русские алиасы)."""
     q = (query or "").strip().lower()
     if not q:
         return None
@@ -354,6 +416,13 @@ def _match(query: str):
     for w in ws:                       # иначе по имени процесса
         if q in (w["proc"] or "").lower():
             return w
+    alias = _APP_ALIASES.get(q) or next(
+        (v for k, v in _APP_ALIASES.items() if k in q), "")
+    if alias:
+        for w in ws:
+            if alias in (w["proc"] or "").lower() \
+                    or alias in w["title"].lower():
+                return w
     return None
 
 
@@ -508,15 +577,32 @@ def window_close(query: str) -> str:
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
+    if _is_self_window(w):
+        return ("отказ: это моё собственное окно — закрыв его, я умру "
+                "посреди разговора. Если нужно меня выключить, попроси "
+                "прямо: «выключись» — я попрощаюсь и выйду сама.")
     _, _, user32 = _win32()
     user32.PostMessageW(w["hwnd"], 0x0010, 0, 0)   # WM_CLOSE
-    # Закрытие честно не проверяем «в лоб»: программа может законно спросить
-    # про несохранённое и остаться на экране. Но если окно поднято по
-    # правам, оно не получит даже сообщения — вот это сказать надо.
     if _elevated(w.get("pid", 0)) and not _verify(w["hwnd"], "gone"):
         return _blocked_note(w, "закрыть")
-    return (f"Попросила «{w['title'][:60]}» закрыться. Если там несохранённое,"
-            " программа сама спросит.")
+    # САМА ПРОВЕРЯЕТ РЕЗУЛЬТАТ (2026-07-28, просьба владельца). Раньше ответ
+    # был «попросила закрыться» — и она искренне считала дело сделанным,
+    # пока человек видел живое окно (реальный случай: VPN ушёл в трей и
+    # проигнорировал просьбу). Секунду ждём и смотрим правде в глаза.
+    time.sleep(1.2)
+    try:
+        gone = (not user32.IsWindow(w["hwnd"])
+                or not user32.IsWindowVisible(w["hwnd"]))
+    except Exception:
+        gone = True
+    if gone:
+        return (f"Закрыла «{w['title'][:60]}» — проверила, окна на экране "
+                "больше нет.")
+    return (f"Попросила «{w['title'][:60]}» закрыться, но окно ВСЁ ЕЩЁ на "
+            "экране — проверила сама. Либо оно спрашивает про несохранённое, "
+            "либо игнорирует просьбы (VPN и трей-программы так любят). "
+            "Скажи это человеку честно; жёстко снять можно только по его "
+            "прямой просьбе — «убей процесс такой-то».")
 
 
 def minimize_all(keep: str = "") -> str:
@@ -527,17 +613,28 @@ def minimize_all(keep: str = "") -> str:
     done, stuck = [], []
     todo = [w for w in windows(include_minimized=False)
             if not (k and (k in w["title"].lower()
-                           or k in (w["proc"] or "").lower()))]
+                           or k in (w["proc"] or "").lower()))
+            and not _is_self_window(w)]   # своё окно не прячем от владельца
     for w in todo:
         try:
             user32.ShowWindow(w["hwnd"], 6)
         except Exception:
             pass
     time.sleep(0.15)                      # один общий кадр на все окна
+    elevated_stuck = 0
     for w in todo:
         try:
-            (done if user32.IsIconic(w["hwnd"]) else stuck).append(
-                w["title"][:40])
+            if user32.IsIconic(w["hwnd"]):
+                done.append(w["title"][:40])
+            else:
+                # Диспетчер задач и прочие окна «от администратора» Windows
+                # защищает от команд обычного процесса (UIPI): ShowWindow
+                # молча не срабатывает. Это не наша поломка — говорим прямо.
+                if _elevated(w.get("pid", 0)):
+                    elevated_stuck += 1
+                    stuck.append(w["title"][:40] + " (админ)")
+                else:
+                    stuck.append(w["title"][:40])
         except Exception:
             stuck.append(w["title"][:40])
     if not done and not stuck:
@@ -545,10 +642,79 @@ def minimize_all(keep: str = "") -> str:
     msg = (f"Свернула {len(done)}: " + ", ".join(done[:6])
            + ("…" if len(done) > 6 else "")) if done else "Ничего не свернулось."
     if stuck:
-        msg += (". Не поддались: " + ", ".join(stuck[:4])
-                + " — обычно это окна от администратора или полноэкранные "
-                  "игры, ими Windows командовать не даёт.")
+        msg += ". Не поддались: " + ", ".join(stuck[:4])
+        if elevated_stuck:
+            msg += (" — окна с пометкой (админ) Windows защищает от обычных "
+                    "программ. start.bat при запуске просит права "
+                    "администратора — согласись в окне UAC, и я смогу "
+                    "командовать и ими.")
+        else:
+            msg += " — обычно это полноэкранные игры."
     return msg
+
+
+def window_place(query: str, position: str = "center",
+                 width: int = 0, height: int = 0) -> str:
+    """РАССТАВИТЬ ОКНО (2026-07-28, просьба владельца): «по центру», «слева»,
+    «в правый нижний угол», опционально с размером в процентах экрана.
+    Рабочая область берётся без панели задач (SPI_GETWORKAREA) — окно не
+    залезает под панель. Своё окно двигать можно — это не закрытие."""
+    w = _match(query)
+    if not w:
+        return f"Не нашла окно «{query}»."
+    import ctypes
+    _, _, user32 = _win32()
+    if _elevated(w.get("pid", 0)):
+        return _blocked_note(w, "двигать")
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long),
+                    ("r", ctypes.c_long), ("b", ctypes.c_long)]
+    ra = RECT()
+    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0,
+                                               ctypes.byref(ra), 0)
+    sw, sh = ra.r - ra.l, ra.b - ra.t
+
+    # размер: проценты экрана; 0 = не менять текущий
+    cur = RECT()
+    user32.GetWindowRect(w["hwnd"], ctypes.byref(cur))
+    ww = int(sw * max(10, min(100, width)) / 100) if width else cur.r - cur.l
+    wh = int(sh * max(10, min(100, height)) / 100) if height else cur.b - cur.t
+    ww, wh = min(ww, sw), min(wh, sh)
+
+    pos = (position or "center").strip().lower()
+    # русские и английские имена позиций — голосом говорят по-русски
+    aliases = {
+        "центр": "center", "по центру": "center", "середина": "center",
+        "лево": "left", "слева": "left", "право": "right", "справа": "right",
+        "верх": "top", "сверху": "top", "низ": "bottom", "снизу": "bottom",
+        "левый верхний": "topleft", "правый верхний": "topright",
+        "левый нижний": "bottomleft", "правый нижний": "bottomright",
+    }
+    pos = aliases.get(pos, pos)
+    cx, cy = ra.l + (sw - ww) // 2, ra.t + (sh - wh) // 2
+    coords = {
+        "center":      (cx, cy),
+        "left":        (ra.l, cy),
+        "right":       (ra.r - ww, cy),
+        "top":         (cx, ra.t),
+        "bottom":      (cx, ra.b - wh),
+        "topleft":     (ra.l, ra.t),
+        "topright":    (ra.r - ww, ra.t),
+        "bottomleft":  (ra.l, ra.b - wh),
+        "bottomright": (ra.r - ww, ra.b - wh),
+    }
+    if pos not in coords:
+        return (f"не знаю позицию «{position}» — умею: центр, слева, справа, "
+                "сверху, снизу и четыре угла")
+    x, y = coords[pos]
+    user32.ShowWindow(w["hwnd"], 9)            # SW_RESTORE: из свёрнутого
+    if not user32.SetWindowPos(w["hwnd"], 0, x, y, ww, wh, 0x0004 | 0x0010):
+        return _blocked_note(w, "двигать")
+    return (f"Поставила «{w['title'][:50]}» {position}"
+            + (f", размер {max(10, min(100, width))}%x"
+               f"{max(10, min(100, height))}%" if width or height else "")
+            + ".")
 
 
 # ──────────────────────────────── звук ────────────────────────────────

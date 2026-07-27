@@ -3,6 +3,22 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 title Saika
 
+:: ---------- admin rights (2026-07-28) ----------
+:: One launcher, no extra files: start.bat elevates ITSELF. Why: Windows
+:: (UIPI) silently ignores window commands from a normal process to elevated
+:: windows - Task Manager could not be minimized. Elevated Saika can command
+:: everything. If UAC is declined, we continue as a normal user: everything
+:: works except controlling elevated windows.
+net session >nul 2>&1
+if errorlevel 1 (
+    echo [*] Requesting admin rights - so Saika can command ALL windows,
+    echo     including Task Manager. Decline is fine: she still runs,
+    echo     just without power over elevated windows.
+    powershell -NoProfile -Command "try { Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs -ErrorAction Stop; exit 0 } catch { exit 1 }"
+    if not errorlevel 1 exit /b 0
+    echo [i] UAC declined - continuing as normal user.
+)
+
 :: ---------- keep all model caches on this (portable) drive ----------
 set "HF_HOME=%~dp0models\hf"
 set "TORCH_HOME=%~dp0models\torch"

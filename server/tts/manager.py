@@ -301,10 +301,38 @@ class EdgeEngine:
         return None  # онлайн-сервис, модели в памяти нет — UI прячет кнопку
 
 
+class OffEngine:
+    """БЕЗ ОЗВУЧКИ (2026-07-27, просьба владельца: быстрые тестовые пуски).
+
+    Не движок, а осознанный выбор «молчать»: Qwen3-TTS компилируется под
+    минуту и занимает несколько гигабайт VRAM — при отладке мозгов это
+    просто налог. Сделан именно ПУНКТОМ СПИСКА, а не галочкой где-то в
+    настройках, потому что выбирается он там же, где остальные голоса, и
+    возвращается одним кликом.
+
+    Пустой speak() тут только для полноты контракта: настоящее выключение
+    живёт в TTSManager.speak — иначе цепочка фолбэка увидела бы «движок
+    ничего не выдал» и заботливо озвучила следующим по списку."""
+    name = "off"
+
+    def load(self):
+        pass
+
+    def speak(self, text):
+        return
+        yield          # noqa — делает функцию генератором, как у остальных
+
+    def unload(self):
+        pass
+
+    def is_loaded(self):
+        return None    # нечего грузить — UI прячет кнопку загрузки
+
+
 class TTSManager:
     def __init__(self, on_problem=None):
-        self.engines = {"qwen3": Qwen3Engine(), "silero": SileroEngine(),
-                        "edge": EdgeEngine()}
+        self.engines = {"off": OffEngine(), "qwen3": Qwen3Engine(),
+                        "silero": SileroEngine(), "edge": EdgeEngine()}
         # Доп. движки (2026-07-26): Piper (MIT, офлайн, CPU), XTTS-v2 и
         # F5-TTS-ru (клонирование). Подмешиваются отдельным модулем, чтобы
         # этот файл не разрастался и чтобы поломка нового движка не задела
@@ -424,7 +452,9 @@ class TTSManager:
         current = self.current_name
         # запасные: сначала ЛЮБИМЫЕ (tts.favorites — вкус владельца важнее
         # секундомера), внутри — по замеренной скорости на этом ПК
-        backups = [n for n in order if n != current]
+        # «off» не запасной вариант: свалиться в тишину при поломке движка
+        # — это не фолбэк, а молчание без объяснений
+        backups = [n for n in order if n != current and n != "off"]
         try:
             from server import ratings
             scores = ratings.tts_scores()
@@ -441,6 +471,11 @@ class TTSManager:
     def speak(self, text):
         """Генератор (pcm_f32_bytes, sample_rate). Сам падает на фоллбэк."""
         if not CFG.get("tts.enabled", True):
+            return
+        # «без озвучки» — выбор, а не поломка: выходим ДО цепочки фолбэка,
+        # иначе она увидит движок, не выдавший ни одного чанка, и озвучит
+        # следующим по списку (ровно то, от чего человек и отказался)
+        if self.current_name == "off":
             return
         for name in self._chain():
             engine = self.engines[name]

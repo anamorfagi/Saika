@@ -162,13 +162,21 @@ class STTManager:
         self._notified_fallback = None
 
     # ---------- выбор движка ----------
+    # БЕЗ СЛУХА (2026-07-27, просьба владельца: быстрые тестовые пуски).
+    # Само состояние «слух выключен» существовало и раньше (см. set_engine и
+    # process_chunk ниже), но выбрать его в интерфейсе было НЕЛЬЗЯ — пункта
+    # в списке движков не было, он появлялся только после жёсткой разгрузки.
+    # Теперь это обычный пункт: GigaAM и Whisper — это гигабайты VRAM и
+    # секунды прогрева, при отладке мозгов они не нужны.
+    OFF = ("", "none", "off")
+
     @property
     def current_name(self):
-        return CFG.get("stt.engine", "faster_whisper")
+        return CFG.get("stt.engine", "off")
 
     def set_engine(self, name):
-        if name in ("", "none", "off"):   # «ничего не выбрано» — слух выкл
-            CFG.set("stt.engine", "none")
+        if name in self.OFF:              # «ничего не выбрано» — слух выкл
+            CFG.set("stt.engine", "off")
             self.vad.reset()
             return
         if name not in ALL_ENGINES:
@@ -226,7 +234,7 @@ class STTManager:
         # состояние «ничего не выбрано» (2026-07-25): после жёсткой разгрузки
         # слух ВЫКЛЮЧЕН совсем — без этого первая же фраза лениво подгружала
         # текущий движок обратно, и кнопка выглядела неработающей
-        if self.current_name in ("", "none", "off"):
+        if self.current_name in self.OFF:
             return []
         sr = CFG.get("stt.sample_rate", 16000)
         results = []
@@ -388,5 +396,5 @@ class STTManager:
             except Exception:
                 loaded[name] = False
         return {"current": self.current_name, "health": self.health,
-                "engines": list(ALL_ENGINES), "loaded": loaded,
+                "engines": ["off"] + list(ALL_ENGINES), "loaded": loaded,
                 "errors": self.last_error, "diag": self.last_diag}

@@ -379,43 +379,58 @@ const R = THREE.MathUtils.degToRad;
 function bone(name){ return vrm && vrm.humanoid ? vrm.humanoid.getNormalizedBoneNode(name) : null; }
 let ROT_K = 1, EXPR_K = 1;      // пересчитываются каждый кадр в loop() из dt
 
-/* ГДЕ У ЭТОЙ МОДЕЛИ «РУКИ ОПУЩЕНЫ» (2026-07-26, третий заход).
+/* ГДЕ У ЭТОЙ МОДЕЛИ «РУКИ ОПУЩЕНЫ» (2026-07-27, четвёртый заход).
 
    Вся поза рук построена поворотом плеча по Z: +66° опускает левую руку из
    T-позы, −64° правую. На нашей модели это верно, но чужие VRM собирают
    нормализованный риг по-разному, и тот же поворот у них задирает руки
-   вверх или разводит в стороны.
+   вверх или разводит в стороны. Поэтому покой не угадываем, а МЕРЯЕМ.
 
-   Первые два захода угадывали ЗНАК — и оба раза мимо: сначала выгнулись
-   кисти, потом руки развело. Гадать тут нечего, потому что вариантов не
-   два: у разных ригов отличается и знак, и величина покоя.
+   Третий заход мерял «кисть ниже плеча и как можно ближе к телу» — и
+   выбирал угол, при котором руки ПРИЖАТЫ и уходят внутрь корпуса: у нашей
+   модели он давал 92° вместо 66°, предплечья тонули в юбке. Ошибка была в
+   самой мерке: «ближе к телу» — это не покой, это «внутрь тела». Плюс
+   направление подъёма мерялось по высоте кисти ровно в точке, где кисть
+   ниже всего, — там обе стороны дают одинаковый ответ, и знак выпадал
+   случайно (у нас −1, то есть все жесты шли зеркально).
 
-   Поэтому не угадываем, а МЕРЯЕМ. Перебираем поворот плеча по всему
-   диапазону и берём тот, при котором кисть оказывается ниже плеча и ближе
-   всего к телу — это и есть «рука висит вдоль тела» на любом риге, без
-   единого предположения о его устройстве. Отдельно проверяем, в какую
-   сторону от покоя рука ПОДНИМАЕТСЯ, чтобы жесты не сработали зеркально.
+   Меряем не «прижатость», а ОТВЕДЕНИЕ руки: угол между «плечо → кисть» и
+   вертикалью вниз, в сторону от тела. Это геометрия позы, она одинакова на
+   любом риге. У опущенной руки отведение маленькое, но НЕ нулевое: на
+   авторской модели угол +66° даёт 24° слева и 26° справа (замерено прямой
+   рукой, локоть в нуле) — это и есть цель перебора. На нашей модели перебор
+   возвращает ровно авторские 66/−64 (поза не меняется ни на пиксель), на
+   чужом риге — тот угол, который даёт ТУ ЖЕ позу.
+
+   Направление подъёма берём по тому же отведению: оно меняется с углом
+   монотонно, в отличие от высоты кисти, — знак больше не выпадает случайно.
 
    Дальше всё авторское остаётся как есть: поза считается как смещение от
    авторского покоя, наложенное на измеренный. Локоть и кисть не трогаем
    вообще — у них покой ноль, а ноль одинаков в любой системе координат.
    Перебор идёт один раз на загрузку модели. */
-const REST_AUTH = {leftUpperArm: 66, rightUpperArm: -64};
+const REST_AUTH   = {leftUpperArm: 66, rightUpperArm: -64};
+const REST_ABDUCT = {leftUpperArm: 24, rightUpperArm:  26};  // градусы отведения
 let armRest = null, armDir = 1;
 
 function calibrateArms(){
   armRest = null; armDir = 1;
   if (!vrm || !vrm.humanoid) return;
   const H = vrm.humanoid;
-  const a = new THREE.Vector3(), h = new THREE.Vector3();
+  const sh = new THREE.Vector3(), hd = new THREE.Vector3(), hp = new THREE.Vector3();
   const out = {};
   try{
-    const handY = (b, node, up, deg) => {
+    const rawHips = H.getRawBoneNode('hips');
+    // отведение руки при повороте плеча на deg: 0° — рука строго вниз,
+    // больше — сильнее отведена от тела вбок
+    const abduct = (b, rawU, rawH, sOut, deg) => {
       b.rotation.set(0, 0, R(deg));
       H.update();
       vrm.scene.updateWorldMatrix(true, true);
-      up.getWorldPosition(a); node.getWorldPosition(h);
-      return {drop: a.y - h.y, spread: Math.abs(h.x - a.x), y: h.y};
+      rawU.getWorldPosition(sh); rawH.getWorldPosition(hd);
+      const down = sh.y - hd.y;                  // >0 — кисть ниже плеча
+      const outw = (hd.x - sh.x) * sOut;         // >0 — кисть отведена от тела
+      return {down, ang: Math.atan2(outw, down) * 57.2958};
     };
     for (const side of ['left', 'right']){
       const name = side + 'UpperArm';
@@ -425,18 +440,29 @@ function calibrateArms(){
                 || H.getRawBoneNode(side + 'LowerArm');
       if (!b || !rawU || !rawH) return;          // риг без сырых костей
       const save = b.rotation.clone();
+      rawU.getWorldPosition(sh);
+      if (rawHips) rawHips.getWorldPosition(hp); else hp.set(0, 0, 0);
+      const sOut = (sh.x - hp.x) >= 0 ? 1 : -1;  // куда от тела смотрит это плечо
       let best = REST_AUTH[name], bestScore = Infinity;
-      for (let deg = -120; deg <= 120; deg += 4){
-        const m = handY(b, rawH, rawU, deg);
-        // хотим: кисть НИЖЕ плеча и не отведена вбок
-        const score = m.spread - m.drop;
-        if (score < bestScore){ bestScore = score; best = deg; }
-      }
+      const scan = (from, to, step) => {
+        for (let deg = from; deg <= to; deg += step){
+          const m = abduct(b, rawU, rawH, sOut, deg);
+          if (m.down <= 0) continue;             // кисть выше плеча — не покой
+          const score = Math.abs(m.ang - REST_ABDUCT[name]);
+          if (score < bestScore){ bestScore = score; best = deg; }
+        }
+      };
+      scan(-170, 170, 5);                        // грубо по всему кругу
+      const c = best; scan(c - 5, c + 5, 1);     // и точно вокруг найденного
+      // почти авторский угол — берём авторский: у своей модели поза
+      // обязана совпасть с ручной подгонкой в точности
+      if (Math.abs(best - REST_AUTH[name]) <= 3) best = REST_AUTH[name];
       out[name] = R(best);
       if (side === 'left'){
-        // куда рука поднимается: у автора её поднимает УМЕНЬШЕНИЕ z
-        const lo = handY(b, rawH, rawU, best - 15).y;
-        const hi = handY(b, rawH, rawU, best + 15).y;
+        // куда рука поднимается: у автора её поднимает УМЕНЬШЕНИЕ z, то есть
+        // при меньшем z отведение больше
+        const lo = abduct(b, rawU, rawH, sOut, best - 10).ang;
+        const hi = abduct(b, rawU, rawH, sOut, best + 10).ang;
         armDir = (lo > hi) ? 1 : -1;
       }
       b.rotation.copy(save);

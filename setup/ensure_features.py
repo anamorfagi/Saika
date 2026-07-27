@@ -95,6 +95,24 @@ FEATURES = {
         "extra_modules": [],
         "extra_pip": [],
     },
+    # НЕ ПАКЕТ, А ПРОГРАММА (2026-07-27). Свой движок мозгов — нативный
+    # llama-server из llama.cpp: он не ставится через pip, это .exe из
+    # релиза на GitHub. Раньше такие вещи приходилось ставить руками
+    # отдельной командой — ровно то, чего в проекте быть не должно: всё
+    # доставляется само, при обычном запуске start.bat.
+    "llamacpp": {
+        "title": "Свой движок мозгов (llama.cpp, CUDA)",
+        "core_modules": [],
+        "core_pip": [],
+        "extra_modules": [],
+        "extra_pip": [],
+        # проверка — по файлу на диске, а не по importlib
+        "core_files": ["third_party/llamacpp/llama-server.exe"],
+        "install_script": "setup/install_llamacpp.py",
+        # ~600 МБ разово; отключается llamacpp.autoinstall=false в config
+        "config_flag": "llamacpp.autoinstall",
+        "windows_only": True,
+    },
 }
 
 
@@ -126,6 +144,50 @@ def have(mod: str) -> bool:
 
 def missing(mods) -> list:
     return [m for m in mods if not have(m)]
+
+
+def missing_files(paths) -> list:
+    """Чего не хватает из ПРОГРАММ (не пакетов). Проверка на существование
+    файла — такая же дешёвая, как find_spec, и так же безопасна на каждом
+    старте."""
+    return [p for p in (paths or []) if not (ROOT / p).exists()]
+
+
+def run_installer(script: str) -> bool:
+    """Своя установка возможности (скачать бинарь, распаковать). Скрипт сам
+    решает, что делать; наше дело — позвать и не уронить старт."""
+    print(f"    > {script}")
+    try:
+        return subprocess.run([PY, str(ROOT / script)],
+                              cwd=str(ROOT)).returncode == 0
+    except Exception as e:
+        print(f"    [!] {script} не запустился: {e}")
+        return False
+
+
+def _flag_allows(spec: dict) -> bool:
+    """Возможность может быть выключена настройкой (напр. не качать 600 МБ
+    движка на машине, где он не нужен). Конфиг читаем сами, без импорта
+    server.config: этот скрипт зовётся ДО того, как проект вообще готов."""
+    key = spec.get("config_flag")
+    if not key:
+        return True
+    val = None
+    for name in ("config.local.json", "config.json"):
+        try:
+            data = json.loads((ROOT / name).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        node = data
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                node = None
+                break
+            node = node[part]
+        if node is not None:
+            val = node
+            break
+    return True if val is None else bool(val)
 
 
 def pip_install(pkgs) -> bool:
@@ -162,7 +224,8 @@ def _skip_reason(rec: dict, force: bool) -> str:
 
 
 def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
-    core_miss = missing(spec["core_modules"])
+    core_miss = missing(spec["core_modules"]) + missing_files(
+        spec.get("core_files"))
     extra_miss = missing(spec.get("extra_modules", []))
     rec = st.setdefault("features", {}).setdefault(name, {})
 
@@ -175,6 +238,11 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
         rec.update(status="ok", ts=time.time())
         return {"feature": name, "ok": True, "action": "уже всё есть"}
 
+    if spec.get("windows_only") and os.name != "nt":
+        return {"feature": name, "ok": True, "action": "не для этой ОС"}
+    if not _flag_allows(spec):
+        return {"feature": name, "ok": True, "action": "выключено настройкой"}
+
     reason = _skip_reason(rec, force)
     if reason and core_miss:
         print(f"[~] {spec['title']}: пропускаю — {reason}")
@@ -183,8 +251,11 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
     print(f"\n[*] {spec['title']}: доставляю недостающее")
     ok = True
     if core_miss:
-        print(f"    нет модулей: {', '.join(core_miss)}")
-        ok = pip_install(spec["core_pip"])
+        print(f"    нет: {', '.join(core_miss)}")
+        if spec.get("install_script"):
+            ok = run_installer(spec["install_script"])
+        else:
+            ok = pip_install(spec["core_pip"])
     if extra_miss and (ok or not core_miss):
         # ускорители ставим отдельной командой, чтобы падение одного колеса
         # не утащило за собой обязательную часть
@@ -192,7 +263,8 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
         if not pip_install(spec["extra_pip"]):
             print("    [~] ускорители не встали — не страшно, работаем без них")
 
-    still = missing(spec["core_modules"])
+    still = missing(spec["core_modules"]) + missing_files(
+        spec.get("core_files"))
     if still:
         rec.update(status="failed", ts=time.time(),
                    attempts=int(rec.get("attempts", 0)) + 1,

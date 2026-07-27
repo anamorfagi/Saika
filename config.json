@@ -9,15 +9,15 @@
     "backend": "cloud",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "GigaChat-2-Pro",
+    "model": "mistral-medium-3-5",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "gigachat",
-      "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
-      "model": "GigaChat-2-Pro"
+      "provider": "mistral",
+      "base_url": "https://api.mistral.ai/v1",
+      "model": "mistral-medium-3-5"
     },
     "tools_broken": [
       "gemma-4-e4b-it",
@@ -66,7 +66,13 @@
         "base_url": "https://api.moonshot.ai/v1",
         "model": "kimi-k3"
       }
-    ]
+    ],
+    "fast_mode": true,
+    "fast_context_chars": 24000,
+    "reasoning_effort": "none",
+    "router": {
+      "enabled": true
+    }
   },
   "tools": {
     "enabled": true,
@@ -398,5 +404,8 @@
       "other",
       "notes"
     ]
+  },
+  "llamacpp": {
+    "n_ctx": 24576
   }
 }
