@@ -100,8 +100,15 @@ class Qwen3Engine:
                     f"({_avail_gb:.1f} ГБ, нужно ~8): закрой лишнее или "
                     f"увеличь файл подкачки Windows. Пока говорю запасным "
                     f"голосом.")
-            import torch
-            from qwen_tts import Qwen3TTSModel
+            # под общим замком тяжёлых загрузок: на старте ECAPA, Vosk и
+            # этот движок поднимаются одновременно, и параллельный импорт
+            # внутренностей torch роняет пришедшего вторым с «Duplicate
+            # registration» (см. server/torch_gate.py; живой лог 2026-07-28 —
+            # qwen3 падал с этой ошибкой два запуска подряд)
+            from server.torch_gate import TORCH_GATE
+            with TORCH_GATE:
+                import torch
+                from qwen_tts import Qwen3TTSModel
 
             cfg = CFG.get("tts.qwen3", {})
             attn = cfg.get("attn", "auto")

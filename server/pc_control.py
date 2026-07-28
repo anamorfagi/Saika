@@ -404,6 +404,22 @@ _APP_ALIASES = {
 }
 
 
+def _aliases() -> dict:
+    """Встроенные алиасы + пользовательские из config (pc.window_aliases).
+    Практика Talon: имена приложений переопределяются человеком под себя
+    («running list» + CSV-оверрайды). У нас — словарь в конфиге:
+        "pc": {"window_aliases": {"корел": "coreldraw", "тг": "telegram"}}
+    """
+    out = dict(_APP_ALIASES)
+    try:
+        from server.config import CFG as _c
+        for k, v in (_c.get("pc.window_aliases", {}) or {}).items():
+            out[str(k).lower().strip()] = str(v).lower().strip()
+    except Exception:
+        pass
+    return out
+
+
 def _match(query: str):
     """Найти окно по куску заголовка или имени процесса (+русские алиасы)."""
     q = (query or "").strip().lower()
@@ -416,8 +432,8 @@ def _match(query: str):
     for w in ws:                       # иначе по имени процесса
         if q in (w["proc"] or "").lower():
             return w
-    alias = _APP_ALIASES.get(q) or next(
-        (v for k, v in _APP_ALIASES.items() if k in q), "")
+    _al = _aliases()
+    alias = _al.get(q) or next((v for k, v in _al.items() if k in q), "")
     if alias:
         for w in ws:
             if alias in (w["proc"] or "").lower() \

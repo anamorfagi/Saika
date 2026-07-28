@@ -94,6 +94,28 @@ def _extra_rules():
     return rules
 
 
+# ЦЕПОЧКИ КОМАНД (2026-07-28, практика Talon: команды идут связками без
+# пауз). «Сверни всё и открой проводник» раньше уходило модели целиком —
+# теперь фраза режется по связкам « и / потом / затем / а после », и если
+# КАЖДЫЙ кусок — рефлекс, исполняется вся цепочка (до 3 действий). Если
+# хоть один кусок рефлексом не ловится — вся фраза уходит модели, как
+# раньше: полкоманды делать хуже, чем не делать вовсе.
+_CHAIN_SPLIT = re.compile(r"\s*(?:,\s*)?(?:\bи\b|\bпотом\b|\bзатем\b|"
+                          r"\bа после\b|\bпосле этого\b)\s+", re.I)
+
+
+def match_chain(user_text: str) -> list:
+    """[(имя, аргументы), ...] если ВСЯ фраза — цепочка рефлексов, иначе []."""
+    t = (user_text or "").strip()
+    if not t or len(t) > 120:
+        return []
+    parts = [p.strip() for p in _CHAIN_SPLIT.split(t) if p.strip()]
+    if len(parts) < 2 or len(parts) > 3:
+        return []
+    hits = [match(p) for p in parts]
+    return hits if all(hits) else []
+
+
 def match(user_text: str):
     """None или (имя_инструмента, аргументы). Стоит доли миллисекунды."""
     if not CFG.get("reflex.enabled", True):

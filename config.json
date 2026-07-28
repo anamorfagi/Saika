@@ -6,10 +6,10 @@
     "token": "DRbZ5FaL"
   },
   "llm": {
-    "backend": "cloud",
+    "backend": "llamacpp",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "mistral-medium-3-5",
+    "model": "google/gemma-4-e4b",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
@@ -72,7 +72,9 @@
     "reasoning_effort": "none",
     "router": {
       "enabled": true
-    }
+    },
+    "off": false,
+    "n_ctx": "32768"
   },
   "tools": {
     "enabled": true,
@@ -109,7 +111,7 @@
     ]
   },
   "stt": {
-    "engine": "gigaam",
+    "engine": "faster_whisper",
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
@@ -355,10 +357,10 @@
     }
   },
   "vision": {
-    "enabled": true,
+    "enabled": false,
     "tools": true,
     "monitor": 0,
-    "camera_index": 0,
+    "camera_index": -1,
     "camera_w": 1280,
     "camera_h": 720,
     "camera_probe": 4,
@@ -406,6 +408,10 @@
     ]
   },
   "llamacpp": {
-    "n_ctx": 24576
+    "n_ctx": 24576,
+    "model": "google/gemma-4-e4b"
+  },
+  "denoise": {
+    "engine": "noisereduce"
   }
 }

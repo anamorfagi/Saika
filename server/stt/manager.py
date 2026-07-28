@@ -219,7 +219,14 @@ class STTManager:
 
     def _get(self, name):
         if name not in self.instances:
-            self.instances[name] = ALL_ENGINES[name]()
+            # загрузка движка — секунды и торчёвые импорты; под общим
+            # замком, чтобы не столкнуться с параллельной загрузкой TTS
+            # или silero_te (см. server/torch_gate.py — «Duplicate
+            # registration» из живого лога 2026-07-28)
+            from server.torch_gate import TORCH_GATE
+            with TORCH_GATE:
+                if name not in self.instances:
+                    self.instances[name] = ALL_ENGINES[name]()
         return self.instances[name]
 
     def _healthy_chain(self):
@@ -229,6 +236,95 @@ class STTManager:
         return [n for n in chain if self.health.get(n) != "broken"]
 
     # ---------- пайплайн ----------
+    # РАЗДЕЛЕНИЕ НАРЕЗКИ И РАСПОЗНАВАНИЯ (2026-07-28).
+    #
+    # process_chunk делает две работы разной цены в одном вызове: дешёвую
+    # (VAD решает, кончилась ли фраза — микросекунды) и дорогую (движок
+    # думает над готовым куском — больше секунды). Пока они вместе, поток
+    # слуха на каждой фразе замирает, а звук в это время идёт: очередь
+    # набирается, и дальше одно из двух — либо ронять звук и терять слова,
+    # либо копить и отставать. Владелец увидел ровно это: «уронила 3258
+    # чанков» и «транскриб отстал на 20 секунд». Это не настройка, это
+    # устройство: одна очередь на две работы с разницей в тысячу раз.
+    #
+    # Поэтому здесь появились два отдельных входа. cut() зовётся на каждый
+    # чанк и стоит копейки, transcribe_segment() — только на готовую фразу,
+    # в СВОЁМ потоке (см. server/main.py). Горячий цикл больше не ждёт
+    # движок, ронять звук не нужно, а текст просто приходит чуть позже.
+    #
+    # process_chunk остался нетронутым: им пользуются потоковые движки
+    # (Vosk), которым нарезка не нужна вовсе.
+    def cut(self, pcm16: np.ndarray):
+        """Только нарезка. -> готовый сегмент np.int16 или None."""
+        if self.current_name in self.OFF:
+            return None
+        return self.vad.push(pcm16)
+
+    def is_streaming(self) -> bool:
+        if self.current_name in self.OFF:
+            return False
+        try:
+            return self._get(self.current_name).kind == "streaming"
+        except Exception:
+            return False
+
+    def peek(self, min_s: float = 2.0, max_s: float = 14.0):
+        """Снимок НЕЗАКОНЧЕННОЙ фразы для скользящей нормализации (2026-07-28).
+
+        Пока человек говорит, VAD копит буфер и молчит. Обычный путь ждёт
+        конца фразы — отсюда «текст приходит кусками». Снимок позволяет
+        точному движку перечитывать фразу ПО ХОДУ: каждые пару секунд весь
+        накопленный кусок распознаётся заново и подменяет черновик уже
+        правильными словами. Ровно так это ощущается у больших сервисов:
+        слова сразу, красота догоняет.
+
+        Хвост длиннее max_s не отдаём: перечитывать полминуты каждые две
+        секунды — квадратичная цена, а начало фразы всё равно уже показано."""
+        if self.current_name in self.OFF:
+            return None
+        v = self.vad
+        if not v.in_speech or not v.buffer:
+            return None
+        if v.speech_samples < v.sr * min_s:
+            return None
+        try:
+            snap = np.concatenate(list(v.buffer))
+            return snap[-int(v.sr * max_s):]
+        except Exception:
+            return None
+
+    def transcribe_segment(self, segment: np.ndarray) -> list[dict]:
+        """Распознать готовую фразу цепочкой движков. Может думать секунды —
+        поэтому зовётся из отдельного потока, а не из потока слуха."""
+        # ГРАБЛИ 2026-07-28, поймал владелец: «выгрузить всё» не сработало.
+        # Разгрузка ставила движок в «none», но фразы, уже лежавшие в
+        # очереди распознавания, шли сюда, здесь проверки «выключено» НЕ
+        # БЫЛО — и запасная цепочка лениво поднимала GigaAM обратно.
+        # Кнопка отрабатывала честно, а через секунду всё висело в памяти
+        # снова. Проверка обязана быть в КАЖДОМ входе, а не только в
+        # process_chunk.
+        if self.current_name in self.OFF:
+            return []
+        if segment is None or not len(segment):
+            return []
+        sr = CFG.get("stt.sample_rate", 16000)
+        for name in self._healthy_chain():
+            try:
+                with self.lock:
+                    text = self._get(name).transcribe(segment, sr)
+                results = [{"text": text, "engine": name}] if text else []
+                if name != self.current_name:
+                    if self._notified_fallback != name:
+                        self._notify(name)
+                        self._notified_fallback = name
+                else:
+                    self._notified_fallback = None
+                self.health[name] = "ok"
+                return self._drop_junk(results)
+            except Exception as e:
+                self._mark_broken(name, e)
+        return []
+
     def process_chunk(self, pcm16: np.ndarray) -> list[dict]:
         """Вернёт [{'text':..., 'engine':...}] за готовые фразы."""
         # состояние «ничего не выбрано» (2026-07-25): после жёсткой разгрузки

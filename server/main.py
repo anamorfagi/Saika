@@ -41,6 +41,12 @@ from server import git_sync
 from server.proc_utils import kill_by_port, register_console_close_handler
 from server.stt.manager import STTManager
 from server.tts.manager import TTSManager, split_sentences
+from server import voiceprint
+from server.denoise import DENOISE
+from server.draft import DRAFT
+from server.earlog import EARLOG
+from server.transcript import TRANSCRIPT, mood_of
+from server.guard import GUARD
 from server.memory.memory import Memory, start_scheduler
 
 logging.basicConfig(
@@ -123,6 +129,12 @@ async def _guard(request, call_next):
 
 PROBLEMS: list[dict] = []          # лента проблем/починок для UI
 ACTIVE_LLM = {"backend": "", "model": ""}  # кто реально отвечал последним
+# Жёсткая разгрузка была, и с тех пор владелец ничего не поднимал. Пока
+# флаг стоит, внутренние импульсы молчат — они будят LLM, а «выгрузить всё»
+# значит выгрузить ВСЁ. Снимается голосом/текстом владельца или загрузкой
+# модели: любое из этого — явное «живём дальше».
+HARD_UNLOADED = {"on": False}
+CTX_WARN = {"sent": False}   # «окно мало» — Беймаксу, один раз за запуск
 EVENT_CLIENTS: set = set()          # активные websockets
 DIALOG_CUTOFF = {"ts": 0.0}         # «новый диалог»: контекст только после отметки
 HISTORY_ANCHOR = {"ts": 0.0}        # якорь окна истории: стабильный префикс промпта => живой KV-кэш
@@ -158,6 +170,21 @@ LAST_STT: dict = {}      # engine/stt_ms последнего распознав
 # растёт с каждым ходом на два сообщения, поэтому хэш менялся ВСЕГДА — и
 # ничего не сообщал. Длина общего префикса отвечает на вопрос прямо.
 LAST_PROMPT = {"text": ""}
+HEAR_DROP = {"n": 0}     # сколько чанков уронили, потому что слух не успевал
+
+# СЧЁТЧИКИ СЛУХА (2026-07-28). Жалоба «пропускает слова между строк» не
+# лечится глядением в экран: пропасть слово может в четырёх разных местах, и
+# все они выглядят одинаково — тишина в чате.
+#   1. чанк уронила очередь (движок не успевает);
+#   2. VAD не увидел речи вовсе — порог выше голоса (шумодав придавил или
+#      шумовой пол уполз вверх);
+#   3. сегмент был, но движок вернул пустоту;
+#   4. движок вернул текст, а фильтр галлюцинаций его выбросил.
+# Каждый случай лечится по-своему и ни один не виден снаружи. Поэтому
+# считаем всё и показываем числа: одна строка вместо часа догадок.
+HEAR_STAT = {"chunks": 0, "dropped": 0, "segments": 0, "empty": 0,
+             "quiet": 0, "rms": 0.0, "thr": 0.0, "q": 0,
+             "den_ms": 0.0, "cut_ms": 0.0, "stt_ms": 0.0, "lag": 0}
 LAST_IMAGE = {"data": None, "ts": 0.0}  # последняя картинка (для OCR слепыми)
 # уникальный id этого запуска процесса: вкладка запоминает его при коннекте
 # и, если после переподключения видит другой id, значит сервер
@@ -332,12 +359,22 @@ def baymax_asset(fname: str):
 @app.get("/api/status")
 def status():
     return {
+        # «loaded» (2026-07-28): какие модели РЕАЛЬНО лежат в памяти. Нужен
+        # интерфейсу, чтобы индикаторы честно гасли после «Выгрузить всё из
+        # памяти»: раньше точка мозгов горела зелёным просто потому, что
+        # бэкенд отвечает по сети, — а моделей в памяти уже не было.
+        # Список кэшируется на 5с внутри менеджера (см. LATENCY.md), роут
+        # синхронный и живёт в пуле потоков, событийный цикл не держит.
         "llm": {"backends": llm.backend_status(),
+                "loaded": llm.loaded_models(),
                 "active": ACTIVE_LLM,
                 "backend": CFG.get("llm.backend"),
                 "model": CFG.get("llm.model"),
+                "off": bool(CFG.get("llm.off", False)),
                 "think": bool(CFG.get("llm.think", False))},
         "stt": stt.status(),
+        # числа слуха: где именно теряются слова (см. HEAR_STAT)
+        "hear": dict(HEAR_STAT),
         "tts": tts.status(),
         "memory": memory.stats(),
         "problems": PROBLEMS[-10:],
@@ -632,6 +669,81 @@ def _diagnose_silence(backend: str, model: str, generated_tokens: int) -> str:
     return "; ".join(parts)
 
 
+_GPU_PROC_CACHE = {"ts": 0.0, "procs": []}
+
+
+def _gpu_procs_windows():
+    """Память GPU по процессам через счётчики Windows (WDDM прячет её от
+    nvidia-smi). Один вызов PowerShell — сотни миллисекунд, поэтому кэш:
+    панель системы обновляется чаще, чем меняется расклад по памяти."""
+    if os.name != "nt":
+        return []
+    now = time.time()
+    if now - _GPU_PROC_CACHE["ts"] < 15:
+        return _GPU_PROC_CACHE["procs"]
+
+
+    _GPU_PROC_CACHE["ts"] = now
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage')."
+             "CounterSamples | Where-Object {$_.CookedValue -gt 50MB} | "
+             "ForEach-Object { $_.InstanceName + '|' + "
+             "[int64]$_.CookedValue }"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        agg = {}
+        for line in r.stdout.strip().splitlines():
+            if "|" not in line:
+                continue
+            inst, val = line.rsplit("|", 1)
+            m = re.search(r"pid_(\d+)", inst)
+            if not m:
+                continue
+            agg[int(m.group(1))] = agg.get(int(m.group(1)), 0) + int(val)
+        me = os.getpid()
+        procs = []
+        try:
+            import psutil
+        except Exception:
+            psutil = None
+        for pid, b in agg.items():
+            base = ""
+            if psutil is not None:
+                try:
+                    base = psutil.Process(pid).name().lower()
+                except Exception:
+                    base = ""
+            if "llama-server" in base:
+                who = "мозги · llama.cpp"
+            elif "ollama" in base:
+                who = "мозги · ollama"
+            elif "lm" in base and "studio" in base:
+                who = "мозги · LM Studio"
+            elif base.startswith("python") and pid == me:
+                who = "Сайка · слух и голоса"
+            elif base.startswith("python"):
+                who = f"python · {pid}"
+            elif any(x in base for x in ("chrome", "msedge", "firefox")):
+                who = "браузер (интерфейс, аватар)"
+            elif "dwm" in base:
+                who = "Windows · рабочий стол"
+            else:
+                who = base.replace(".exe", "") or f"pid {pid}"
+            procs.append({"who": who, "mb": int(b / 2**20)})
+        # одинаковые имена складываем: у хрома десяток процессов
+        by = {}
+        for x in procs:
+            by[x["who"]] = by.get(x["who"], 0) + x["mb"]
+        procs = [{"who": k, "mb": v} for k, v in by.items()]
+        procs.sort(key=lambda x: -x["mb"])
+        _GPU_PROC_CACHE["procs"] = procs
+    except Exception:
+        pass
+    return _GPU_PROC_CACHE["procs"]
+
+
 @app.get("/api/system")
 def system_info():
     """Загрузка системы для панели слева: ЦП, ОЗУ, GPU/VRAM."""
@@ -663,6 +775,52 @@ def system_info():
         info["gpu"] = {"name": name, "vram_total": int(mt) * 2**20,
                        "vram_used": int(mu) * 2**20,
                        "util": int(util), "temp": int(temp)}
+        # КТО ИМЕННО ЕСТ VRAM (2026-07-28, вопрос владельца «почему столько
+        # жрёт»). Одно число «11.2 ГБ» не отвечает на вопрос — отвечает
+        # список по процессам: мозги отдельно, слух отдельно, браузер с
+        # аватаром отдельно. nvidia-smi отдаёт это бесплатно.
+        try:
+            rp = subprocess.run(
+                ["nvidia-smi", "--query-compute-apps="
+                 "pid,process_name,used_memory",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=4,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            me = os.getpid()
+            procs = []
+            for line in rp.stdout.strip().splitlines():
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) < 3:
+                    continue
+                pid, pname, mb = parts[0], parts[1].lower(), parts[2]
+                base = pname.rsplit("\\", 1)[-1]
+                if "llama-server" in base:
+                    who = "мозги · llama.cpp"
+                elif "ollama" in base:
+                    who = "мозги · ollama"
+                elif "lm studio" in pname or "lmstudio" in pname:
+                    who = "мозги · LM Studio"
+                elif base.startswith("python") and str(me) == pid:
+                    who = "Сайка · слух и голоса"
+                elif base.startswith("python"):
+                    who = "python · " + pid
+                elif "chrome" in base or "msedge" in base or "firefox" in base:
+                    who = "браузер (интерфейс, аватар)"
+                else:
+                    who = base.replace(".exe", "")
+                try:
+                    procs.append({"who": who, "mb": int(float(mb))})
+                except Exception:
+                    pass
+            procs.sort(key=lambda x: -x["mb"])
+            if not procs:
+                # Windows в режиме WDDM часто не отдаёт память по процессам
+                # через nvidia-smi — берём её из счётчиков производительности.
+                # PowerShell дорогой (сотни мс), поэтому кэш на 15 секунд.
+                procs = _gpu_procs_windows()
+            info["gpu"]["procs"] = procs[:8]
+        except Exception:
+            pass
     except Exception:
         try:
             import torch
@@ -676,6 +834,15 @@ def system_info():
     return info
 
 
+@app.post("/api/llm/off")
+def llm_off(payload: dict):
+    """Выключить/включить мозги. Модель из памяти не выгружается — она просто
+    не зовётся; вернуть обратно можно тем же кликом, без прогрева."""
+    CFG.set("llm.off", bool(payload.get("on")))
+    broadcast_event({"type": "llm_off", "on": bool(CFG.get("llm.off"))})
+    return {"ok": True, "off": bool(CFG.get("llm.off"))}
+
+
 @app.post("/api/llm/model")
 async def llm_model(payload: dict):
     """Ручная загрузка/выгрузка LLM-модели (кнопки ⬇/⏏ в списке моделей)."""
@@ -684,6 +851,7 @@ async def llm_model(payload: dict):
     action = payload.get("action")
     try:
         if action == "load":
+            HARD_UNLOADED["on"] = False   # явное «поднимай» от владельца
             ok = await asyncio.get_event_loop().run_in_executor(
                 None, llm.warmup, backend, name)
         elif action == "unload":
@@ -801,6 +969,253 @@ async def stt_model(payload: dict):
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
+# ------------------------- журнал слуха (час записи) ------------------------
+# 2026-07-28. Включил — она час слушает комнату и потом отдаёт отчёт: сколько
+# было голосов, как они звучат, какие были посторонние звуки. Сам звук не
+# сохраняется, только числа (см. server/earlog.py).
+@app.get("/api/earlog")
+def earlog_status():
+    return EARLOG.status()
+
+
+@app.post("/api/earlog/start")
+def earlog_start(payload: dict):
+    return EARLOG.start(float(payload.get("minutes", 60)),
+                        keep=bool(payload.get("keep", False)))
+
+
+@app.post("/api/earlog/stop")
+def earlog_stop():
+    return EARLOG.stop()
+
+
+@app.post("/api/earlog/report")
+def earlog_report():
+    r = EARLOG.report(reg=voiceprint.S.reg)
+    return {"ok": True, "file": r["file"],
+            "voices": len(r["voices"]), "sounds": len(r["sounds"])}
+
+
+@app.post("/api/earlog/adopt")
+def earlog_adopt(payload: dict):
+    """Запомнить голос, найденный в отчёте, как знакомого — по номеру."""
+    return EARLOG.adopt(int(payload.get("id", 0)), payload.get("name", ""),
+                        voiceprint.S.reg)
+
+
+@app.get("/earlog/{fname}")
+def earlog_file(fname: str):
+    # отчёт открывается ссылкой из интерфейса; имя чистим — путь наружу не даём
+    safe = "".join(c for c in fname if c.isalnum() or c in "._-")
+    p = ROOT / "data" / "earlog" / safe
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="нет такого отчёта")
+    return FileResponse(p, media_type="text/html; charset=utf-8")
+
+
+# ---------------------------- шумодав ---------------------------------------
+# 2026-07-28. Не галочка, а подсистема со сменными движками: см.
+# server/denoise.py и стенд tools/denoise_bench.py. Ручки нарочно простые —
+# выбрать движок, посмотреть выученный профиль шума, переучить его заново.
+@app.get("/api/transcript")
+def transcript_status():
+    return TRANSCRIPT.status()
+
+
+@app.post("/api/transcript/start")
+def transcript_start():
+    return TRANSCRIPT.start()
+
+
+@app.post("/api/transcript/stop")
+def transcript_stop():
+    r = TRANSCRIPT.stop()
+    try:
+        return {**r, **TRANSCRIPT.save()}
+    except Exception as e:
+        return {**r, "ok": False, "error": str(e)}
+
+
+@app.get("/transcript/{fname}")
+def transcript_file(fname: str):
+    p = (ROOT / "data" / "transcript" / fname).resolve()
+    if not str(p).startswith(str((ROOT / "data" / "transcript").resolve())) \
+            or not p.exists():
+        return PlainTextResponse("нет такого файла", status_code=404)
+    return FileResponse(str(p), media_type="text/markdown")
+
+
+@app.get("/api/denoise")
+def denoise_status():
+    st = DENOISE.status()
+    st["profile"] = DENOISE.profile()
+    return st
+
+
+@app.post("/api/denoise/set")
+def denoise_set(payload: dict):
+    if "engine" in payload:
+        DENOISE.set_engine(str(payload["engine"]))
+    for k in ("over", "floor", "gate_ratio", "gate_min", "min_bias",
+              "gate_hold_ms"):
+        if k in payload:
+            CFG.set("denoise." + k, payload[k])
+    st = DENOISE.status()
+    st["profile"] = DENOISE.profile()
+    return st
+
+
+@app.post("/api/denoise/relearn")
+def denoise_relearn():
+    # Забыть выученный шум и слушать комнату заново. Нужно, когда обстановка
+    # сменилась разом: включили вытяжку, приехали гости, переехали с наушников
+    # на колонки. Сам профиль подстроится и без этого, но не мгновенно.
+    st = DENOISE.relearn()
+    st["profile"] = DENOISE.profile()
+    return st
+
+
+# ---------------------- отпечаток голоса (кто говорит) ----------------------
+# 2026-07-28. Блок слуха научился отвечать не только «что сказано», но и
+# «кем». Ручки нарочно простые: включить/выключить, записать голос, забыть,
+# отдать облако точек для визуализации. Вся механика — в server/voiceprint.
+@app.get("/api/voiceprint")
+def voiceprint_status():
+    return voiceprint.status()
+
+
+@app.get("/api/voiceprint/points")
+def voiceprint_points():
+    """Всё накопленное облако в координатах ТЕКУЩЕЙ проекции. Интерфейс
+    просит его при открытии окна и после каждого переобучения — координаты
+    после переобучения другие, старые точки без пересчёта оказались бы в
+    чужой системе координат."""
+    return voiceprint.points()
+
+
+@app.post("/api/voiceprint/set")
+def voiceprint_set(payload: dict):
+    if "enabled" in payload:
+        voiceprint.set_enabled(bool(payload["enabled"]))
+    # listen_self — слушает ли она саму себя. Выключается отдельно от всего
+    # модуля: бывает нужно смотреть только на людей в комнате.
+    if "listen_self" in payload:
+        voiceprint.set_listen_self(bool(payload["listen_self"]))
+    return voiceprint.status()
+
+
+@app.post("/api/voiceprint/enroll")
+def voiceprint_enroll(payload: dict):
+    """action: start | stop | cancel. Запись эталона идёт из живой речи —
+    человек просто говорит, модуль сам набирает нужное число векторов."""
+    action = payload.get("action", "start")
+    if action == "start":
+        return voiceprint.enroll_start(payload.get("name", ""),
+                                       int(payload.get("need", 24)))
+    if action == "stop":
+        return voiceprint.enroll_finish()
+    return voiceprint.enroll_cancel()
+
+
+@app.post("/api/voiceprint/rename")
+def voiceprint_rename(payload: dict):
+    """Переименовать голос. По умолчанию имя ЗАКРЕПЛЯЕТСЯ: дальше она только
+    учится его узнавать, но переименовать сама больше не может."""
+    return voiceprint.rename(payload.get("old", ""), payload.get("new", ""),
+                             pin=bool(payload.get("pin", True)))
+
+
+@app.get("/api/guard")
+def guard_status():
+    """Защита железа: последние показания, пороги, диагноз прошлого
+    выключения. Для товарища с гаснущим ПК — первое место, куда смотреть."""
+    return GUARD.status()
+
+
+@app.get("/api/hear")
+def hear_stat():
+    """Только счётчики слуха. Отдельным лёгким роутом, а не внутри
+    /api/status: тот опрашивает бэкенды мозгов и во время подъёма
+    llama-server отвечает не мгновенно, а эту строку панель дёргает часто."""
+    return dict(HEAR_STAT)
+
+
+@app.post("/api/voiceprint/color")
+def voiceprint_color(payload: dict):
+    """Перекрасить голос. Золото не выдаётся: это цвет создателя."""
+    return voiceprint.set_color(payload.get("name", ""),
+                                payload.get("color", ""))
+
+
+@app.post("/api/voiceprint/seal")
+def voiceprint_seal(payload: dict):
+    """«Твой голос, пупсик»: пометить голос создателем (золото, закреплён)
+    и запечатать в проект — зашифрованный файл едет с репозиторием, ключ
+    остаётся в secrets.json."""
+    return voiceprint.seal_owner(payload.get("name", ""))
+
+
+@app.post("/api/voiceprint/enroll_file")
+async def voiceprint_enroll_file(file: UploadFile = File(...),
+                                 name: str = "", owner: bool = False):
+    """Эталон из аудиофайла (диктофон телефона). owner=true — сразу пометить
+    создателем и запечатать."""
+    import tempfile
+    suffix = Path(file.filename or "rec.wav").suffix or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+        f.write(await file.read())
+        tmp = f.name
+    try:
+        r = await asyncio.get_event_loop().run_in_executor(
+            None, voiceprint.enroll_file,
+            (name or "Виталий").strip()[:32], tmp, bool(owner))
+        return r
+    finally:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
+@app.post("/api/voiceprint/enroll_path")
+def voiceprint_enroll_path(payload: dict):
+    """Эталон из файла, уже лежащего НА ДИСКЕ этой машины (2026-07-28):
+    владелец наговорил текст на диктофон, файл положили в voice/ — и одна
+    команда строит эталон без возни с загрузкой через формы. Путь только
+    внутри папки Сайки: этот роут — не читалка чужих дисков."""
+    rel = str(payload.get("path", "")).strip()
+    p = (ROOT / rel).resolve()
+    if not str(p).startswith(str(ROOT.resolve())) or not p.exists():
+        return {"ok": False, "error": f"нет файла {rel} внутри папки Сайки"}
+    return voiceprint.enroll_file(
+        (payload.get("name") or "Виталий").strip()[:32],
+        str(p), bool(payload.get("owner")))
+
+
+@app.post("/api/voiceprint/merge")
+def voiceprint_merge(payload: dict):
+    """Слить два голоса в один: владелец перетащил плашку на плашку и тем
+    самым сказал «это один и тот же человек». Его слово важнее порога."""
+    return voiceprint.merge(payload.get("src", ""), payload.get("dst", ""))
+
+
+@app.post("/api/voiceprint/forget")
+def voiceprint_forget(payload: dict):
+    return voiceprint.forget(payload.get("name", ""))
+
+
+@app.post("/api/voiceprint/clear_map")
+def voiceprint_clear_map():
+    """Стереть накопленные облака с карты (эталоны голосов не трогаются)."""
+    return voiceprint.clear_map()
+
+
+@app.post("/api/voiceprint/refit")
+def voiceprint_refit():
+    voiceprint.refit()
+    return voiceprint.status()
+
+
 @app.post("/api/panic_unload")
 async def panic_unload():
     """«ЖЁСТКАЯ РАЗГРУЗКА» (2026-07-25, просьба владельца): выгрузить ВСЁ
@@ -847,6 +1262,19 @@ async def panic_unload():
             freed.append("слух и озвучка выключены до ручного выбора")
         except Exception:
             pass
+        # ВСЁ В НЕАКТИВНОЕ (2026-07-28, просьба владельца): это по сути
+        # кнопка выключения всех моделей, и интерфейс обязан это показать —
+        # индикаторы гаснут, а не горят зелёным «всё хорошо». Забываем, кто
+        # отвечал последним, и гасим отпечаток голоса: его рабочий поток
+        # держал бы энкодер в памяти после разгрузки.
+        ACTIVE_LLM.update(backend="", model="")
+        HARD_UNLOADED["on"] = True
+        try:
+            voiceprint.set_enabled(False)
+            freed.append("узнавание голоса")
+        except Exception:
+            pass
+        broadcast_event({"type": "unloaded"})
         msg = "🧹 Жёсткая разгрузка: выгрузила " + ", ".join(freed or ["ничего"])
         if failed:
             msg += ". НЕ поддались: " + ", ".join(failed) + \
@@ -2758,10 +3186,19 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # паспорт модели: если пробы выяснили молчаливое переполнение окна —
     # ужимаем до замеренного рабочего бюджета
     try:
-        from server.llm import passport as _passport
-        _pc = _passport.context_chars_for(CFG.get("llm.model", ""))
-        if _pc and _pc < budget:
-            budget = _pc
+        # ПАСПОРТНЫЙ ПОТОЛОК — НЕ ДЛЯ СВОЕГО ДВИЖКА (2026-07-28). Паспорт
+        # однажды намерил «модель молчит на большом промпте» и записал
+        # context_chars=24000 — но мерил он это при СТАРОМ окне 24576.
+        # Окно выросло до 32768, а протухший потолок продолжал душить
+        # бюджет, и история снова резалась до полутора тысяч символов.
+        # «Молчание на большом промпте» — болезнь LM Studio с его тихой
+        # подрезкой; наш llama-server стартует с явным --ctx-size, и его
+        # окну можно верить. Для остальных бэкендов потолок остаётся.
+        if CFG.get("llm.backend") != "llamacpp":
+            from server.llm import passport as _passport
+            _pc = _passport.context_chars_for(CFG.get("llm.model", ""))
+            if _pc and _pc < budget:
+                budget = _pc
     except Exception:
         pass
     hist_budget = max(1500, budget - len(system) - tools_chars)
@@ -2771,17 +3208,34 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # системный промпт и каждый ход платит полным prefill. Ни одного признака
     # в интерфейсе при этом нет — поэтому пишем прямым текстом, что чинить.
     if budget - tools_chars < len(system) * 1.2:
+        cure = ("подними llamacpp.n_ctx в config.json (сейчас %s; поставь "
+                "32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ "
+                "Сайке, движок стартует с новым окном сам"
+                % (CFG.get("llamacpp", {}) or {}).get("n_ctx", "?")
+                if CFG.get("llm.backend") == "llamacpp"
+                else "подними Context Length у модели в LM Studio и "
+                     "перезагрузи её")
         log.warning(
             "Окно контекста мало: под систему нужно ~%d симв + инструменты "
             "%d, а всего бюджета %d (окно %s токенов). Модель молча режет "
             "начало промпта — Сайка теряет память и каждый ход платит полным "
             "prefill. Лечение: %s",
-            len(system), tools_chars, budget, n_ctx,
-            ("подними llamacpp.n_ctx в config.json (например 24576) — "
-             "движок перезапустится с новым окном сам при следующем старте"
-             if CFG.get("llm.backend") == "llamacpp"
-             else "подними Context Length у модели в LM Studio и "
-                  "перезагрузи её"))
+            len(system), tools_chars, budget, n_ctx, cure)
+        # И В ИНТЕРФЕЙС, А НЕ ТОЛЬКО В ЛОГ (2026-07-28, владелец: «чё Беймакс
+        # спит и не чинит?»). Предупреждение жило в консоли, которую никто не
+        # обязан читать, а снаружи выглядело как «Сайка поглупела и странно
+        # разговаривает»: истории ей доставалось полторы тысячи символов —
+        # три реплики. Теперь Беймакс говорит об этом сам, один раз за
+        # запуск: чинится это не на лету, а перезапуском с большим окном.
+        if not CTX_WARN["sent"]:
+            CTX_WARN["sent"] = True
+            report_problem(
+                "контекст",
+                "окно %s токенов, а системный промпт с инструментами съедают "
+                "его почти целиком — на разговор остаётся ~%d символов, "
+                "поэтому она забывает нить и отвечает странно"
+                % (n_ctx, max(1500, budget - len(system) - tools_chars)),
+                cure)
     total_chars = sum(len(t) for _, t in history)
     if total_chars <= hist_budget:
         trimmed = history          # влезает целиком — префикс не трогаем
@@ -2866,6 +3320,13 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                         AUDIO_LEVEL["level"] = min(
                             1.0, float(np.sqrt(np.mean(_a * _a))) * 4.0)
                         AUDIO_LEVEL["ts"] = time.time()
+                        # СВОЙ ГОЛОС В ПРОСТРАНСТВО ГОЛОСОВ (2026-07-28).
+                        # Тот же кусок звука уходит в отпечаток — ДО колонок,
+                        # чистым. Так у неё появляется собственная метка, а
+                        # эхо из микрофона перестаёт быть «незнакомцем»:
+                        # видно, что это она сама. feed_self только кладёт в
+                        # очередь, озвучка на этом не теряет ни миллисекунды.
+                        voiceprint.feed_self(_a, sr)
                         # покачивание головой при речи считает сам веб-аватар
                         # по реальному звуку (BroadcastChannel из index.html);
                         # серверный канал в чужую прогу (VMC) удалён 2026-07-25
@@ -3500,9 +3961,22 @@ def _user_activity():
     LAST_USER["ts"] = time.time()
     LAST_USER["seen"] = True
     IDLE_STATE["stage"] = 0
+    # владелец заговорил — значит, спячка после разгрузки кончилась
+    HARD_UNLOADED["on"] = False
 
 
 def _impulse_ready(key, cooldown_s):
+    # ПОСЛЕ РАЗГРУЗКИ — ТИШИНА (2026-07-28, владелец поймал со смехом:
+    # «я всё вырубил, а скрипт мне запустил ллм»). Импульс скуки шёл в
+    # handle_text, тот лениво поднимал llama-server — и вся жёсткая
+    # разгрузка отменялась сама собой через минуту простоя. Правило: если
+    # мозги выключены или активной модели нет, внутренняя жизнь не имеет
+    # права будить железо. Она просыпается вместе с моделью — когда
+    # владелец сам выберет её кликом.
+    if CFG.get("llm.off", False):
+        return False
+    if HARD_UNLOADED["on"]:
+        return False
     if time.time() - IMPULSE_LAST.get(key, 0) < cooldown_s:
         return False
     # не влезаем в идущий ответ; «ответ» старше 10 мин считаем зависшим
@@ -3745,9 +4219,209 @@ async def ws_endpoint(ws: WebSocket):
         threading.Thread(target=_react_tab, daemon=True).start()
     stop_event = threading.Event()
     worker: threading.Thread | None = None
+    # «слушаю, но не отвечаю» — состояние ЭТОЙ вкладки, не глобальное:
+    # на телефоне может идти обычный разговор, пока на компьютере крутится
+    # кино и она его каталогизирует
+    # on  — «не отвечать»: слышит и распознаёт, но реплик не выдаёт
+    # stt — распознавать ли речь вообще (для кино можно и не тратить)
+    observe = {"on": False, "stt": True}
+    # ГЛУБИНА ОЧЕРЕДИ СЛУХА. Было 40 чанков (4 секунды) — и этого не хватало
+    # ровно в тот момент, когда всё и решается: движок берёт готовый кусок и
+    # молчит секунды три, а звук в это время идёт. Тридцать чанков приходят,
+    # сорок помещается — запас в десять штук, любая заминка (шумодав, своп,
+    # сборка мусора) съедала его, и в стенограмме появлялась дырка. Хуже
+    # всего, что дырка эта незаметная: текст идёт, просто в нём нет пары фраз.
+    # Две минуты запаса стоят 4 МБ памяти и закрывают вопрос: движок в
+    # среднем в восемь раз быстрее реального времени, отставание рассасывается
+    # само, ронять приходится только если он сломался совсем.
+    # 300 чанков = 30 секунд. Больше не нужно: горячий цикл теперь стоит
+    # миллисекунды и за реальным временем успевает. Глубокая очередь тут не
+    # запас прочности, а отставание: чем она длиннее, тем позже приходит
+    # текст. Тридцати секунд хватает пережить любую заминку — своп, сборку
+    # мусора, переобучение проекции.
+    hear_q: "queue.Queue" = queue.Queue(maxsize=300)
+
+    # ОЧЕРЕДЬ ГОТОВЫХ ФРАЗ. Между дешёвой нарезкой и дорогим распознаванием
+    # (см. комментарий в server/stt/manager.py). Держим немного: если движок
+    # отстал на десяток фраз, дальше он уже не догонит, и честнее сказать
+    # об этом в лог, чем копить минуты.
+    seg_q: "queue.Queue" = queue.Queue(maxsize=12)
+    SEG_DROP = {"n": 0}
+
+    def _hear_worker():
+        """Шумодав -> отпечаток голоса -> НАРЕЗКА. Всё, что здесь есть,
+        стоит миллисекунды: этот поток обязан успевать за реальным временем
+        любой ценой, иначе звук придётся ронять. Распознавание живёт в
+        соседнем потоке и на этот цикл больше не влияет."""
+        while not stop_event_all.is_set():
+            try:
+                p = hear_q.get(timeout=0.4)
+            except queue.Empty:
+                continue
+            if p is None:
+                break
+            try:
+                t0 = time.monotonic()
+                p = DENOISE.process(p)
+                t1 = time.monotonic()
+                voiceprint.feed(p)
+                if not observe["stt"]:
+                    continue
+                HEAR_STAT["chunks"] += 1
+                HEAR_STAT["q"] = hear_q.qsize()
+                try:
+                    HEAR_STAT["rms"] = round(float(np.sqrt(np.mean(
+                        (p.astype(np.float32) / 32768.0) ** 2))), 5)
+                    HEAR_STAT["thr"] = round(stt.vad._eff_threshold(), 5)
+                    if HEAR_STAT["rms"] < HEAR_STAT["thr"] * 0.6:
+                        HEAR_STAT["quiet"] += 1
+                except Exception:
+                    pass
+
+                # is_streaming() лениво поднимает движок при первом
+                # обращении — как раньше делал process_chunk. Дальше это
+                # просто чтение поля, так что в горячем цикле уместно.
+                if stt.is_streaming():
+                    # потоковый движок (Vosk) отдаёт слова сам и стоит копейки
+                    for r in (stt.process_chunk(p) or []):
+                        _emit_phrase(r, 0)
+                else:
+                    seg = stt.cut(p)
+                    if seg is not None:
+                        HEAR_STAT["segments"] += 1
+                        try:
+                            seg_q.put_nowait(seg)
+                        except queue.Full:
+                            SEG_DROP["n"] += 1
+                            log.warning("Распознавание не догоняет: пропустила "
+                                        "фразу (всего %d)", SEG_DROP["n"])
+
+                # ЧЕРНОВИК: слова на экране, пока точный движок думает.
+                # Слух выключен — и черновик молчит: после «выгрузить всё»
+                # ни одна модель не имеет права подниматься сама.
+                try:
+                    # Пока фразу уже хоть раз перечитал точный движок
+                    # (см. _live_polish), сырой черновик Vosk молчит: иначе
+                    # красивый текст со знаками каждые 200мс сменялся бы
+                    # обратно на «сырую» строку без них.
+                    #
+                    # И ТОЛЬКО НА РЕЧИ (2026-07-28, «уронила 1701 чанков»).
+                    # Черновик жевал ВСЁ подряд — включая аниме из системного
+                    # звука. Музыка для Vosk — худший случай: решётка гипотез
+                    # разрастается, каждые 100мс звука стоят дороже 100мс, и
+                    # горячий цикл тонет. Пока VAD не слышит речи, черновику
+                    # нечего показывать — и нечего считать.
+                    if (stt.current_name not in stt.OFF and not POLISH["n"]
+                            and getattr(stt.vad, "in_speech", False)):
+                        d = DRAFT.feed(p)
+                        if d:
+                            out.put({"type": "stt_draft", "text": d})
+                except Exception as e:
+                    log.warning("Черновик споткнулся (дальше без него): %s", e)
+
+                # по стадиям, а не одним числом: «движок 2мс» ни о чём не
+                # говорит, когда 99 чанков из 100 движка вообще не видят
+                HEAR_STAT["den_ms"] = round(
+                    0.95 * HEAR_STAT["den_ms"] + 0.05 * (t1 - t0) * 1000, 2)
+                HEAR_STAT["cut_ms"] = round(
+                    0.95 * HEAR_STAT["cut_ms"]
+                    + 0.05 * (time.monotonic() - t1) * 1000, 2)
+            except Exception as e:
+                log.warning("Поток слуха споткнулся: %s", e)
+
+    def _emit_phrase(r, ms):
+        """ГЛАВНОЕ — ПЕРВЫМ. Расписалась дорого (2026-07-28): черновик стоял
+        ВЫШЕ выдачи фраз и звал DRAFT, который я забыла импортировать.
+        NameError ловил общий except — и вместе с черновиком в него улетала
+        КАЖДАЯ распознанная фраза. Урок: необязательная красота не имеет
+        права стоять перед выдачей результата."""
+        try:
+            r["stt_ms"] = ms
+            r["heard_at"] = time.strftime("%H:%M:%S")
+            r["_heard_mono"] = time.monotonic()
+            LAST_STT.update(engine=r.get("engine", "?"), stt_ms=ms,
+                            ts=time.time())
+            voice_phrase(r)
+        except Exception as e:
+            log.warning("Фраза не доехала: %s", e)
+
+    # СКОЛЬЗЯЩАЯ НОРМАЛИЗАЦИЯ (2026-07-28, просьба владельца: «как у GPT —
+    # слова сразу, и тут же знаки препинания и нормальный текст»). Три слоя:
+    #   1. черновик Vosk — слова в момент произнесения, серым;
+    #   2. этот код — пока фраза ЗВУЧИТ, точный движок раз в ~2с перечитывает
+    #      накопленное и подменяет черновик правильным текстом со знаками;
+    #   3. чистовик — конец фразы, как раньше, уходит в диалог и стенограмму.
+    # Живёт в паузах потока распознавания: готовые фразы всегда важнее.
+    POLISH = {"ts": 0.0, "n": 0}
+
+    def _live_polish():
+        if not CFG.get("stt.live_polish", True) or stt.is_streaming():
+            return
+        # движок медленнее двух секунд на кусок — перечитывание не успеет
+        # за собственным циклом и только заткнёт очередь настоящих фраз
+        if HEAR_STAT["stt_ms"] > 2000:
+            return
+        now = time.monotonic()
+        wait = max(1.4, HEAR_STAT["stt_ms"] / 1000 * 1.5)
+        if now - POLISH["ts"] < wait:
+            return
+        snap = stt.peek()
+        if snap is None:
+            return
+        if len(snap) <= POLISH["n"] + 8000:      # наросло меньше полсекунды
+            return
+        POLISH["ts"], POLISH["n"] = now, len(snap)
+        try:
+            results = stt.transcribe_segment(snap)
+            txt = (results[0]["text"] if results else "").strip()
+            if txt:
+                try:
+                    txt = TRANSCRIPT._enhance(txt)   # знаки препинания
+                except Exception:
+                    pass
+                DRAFT.reset()                        # версия Vosk устарела
+                out.put({"type": "stt_draft", "text": txt})
+        except Exception as e:
+            log.debug("Скользящая нормализация споткнулась: %s", e)
+
+    def _stt_worker():
+        """Распознавание готовых фраз. Может думать секундами — и теперь это
+        никому не мешает: поток слуха в это время спокойно режет дальше."""
+        while not stop_event_all.is_set():
+            try:
+                seg = seg_q.get(timeout=0.4)
+            except queue.Empty:
+                _live_polish()
+                continue
+            if seg is None:
+                break
+            try:
+                t0 = time.monotonic()
+                results = stt.transcribe_segment(seg)
+                ms = round((time.monotonic() - t0) * 1000)
+                HEAR_STAT["stt_ms"] = round(
+                    0.7 * HEAR_STAT["stt_ms"] + 0.3 * ms, 1)
+                HEAR_STAT["lag"] = seg_q.qsize()
+                if not results:
+                    HEAR_STAT["empty"] += 1
+                    continue
+                POLISH["n"] = 0
+                DRAFT.reset()
+                out.put({"type": "stt_draft", "text": ""})
+                for r in results:
+                    _emit_phrase(r, ms)
+            except Exception as e:
+                log.warning("Распознавание споткнулось: %s", e)
+
+    stop_event_all = threading.Event()
 
     # первым делом — id запуска: вкладка сравнит со своим и, если сервер
     # успел перезапуститься, сама перезагрузится (см. UI, тип «hello»)
+    hear_thread = threading.Thread(target=_hear_worker, name="hear",
+                                   daemon=True)
+    hear_thread.start()
+    stt_thread = threading.Thread(target=_stt_worker, name="stt", daemon=True)
+    stt_thread.start()
     out.put({"type": "hello", "boot": BOOT_ID})
     # Беймакс здоровается и коротко докладывает, как система себя чувствует
     try:
@@ -3813,6 +4487,16 @@ async def ws_endpoint(ws: WebSocket):
 
     def handle_text(user_text, heard_ts=None, image=None):
         nonlocal worker
+        # МОДЕЛЬ ВЫКЛЮЧЕНА (2026-07-28). Отдельный режим «Сайка молчит»:
+        # слух, отпечаток голоса и журнал работают, мозги не запускаются
+        # вообще. Нужен для опытов с голосами и для просмотра кино — иначе
+        # каждая услышанная фраза рождает ответ, и эксперимент превращается
+        # в разговор с телевизором. Не то же самое, что выгрузка из памяти:
+        # модель остаётся загруженной и готова, её просто не зовут.
+        if CFG.get("llm.off", False):
+            log.info("Мозги выключены — реплику не рождаю: %r",
+                     str(user_text)[:60])
+            return
         if worker is not None and worker.is_alive():
             # живой контекст интересен только когда генерация УЖЕ что-то
             # говорит — тогда есть что подхватывать. Если она ещё не выдала
@@ -3988,6 +4672,36 @@ async def ws_endpoint(ws: WebSocket):
     def voice_phrase(r):
         now = time.time()
         heard_mono = r.pop("_heard_mono", None)  # внутреннее, не шлём в UI
+        # МЕТКА ГОВОРЯЩЕГО (2026-07-28). Появляется только когда тембр уже
+        # узнаётся устойчиво — до этого честнее не писать ничего, чем писать
+        # наугад. Она же уходит в модуль имён: если во фразе прозвучало имя,
+        # оно привяжется к сигнатуре голоса, а не к слову.
+        try:
+            _sp, _spc = voiceprint.who_now()
+            if _sp:
+                r["speaker"], r["speaker_conf"] = _sp, round(_spc, 2)
+            voiceprint.note_text(r.get("text", ""), _sp)
+        except Exception as e:
+            log.debug("метка говорящего: %s", e)
+        # СТЕНОГРАММА (восстановлено 2026-07-28: обвязка выпала при слиянии
+        # двух чатов — сам модуль был цел, а импорт и роуты потерялись, и
+        # интерфейс сыпал 404 на /api/transcript)
+        try:
+            if TRANSCRIPT.on:
+                _pr = voiceprint.prosody() if hasattr(voiceprint, "prosody") \
+                    else {}
+                _mood = mood_of(_pr.get("pitch", 0), _pr.get("energy", 0),
+                                _pr.get("plo", 0), _pr.get("phi", 0))
+                TRANSCRIPT.add(r.get("text", ""), r.get("speaker", ""),
+                               _mood, r.get("engine", ""))
+        except Exception as e:
+            log.debug("стенограмма: %s", e)
+        # «не отвечать»: текст показываем, реплику не рождаем. Ради этого
+        # режима всё и затевалось — иначе эксперимент с голосами превращается
+        # в разговор Сайки с телевизором.
+        if observe["on"]:
+            out.put({"type": "stt", **r})
+            return
         # ЭХО ИЗ КОЛОНОК (2026-07-26, живой случай). Владелец говорит через
         # колонки, микрофон слышит её же голос, GigaAM послушно его
         # распознаёт — и Сайка отвечает сама себе обрывками своих реплик.
@@ -4040,19 +4754,32 @@ async def ws_endpoint(ws: WebSocket):
             if msg.get("type") == "websocket.disconnect":
                 break
             if msg.get("bytes") is not None:
-                pcm = np.frombuffer(msg["bytes"], dtype=np.int16)
-                t0 = time.monotonic()
-                results = await asyncio.get_event_loop().run_in_executor(
-                    None, stt.process_chunk, pcm)
-                stt_ms = round((time.monotonic() - t0) * 1000)
-                for r in results:
-                    # сколько заняла транскрибация и когда услышала (для UI)
-                    r["stt_ms"] = stt_ms
-                    r["heard_at"] = time.strftime("%H:%M:%S")
-                    r["_heard_mono"] = time.monotonic()
-                    LAST_STT.update(engine=r.get("engine", "?"),
-                                    stt_ms=stt_ms, ts=time.time())
-                    voice_phrase(r)
+                # СЛУХ ЖИВЁТ В СВОЁМ ПОТОКЕ, А НЕ В ЦИКЛЕ ВЕБСОКЕТА.
+                # ГРАБЛИ 2026-07-28 (жалоба «транскриптор не справляется»):
+                # раньше каждый чанк по 100мс ждал своей очереди в await, и
+                # когда распознавание одного куска занимало секунды, за это
+                # время накапливалось полсотни чанков. Отставание не
+                # рассасывалось никогда — оно только росло, и в текст
+                # попадала треть сказанного.
+                # Теперь вебсокет только КЛАДЁТ чанк в очередь. Если слух не
+                # успевает, очередь переполняется и старый звук РОНЯЕТСЯ:
+                # для стенограммы потерять пару секунд лучше, чем отстать на
+                # десять минут и писать вчерашнее.
+                try:
+                    hear_q.put_nowait(np.frombuffer(msg["bytes"], dtype=np.int16))
+                except queue.Full:
+                    HEAR_DROP["n"] += 1
+                    HEAR_STAT["dropped"] += 1
+                    try:
+                        hear_q.get_nowait()
+                        hear_q.put_nowait(
+                            np.frombuffer(msg["bytes"], dtype=np.int16))
+                    except Exception:
+                        pass
+                    if HEAR_DROP["n"] % 50 == 1:
+                        log.warning("Слух не успевает: уронила %d чанков "
+                                    "(движок медленнее реального времени)",
+                                    HEAR_DROP["n"])
             elif msg.get("text"):
                 data = json.loads(msg["text"])
                 mtype = data.get("type")
@@ -4098,6 +4825,42 @@ async def ws_endpoint(ws: WebSocket):
                             _img = None
                     handle_text(data["text"], heard_ts=time.monotonic(),
                                 image=_img)
+                elif mtype == "observe":
+                    observe["on"] = bool(data.get("on"))
+                    if "stt" in data:
+                        observe["stt"] = bool(data.get("stt"))
+                    # КОРОТКИЕ КУСКИ ДЛЯ НЕПРЕРЫВНОЙ РЕЧИ (2026-07-28).
+                    # Разговор человека с ней сам режется паузами, и предел
+                    # в 25 секунд не срабатывает почти никогда. Ютубер или
+                    # кино не молчат вообще: сегмент дорастает до предела,
+                    # GigaAM видит кусок длиннее двадцати секунд, лезет в
+                    # longform, спотыкается об отсутствующий pyannote и режет
+                    # сам — и всё это время на экране пусто. Восемь секунд:
+                    # текст идёт заметно чаще, longform не трогаем вовсе,
+                    # а фраза почти никогда не рвётся посередине, потому что
+                    # пауза в 400мс между предложениями всё-таки бывает.
+                    try:
+                        if observe["on"]:
+                            stt.vad.max_segment_s = 8
+                            stt.vad.silence_ms = 420
+                        else:
+                            v = CFG.get("stt.vad", {}) or {}
+                            stt.vad.max_segment_s = v.get("max_segment_s", 25)
+                            stt.vad.silence_ms = v.get("silence_ms", 700)
+                            # ХВОСТ. Выключили прослушивание — в буфере VAD
+                            # осталась недоговорённая фраза. Раньше она там и
+                            # умирала: «в конце вообще не пишет».
+                            for r in (stt.flush() or []):
+                                r["stt_ms"] = 0
+                                r["heard_at"] = time.strftime("%H:%M:%S")
+                                r["_heard_mono"] = time.monotonic()
+                                voice_phrase(r)
+                    except Exception as e:
+                        log.warning("Не смогла перенастроить нарезку: %s", e)
+                    log.info("Режим прослушивания: отвечать %s, распознавать %s",
+                             "нет" if observe["on"] else "да",
+                             "да" if observe["stt"] else "нет")
+                    out.put({"type": "observe", **observe})
                 elif mtype == "mic_on":
                     # включение микрофона = намерение поговорить
                     attn["until"] = time.time() + _window()
@@ -4127,6 +4890,15 @@ async def ws_endpoint(ws: WebSocket):
         pass
     finally:
         stop_event.set()
+        stop_event_all.set()
+        try:
+            hear_q.put_nowait(None)
+            try:
+                seg_q.put_nowait(None)
+            except Exception:
+                pass
+        except Exception:
+            pass
         EVENT_CLIENTS.discard(out)
         # вкладку закрыли посреди живого общения (юзер был активен последние
         # 10 минут) — запоминаем; отреагирует при следующем открытии
@@ -4412,6 +5184,56 @@ def main():
             except Exception as e:
                 log.debug("startup ai_doctor: %s", e)
         threading.Thread(target=_startup_ai_doctor, daemon=True).start()
+    # ОТПЕЧАТОК ГОЛОСА (2026-07-28): свой рабочий поток, поднимается сразу —
+    # он лёгкий и пустой, пока в микрофон не заговорили. Эхо из колонок в
+    # него не пускаем: её собственный голос образовал бы «ещё одного
+    # человека» в пространстве голосов (тот же случай, что и с STT — см.
+    # _echo_risk в вебсокете).
+    def _vp_echo():
+        if CFG.get("stt.echo_guard", True) is False:
+            return False
+        if CFG.get("tts.headphones", False):
+            return False
+        tail = float(CFG.get("stt.echo_tail_s", 0.9))
+        return (time.time() - AUDIO_LEVEL.get("ts", 0.0)) < tail
+    try:
+        voiceprint.start(sink=broadcast_event, echo_guard=_vp_echo)
+        # печать голоса создателя: на чужой машине распечатывается сама,
+        # если рядом переносной secrets.json с ключом
+        voiceprint.load_owner_seal()
+        atexit.register(voiceprint.stop)
+    except Exception as e:
+        report_problem("voiceprint", str(e), "работаю без узнавания голосов")
+
+    # ЗАЩИТА ЖЕЛЕЗА (2026-07-28, история с ПК товарища: гемма набирала 11 из
+    # 12 ГБ VRAM, и через 10–20 минут комп ГАС — похоже на защиту БП или
+    # перегрев). Чёрный ящик пишет температуру и память с fsync, а при
+    # критических порогах Сайка сама выгружает всё тяжёлое: лучше минуту
+    # посидеть без мозгов, чем уронить весь компьютер под нагрузкой.
+    def _guard_warn(g):
+        broadcast_event({"type": "guard", "level": "warn",
+                         "temp": g.get("temp"),
+                         "vram": round(g.get("vram_frac", 0) * 100)})
+    def _guard_crit(g):
+        broadcast_event({"type": "guard", "level": "critical",
+                         "temp": g.get("temp"),
+                         "vram": round(g.get("vram_frac", 0) * 100)})
+        # та же жёсткая разгрузка, что по кнопке «Выгрузить всё из
+        # памяти». Мы в потоке защиты, событийного цикла тут нет — просто
+        # запускаем корутину в свежем цикле этого потока.
+        try:
+            asyncio.run(panic_unload())
+        except Exception as e:
+            log.warning("Защитная выгрузка не удалась: %s", e)
+    try:
+        GUARD.start(on_warn=_guard_warn, on_critical=_guard_crit)
+        atexit.register(GUARD.stop)
+        _aut = GUARD.autopsy()
+        if _aut:
+            log.warning(_aut)
+            report_problem("железо", _aut, "смотри пороги в guard.*")
+    except Exception as e:
+        log.warning("Защита железа не поднялась: %s", e)
     # досье на модели заводим в фоне: list_models() опрашивает Ollama и LM
     # Studio по сети, в главном потоке это задержало бы старт
     def _sync_dossier():

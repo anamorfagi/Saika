@@ -1,5 +1,5 @@
 {
-  "updated": "2026-07-27T22:02:28",
+  "updated": "2026-07-28T23:50:07",
   "items": [
     {
       "id": "s01",
@@ -652,536 +652,6 @@
   ],
   "log": [
     {
-      "ts": "2026-07-23T10:00:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:48",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:00:48",
-      "text": "✓ stt.tone: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-23T14:40:33",
-      "text": "⚠ stt: работаю на gigaam",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T10:45:54",
-      "text": "✓ cowork: доска пополнена итогами сессии 2026-07-23 (скорость, слух, UI, старт, поиск, паспорт v2)",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-23T15:15:02",
-      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:22:25",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:23:26",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:25:21",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:26:02",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:28:36",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:29:26",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:32:06",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:35:05",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:35:55",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:37:43",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:41:00",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:42:01",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:42:20",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:43:05",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:43:30",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:45:12",
-      "text": "⚠ llm: переключилась на locallm/t-tech/T-lite-it-2.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:46:44",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:48:19",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:48:45",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T15:49:44",
-      "text": "⚠ llm: переключилась на ollama/gemma4:e4b",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T16:15:55",
-      "text": "⚠ llm.guard: оборвала и привожу Сайку в чувство",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T16:21:55",
-      "text": "⚠ llm.guard: оборвала и привожу Сайку в чувство",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T16:48:05",
-      "text": "⚠ llm.guard: оборвала и привожу Сайку в чувство",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:09:55",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:10:10",
-      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:10:10",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:10:15",
-      "text": "✓ stt.gigaam: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-23T17:10:17",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:11:21",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:11:54",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:14:27",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:16:28",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:17:21",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:18:17",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:18:20",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:18:52",
-      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:25:18",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:28:57",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T17:29:12",
-      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:00:38",
-      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:00:38",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:00:42",
-      "text": "✓ stt.gigaam: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-23T18:02:00",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:08:41",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:24:12",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:25:37",
-      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:27:13",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:39:47",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T18:47:25",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T19:11:21",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T19:24:21",
-      "text": "⚠ llm: переключилась на lmstudio/qwen/qwen3-4b-thinking-2507",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-23T20:21:00",
-      "text": "📋 добавлен план на завтра: VRAM-оптимизация, быстрая модель управления ПК, починка STT, доработка хоткеев/MIDI",
-      "kind": "note"
-    },
-    {
-      "ts": "2026-07-23T20:35:00",
-      "text": "📋 добавлены планы: зрение (камера+экран), Discord/ТГ с управлением группами, скрипты почты/папок; идеи: генерация картинок/чертежей под станки, бизнес-контекст (клиенты/материалы/станки)",
-      "kind": "note"
-    },
-    {
-      "ts": "2026-07-23T20:40:00",
-      "text": "📋 план: поиск файлов по всему рабочему ПК + отправка коллегам на почту (справочник имя->email)",
-      "kind": "note"
-    },
-    {
-      "ts": "2026-07-25T12:33:54",
-      "text": "⚠ stt: работаю на gigaam",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:33:57",
-      "text": "⚠ stt: работаю на gigaam",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:33:58",
-      "text": "⚠ stt: работаю на gigaam",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:58:37",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:58:37",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:58:39",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T12:59:05",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:05",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:07",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T12:59:11",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:11",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:13",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T12:59:33",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:33",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:35",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T12:59:47",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:47",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:49",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T12:59:58",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T12:59:58",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:00",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:00:10",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:10",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:12",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:00:21",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:21",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:23",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:00:28",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:28",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:30",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:00:39",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:39",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:41",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:00:57",
-      "text": "⚠ stt.groq_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:57",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:00:59",
-      "text": "✓ stt.groq_whisper: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:04:32",
-      "text": "⚠ stt: работаю на whispercpp",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:04:40",
-      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:04:42",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:04:42",
-      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:04:42",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:05:00",
-      "text": "✓ stt.tone: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:05:00",
-      "text": "✓ stt.tone: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-07-25T13:05:00",
-      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:05:00",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-07-25T13:05:00",
-      "text": "⚠ stt.tone: переключаюсь на другой движок, чиню в фоне",
-      "kind": "problem"
-    },
-    {
       "ts": "2026-07-25T13:05:17",
       "text": "✓ stt.tone: движок восстановлен",
       "kind": "fix"
@@ -1650,32 +1120,562 @@
       "ts": "2026-07-27T22:02:28",
       "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:7b",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T13:04:42",
+      "text": "⚠ llm: автопуск пробует следующую модель",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:40:50",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:40:51",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:40:51",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:40:51",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:53:25",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:53:25",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T14:53:29",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T16:00:30",
+      "text": "⚠ llm: переключилась на ollama/qwen2.5-coder:7b",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:23:17",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:23:17",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:23:21",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:24:44",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:24:45",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:24:49",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:25:12",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:25:12",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:25:16",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:25:39",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:25:39",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:25:43",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:26:07",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:26:07",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:26:11",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:26:33",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:26:33",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:26:38",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:51:48",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:51:48",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:51:53",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T18:52:17",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:52:17",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T18:52:22",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T19:02:40",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:02:40",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:10:56",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:10:56",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:16:46",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:16:46",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:42:39",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:42:39",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:48:06",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T19:48:06",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T20:05:49",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T20:05:49",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T20:15:08",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T20:52:12",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T20:52:35",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:01:39",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:01:39",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:04:20",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:05:30",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:05:55",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:07:22",
+      "text": "⚠ llm.silence: объяснила в чате; если есть ключ Kimi — зову облачный консилиум",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:40:40",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:40:40",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:02",
+      "text": "⚠ stt.faster_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:13",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:20",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:20",
+      "text": "⚠ stt.faster_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:30",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:38",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:39",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:45:46",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:46:59",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:46:59",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:48:29",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:48:29",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:50:10",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T21:50:22",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:03:59",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:03:59",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:04:11",
+      "text": "⚠ stt.voxtral: работаю на запасном движке; воркер докачает сам, и я вернусь на него автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:04:11",
+      "text": "⚠ stt.faster_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:04:29",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:04:29",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576; поставь 32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:04:32",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:05:53",
+      "text": "⚠ tts.edge: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:05:53",
+      "text": "✓ tts.edge: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T22:06:55",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:07:30",
+      "text": "⚠ stt.faster_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:08:08",
+      "text": "⚠ stt.faster_whisper: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:09:34",
+      "text": "⚠ stt: работаю на gigaam",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:14:38",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:14:38",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:14:52",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576; поставь 32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:14:54",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:30:19",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:30:19",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:30:25",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576; поставь 32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:31:22",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:31:30",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:36:02",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:36:02",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:36:09",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576; поставь 32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:36:36",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:38:02",
+      "text": "⚠ tts.edge: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T22:38:02",
+      "text": "✓ tts.edge: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-07-28T23:22:05",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:22:05",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:22:12",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576; поставь 32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:25:16",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:49:29",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:49:29",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:49:36",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576; поставь 32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-07-28T23:50:07",
+      "text": "⚠ tts.silero: удаляю битый файл и качаю заново автоматически",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "основной бэкенд не ответил: llama-server: не нашла .gguf для модели «mistral-medium-3-5». Положи файл в models/gguf или пропиши путь в config: llamacpp.model_path",
-      "count": 132,
+      "text": "основной бэкенд не ответил: 500 от http://127.0.0.1:8771/v1: {\"error\":{\"code\":500,\"message\":\"image input is not supported - hint: if this is unexpected, you may need to provide the mmproj\",\"type\":\"server_error\"}}",
+      "count": 134,
       "resolved": false,
-      "last": "2026-07-27T22:02"
+      "last": "2026-07-28T16:00"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
-      "count": 18,
+      "count": 39,
       "resolved": false,
-      "last": "2026-07-21T20:48"
+      "last": "2026-07-28T23:49"
     },
     "tts.edge": {
-      "text": "Похоже, что-то с сетью, брат: «edge» не скачивается — huggingface.co не отвечает. Проверь интернет или VPN.",
-      "count": 2,
-      "resolved": false,
-      "last": "2026-07-18T14:01"
+      "text": "«edge» упал с незнакомой мне ошибкой.",
+      "count": 4,
+      "resolved": true,
+      "last": "2026-07-28T22:38"
     },
     "stt": {
       "text": "основной движок недоступен",
-      "count": 1878,
+      "count": 1893,
       "resolved": false,
-      "last": "2026-07-25T13:39"
+      "last": "2026-07-28T22:09"
     },
     "browser": {
       "text": "browser",
@@ -1684,10 +1684,10 @@
       "last": "2026-07-23T00:21"
     },
     "stt.voxtral": {
-      "text": "Похоже, что-то с сетью, брат: «voxtral» не скачивается — huggingface.co не отвечает. Проверь интернет или VPN.",
-      "count": 10,
+      "text": "«voxtral» ещё загружает модель — первая закачка большая и может идти десятки минут.",
+      "count": 15,
       "resolved": false,
-      "last": "2026-07-25T13:39"
+      "last": "2026-07-28T22:04"
     },
     "stt.tone": {
       "text": "«tone» получил данные не того формата — это моя внутренняя несовместимость, не твоя вина.",
@@ -1702,16 +1702,16 @@
       "last": "2026-07-23T16:48"
     },
     "llm.silence": {
-      "text": "модель промолчала: я ГЕНЕРИРОВАЛА ответ (15 токенов), но всё сгенерированное оказалось служебным — размышления или псевдо-вызовы инструментов, показать нечего",
-      "count": 7,
+      "text": "модель промолчала: я ГЕНЕРИРОВАЛА ответ (10 токенов), но всё сгенерированное оказалось служебным — размышления или псевдо-вызовы инструментов, показать нечего",
+      "count": 8,
       "resolved": false,
-      "last": "2026-07-27T21:49"
+      "last": "2026-07-28T21:07"
     },
     "stt.gigaam": {
       "text": "«gigaam» упал с незнакомой мне ошибкой.",
-      "count": 2,
+      "count": 11,
       "resolved": true,
-      "last": "2026-07-23T18:00"
+      "last": "2026-07-28T18:52"
     },
     "stt.groq_whisper": {
       "text": "«groq_whisper» упал с незнакомой мне ошибкой.",
@@ -1724,6 +1724,30 @@
       "count": 9,
       "resolved": true,
       "last": "2026-07-27T00:07"
+    },
+    "tts.silero": {
+      "text": "Файл модели «silero» скачался битым (не сошлась проверка).",
+      "count": 13,
+      "resolved": false,
+      "last": "2026-07-28T23:50"
+    },
+    "tts": {
+      "text": "qwen3: Lazy import of LazyModule(package=None, target=speechbrain.integrations.k2_fsa, loaded=False) failed",
+      "count": 16,
+      "resolved": false,
+      "last": "2026-07-28T23:49"
+    },
+    "stt.faster_whisper": {
+      "text": "«faster_whisper» упал с незнакомой мне ошибкой.",
+      "count": 5,
+      "resolved": false,
+      "last": "2026-07-28T22:08"
+    },
+    "контекст": {
+      "text": "окно 24576 токенов, а системный промпт с инструментами съедают его почти целиком — на разговор остаётся ~1500 символов, поэтому она забывает нить и отвечает странно",
+      "count": 6,
+      "resolved": false,
+      "last": "2026-07-28T23:49"
     }
   }
 }

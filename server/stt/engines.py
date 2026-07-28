@@ -142,7 +142,23 @@ class GigaAMEngine(STTEngine):
                 # честно распознаём длинной дорожкой и склеиваем куски
                 if "long" not in str(e).lower():
                     raise
-                chunks = self.model.transcribe_longform(path)
+                try:
+                    chunks = self.model.transcribe_longform(path)
+                except Exception as e2:
+                    # ГРАБЛИ 2026-07-28 (живой случай, час на поиск).
+                    # transcribe_longform тянет pyannote — отдельный пакет,
+                    # которого в сборке нет. Итог был такой: длинный кусок ->
+                    # ImportError -> движок помечается сломанным -> слух
+                    # падает на faster_whisper (5.8с на фразу) -> через пять
+                    # секунд «восстановлен» -> и так по кругу каждые полминуты.
+                    # В интерфейсе это выглядело как «транскриптор не
+                    # справляется», хотя дело было в одной ненайденной
+                    # библиотеке.
+                    # Чиним без зависимости: режем сами. Куски по 20 секунд
+                    # честнее, чем ничего, и точно короче предела движка.
+                    log.info("GigaAM: длинный кусок, а longform недоступен "
+                             "(%s) — режу сам по 20с", str(e2)[:80])
+                    return self._by_pieces(pcm16, sample_rate)
                 parts = []
                 for c in (chunks or []):
                     t = (c.get("transcription") if isinstance(c, dict)
@@ -155,6 +171,33 @@ class GigaAMEngine(STTEngine):
             return getattr(result, "text", result if isinstance(result, str) else str(result)).strip()
         finally:
             Path(path).unlink(missing_ok=True)
+
+    def _by_pieces(self, pcm16, sample_rate, seconds=20):
+        """Разрезать длинную запись самим и склеить расшифровку.
+
+        Нужен, когда движок отказывается брать длинный кусок, а его штатная
+        «длинная дорожка» недоступна. Режем с нахлёстом в полсекунды: без
+        него слово на стыке теряется целиком, с ним оно попадает в один из
+        кусков полностью."""
+        import numpy as _np
+        step = int(seconds * sample_rate)
+        over = int(0.5 * sample_rate)
+        parts = []
+        i = 0
+        while i < len(pcm16):
+            piece = pcm16[max(0, i - over):i + step]
+            p2 = _to_wav_tempfile(_np.asarray(piece), sample_rate)
+            try:
+                r = self.model.transcribe(p2)
+                t = getattr(r, "text", r if isinstance(r, str) else str(r))
+                if t:
+                    parts.append(str(t).strip())
+            except Exception as e:
+                log.warning("GigaAM: кусок не разобрался (%s)", str(e)[:80])
+            finally:
+                Path(p2).unlink(missing_ok=True)
+            i += step
+        return " ".join(x for x in parts if x).strip()
 
     def unload(self):
         self.model = None

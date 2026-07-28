@@ -91,6 +91,9 @@
     box-shadow:inset 0 1px 0 rgba(255,255,255,.35);flex:none;transition:background .3s}
   .dot.ok{background:var(--ok);box-shadow:0 0 8px rgba(67,209,138,.55)}
   .dot.err{background:var(--err);box-shadow:0 0 8px rgba(224,101,95,.55)}
+  /* «спит»: модели выгружены. Не ошибка — просто ничего не занято. */
+  .dot.off{background:rgba(255,255,255,.16);box-shadow:none}
+  .chip.idle,#btn-model.idle{opacity:.5;filter:grayscale(.7)}
   #problems{margin-left:auto;font-size:11.5px;color:var(--warn);max-width:42%;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.9}
   #net{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);
@@ -1139,6 +1142,10 @@
           микрофона — в меню 🎙. Умное внимание: зови по имени
           («<i>Сайка, …</i>») или говори в течение 30 сек после её ответа;
           режим «слушать всё» — тумблер там же.<br>
+          <b>Узнавание голоса</b> — там же, в меню 🎙, самым верхом: она
+          различает <i>кто</i> говорит, а не только что сказано. Запиши свой
+          голос кнопкой «Записать», а «⤢ Открыть панель голоса» разворачивает
+          её третьим окном рядом с аватаром и чатом.<br>
           <span style="color:var(--dim)">Пример: «Сайка, как дела?»</span></div>
         <div><b>⏹ Перебить / заткнуть</b><br>
           Сказать «<i>стоп / хватит / замолчи</i>», клик по волне-эквалайзеру
@@ -1509,10 +1516,47 @@ function handleJson(m){
     bootId=m.boot;
     return;
   }
+  // ЧЕРНОВИК (2026-07-28): одна серая строка внизу чата, которая
+  // обновляется на месте, пока человек говорит. Это НЕ реплика — это
+  // «слышу вот это, пока думаю»; приходит чистовик, и черновик исчезает.
+  if(m.type==='guard'){
+    // защита железа: предупреждение — жёлтым, срабатывание — красным.
+    // Второе означает, что модели уже выгружены и надо смотреть охлаждение.
+    toast(m.level==='critical'
+      ? 'Защита железа: GPU '+m.temp+'°C, VRAM '+m.vram+'% — выгрузила все '+
+        'модели, чтобы не уронить компьютер. Проверь охлаждение.'
+      : 'Железо на пределе: GPU '+m.temp+'°C, VRAM '+m.vram+'%',
+      {kind: m.level==='critical'?'err':'warn', ttl: 12000});
+    if(m.level==='critical' && typeof refresh==='function') setTimeout(refresh, 800);
+    return;
+  }
+  if(m.type==='stt_draft'){
+    let d=document.getElementById('stt-draft');
+    if(!m.text){ if(d) d.remove(); return; }
+    if(!d){
+      d=document.createElement('div');
+      d.id='stt-draft'; d.className='msg user';
+      d.style.cssText='opacity:.45;font-style:italic;border-style:dashed';
+      $('#chat').appendChild(d);
+    }
+    d.textContent=m.text+' …';
+    $('#chat').scrollTop=1e9;
+    return;
+  }
   if(m.type==='stt'){
+    const _d=document.getElementById('stt-draft'); if(_d) _d.remove();
     // услышано + метрики: движок, за сколько распознал, во сколько услышала
     let meta='услышано: '+m.engine;
     if(m.stt_ms!=null) meta+=' · распознала за '+(m.stt_ms>=1000?(m.stt_ms/1000).toFixed(1)+'с':m.stt_ms+'мс');
+    // МЕТКА ГОВОРЯЩЕГО (2026-07-28): появляется только когда тембр узнан
+    // устойчиво — сервер не присылает её, пока не уверен
+    // «Голос 3 (0%)» — это не метка, а шум: она говорит «похоже вот на
+    // этого, но я ни капли не уверена». Ноль процентов рядом с именем
+    // читается как утверждение и сбивает с толку сильнее, чем молчание.
+    // Ниже четверти уверенности имени нет вовсе (2026-07-28).
+    if(m.speaker && (m.speaker_conf==null || m.speaker_conf>=0.25))
+      meta += ' · голос: '+m.speaker+
+        (m.speaker_conf!=null?' ('+Math.round(m.speaker_conf*100)+'%)':'');
     if(m.heard_at) meta+=' · '+m.heard_at;
     addMsg('user', m.text, meta); curSaikaMsg=null;
     loader(true);   // услышала — сейчас пойдёт ответ, показываем активность
@@ -2105,6 +2149,7 @@ function sbar(label,pct,extra){
 async function pollSystem(){
   try{
     sysinfo = await (await fetch('/api/system')).json();
+    const esc2 = t => String(t).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
     let h='<div class="hdr">Система</div>';
     const c=sysinfo.cpu||{};
     if(c.percent!=null) h+=sbar(`ЦП${c.cores?' · '+c.cores+' пот.':''}`, c.percent);
@@ -2114,6 +2159,13 @@ async function pollSystem(){
     if(g){
       h+=`<div class="gname">${g.name}</div>`;
       h+=sbar('VRAM', g.vram_used/g.vram_total*100, GB(g.vram_used)+' / '+GB(g.vram_total));
+      // раскладка по процессам: одно число «сколько» не отвечает на вопрос
+      // «почему» — отвечает список, кто именно ест
+      if(g.procs && g.procs.length){
+        h+='<div class="legend" style="margin:2px 0 4px">'+
+          g.procs.map(p=>`${esc2(p.who)} — ${(p.mb/1024).toFixed(1)} ГБ`)
+                 .join('<br>')+'</div>';
+      }
       if(g.util!=null) h+=sbar('GPU', g.util);
       if(g.temp!=null) h+=`<div class="row"><span>Температура</span><span>${g.temp}°C</span></div>`;
     }
@@ -2494,6 +2546,9 @@ async function api(url, body){
     body:JSON.stringify(body)})).json();
 }
 
+// озвучка после жёсткой разгрузки выключается целиком (tts.enabled=false) —
+// значок голоса обязан это показывать, иначе «выключено» выглядит как «готово»
+function CFG_TTS_ON(){ return !(status && status.tts && status.tts.enabled===false); }
 async function refresh(){
   try{
     status = await (await fetch('/api/status')).json();
@@ -2504,9 +2559,25 @@ async function refresh(){
     $('#model-label').textContent =
       (act && act !== status.llm.model) ? sel+' → '+act : sel;
     const anyLlm = Object.values(status.llm.backends).some(v=>v);
-    $('#dot-llm').className='dot '+(anyLlm?'ok':'err');
-    $('#dot-stt').className='dot '+(status.stt.health[status.stt.current]==='broken'?'err':'ok');
-    $('#dot-tts').className='dot '+(status.tts.health[status.tts.current]==='broken'?'err':'ok');
+    // ТРИ СОСТОЯНИЯ, а не два (2026-07-28). Раньше точка горела зелёным,
+    // пока бэкенд отвечает по сети, — и после «Выгрузить всё из памяти»
+    // экран врал: моделей в памяти нет, а всё «в порядке». Теперь: красный
+    // — сломано, зелёный — РЕАЛЬНО загружено и готово, серый — спит.
+    const llmLive = (status.llm.loaded||[]).length>0;
+    const dotCls = (broken, live) => 'dot '+(broken?'err':live?'ok':'off');
+    $('#dot-llm').className = dotCls(!anyLlm, llmLive);
+    $('#dot-llm').title = !anyLlm?'Мозги недоступны'
+      : llmLive?'Модель в памяти':'Моделей в памяти нет — спит';
+    const _sl=(status.stt.loaded||{})[status.stt.current];
+    const _tl=(status.tts.loaded||{})[status.tts.current];
+    $('#dot-stt').className = dotCls(
+      status.stt.health[status.stt.current]==='broken',
+      status.stt.current!=='off' && (_sl===true||_sl===null));
+    $('#dot-tts').className = dotCls(
+      status.tts.health[status.tts.current]==='broken',
+      CFG_TTS_ON() && (_tl===true||_tl===null));
+    // чип модели тоже уходит в «неактивно» — по нему видно быстрее всего
+    const bm=$('#btn-model'); if(bm) bm.classList.toggle('idle', !llmLive);
     renderAlways();
     renderControl();
     // градиент на микрофоне, когда слух (текущий STT-движок) в памяти
@@ -3347,72 +3418,292 @@ function eqFrame(){
 eqFrame();
 </script>
 <script>
-/* ============ сплит чат/аватар (2026-07-25) ============
-   ratio — доля ширины под аватар (0..1). <0.04 — аватар свёрнут в
-   мини-вкладку, >0.96 — свёрнут чат. Тянется за #av-split, состояние
-   переживает перезагрузку страницы (localStorage). */
+/* ============ ТРИ ПАНЕЛИ-КАРУСЕЛЬ: аватар · голос · чат ============
+   (2026-07-28, вторая редакция; пришло на смену сплиту чат/аватар 2026-07-25)
+
+   КАРУСЕЛЬ БЕСКОНЕЧНАЯ. Панели делят один ряд. Тянешь границу — соседи
+   меняются шириной один в один (сумма пары постоянна), поэтому край ровно
+   под курсором и никуда не убегает. Дожал до края — соседка схлопывается в
+   мини-вкладку И ПЕРЕЕЗЖАЕТ НА ПРОТИВОПОЛОЖНУЮ СТОРОНУ: выдавил вправо —
+   её вкладка появляется слева, выдавил влево — справа. Крутить можно в одну
+   сторону сколько угодно, порядок панелей идёт по кругу.
+
+   ПОЧЕМУ ИМЕННО ТАК, А НЕ «ПРОСТО СХЛОПНУТЬ». Если вкладка остаётся там же,
+   где схлопнулась, то через два движения весь ряд оказывается прижат к
+   одному краю и раскладка перестаёт слушаться. Переезд на другую сторону
+   делает движение обратимым: продолжаешь тянуть в ту же сторону — панели
+   просто едут по кругу.
+
+   ПОЛОСЫ ПОСЕРЕДИНЕ НЕТ. Ручка разделителя — прозрачная зона захвата;
+   светится только под курсором. Постоянная серая черта посреди экрана
+   читалась как элемент интерфейса, хотя это всего лишь место для хвата.
+
+   Состояние в localStorage.saika_panes; старый ключ saika_av_split
+   подхватывается один раз, чтобы не съехала привычная ширина аватара.
+   =================================================================== */
 (function(){
-  const $id = s=>document.getElementById(s);
-  const chat=$id('chat'), pane=$id('av-pane'), split=$id('av-split'),
-        avTab=$id('av-tab'), chatTab=$id('chat-tab'), frame=$id('av-frame');
-  let st = {open:false, ratio:0.42};
-  try{ st = Object.assign(st, JSON.parse(localStorage.saika_av_split||'{}')); }catch(e){}
-  function save(){ try{ localStorage.saika_av_split = JSON.stringify(st); }catch(e){} }
-  function ensureFrame(){ if(!frame.src || frame.src==='about:blank')
-      frame.src='/avatar?cam=full'; }
-  function apply(){
-    const avMin = st.ratio < 0.18, chatMin = st.ratio > 0.82;
-    // 2026-07-25: плитка, на которую «наехали», сначала ужимается
-    // (классы sq-*), а за порогом схлопывается в мини-вкладку.
-    const mainEl = $id('main');
-    mainEl.classList.toggle('sq-chat', st.open && !chatMin && st.ratio > 0.62);
-    mainEl.classList.toggle('sq-av',   st.open && !avMin  && st.ratio < 0.30);
-    if(!st.open){                        // аватар выключен совсем
-      chat.style.display='flex'; chat.style.flex='1';
-      pane.style.display='none'; split.style.display='none';
-      chatTab.style.display='none'; avTab.style.display='flex';
-      return;
+  const $id = s => document.getElementById(s);
+  const main = $id('main');
+  const chat = $id('chat'), avPane = $id('av-pane'), avTab = $id('av-tab'),
+        chatTab = $id('chat-tab'), avSplit = $id('av-split'),
+        frame = $id('av-frame');
+  if(!main || !chat || !avPane) return;
+
+  const SHUT = 70;      // уже этого — панель считается выдавленной за край
+  const NICE = 380;     // с какой ширины панель открывается по клику
+
+  /* ── панель голоса и вторая пара «вкладка + разделитель» ── */
+  const vpPane = document.createElement('div'); vpPane.id = 'vp-pane';
+  const vpTab = document.createElement('div');  vpTab.id = 'vp-tab';
+  vpTab.title = 'Открыть панель голоса · можно тянуть';
+  vpTab.innerHTML = '🎙<span>голос</span>';
+  const vpSplit = document.createElement('div'); vpSplit.id = 'vp-split';
+  main.appendChild(vpPane); main.appendChild(vpTab); main.appendChild(vpSplit);
+  [avSplit, vpSplit].forEach(s => {
+    s.title = 'Тяни — соседи меняются шириной. Дожал до края — соседка ' +
+              'уезжает во вкладку с другой стороны. Двойной клик — поровну';
+  });
+
+  const st2 = document.createElement('style');
+  st2.textContent = `
+  #vp-pane{display:none;min-width:0;overflow:hidden;border-radius:26px;
+    background:radial-gradient(ellipse at 50% 15%,rgba(77,208,225,.10) 0%,
+      rgba(255,255,255,.03) 70%);
+    border:1px solid var(--tile-bd,rgba(255,255,255,.1))}
+  #vp-tab{display:none;flex:0 0 34px;cursor:grab;border-radius:16px;
+    background:var(--tile);border:1px solid var(--tile-bd);
+    color:var(--dim);align-items:center;justify-content:center;
+    flex-direction:column;gap:10px;font-size:15px;user-select:none;
+    transition:color .18s,background .18s}
+  #vp-tab:hover{color:#fff;background:rgba(77,208,225,.16);
+    border-color:rgba(77,208,225,.42)}
+  #vp-tab span{writing-mode:vertical-rl;font-size:10.5px;letter-spacing:.16em;
+    text-transform:uppercase}
+  #vp-split{width:10px;cursor:col-resize;background:transparent;display:none;
+    flex:0 0 10px;position:relative;border-radius:6px}
+  /* ручка невидима, пока на неё не навели: посреди экрана не должно быть
+     постоянной серой полосы — она читается как часть интерфейса */
+  #av-split::before,#vp-split::before{content:'';position:absolute;left:50%;
+    top:calc(50% - 22px);width:3px;height:44px;transform:translateX(-50%);
+    border-radius:3px;background:transparent;box-shadow:none;
+    transition:background .18s,height .18s,box-shadow .18s}
+  #av-split:hover::before,#vp-split:hover::before{background:#4dd0e1;
+    height:74px;box-shadow:0 0 14px rgba(77,208,225,.7)}
+  /* вкладки — тоже ручки: курсор сразу говорит, что их можно тянуть */
+  #av-tab,#chat-tab{cursor:grab}
+  body.panes-drag{cursor:col-resize!important;user-select:none}
+  body.panes-drag iframe{pointer-events:none}
+  @media (max-width:900px){#vp-split,#vp-tab{display:none!important}
+    body.mob-vp #chat,body.mob-vp #av-pane{display:none!important}
+    body.mob-vp #vp-pane{display:flex!important;flex:1!important}}`;
+  document.head.appendChild(st2);
+
+  /* ── состояние ── */
+  let S = {av: {open: false, px: 420}, vp: {open: false, px: 400},
+           chat: {open: true, px: 640}, order: ['av', 'vp', 'chat']};
+  try{
+    const raw = JSON.parse(localStorage.saika_panes || 'null');
+    if(raw){
+      S = Object.assign(S, raw);
+      const ok = Array.isArray(S.order) && S.order.length === 3 &&
+                 ['av', 'vp', 'chat'].every(k => S.order.indexOf(k) >= 0);
+      if(!ok) S.order = ['av', 'vp', 'chat'];
+    } else {         // разовый перенос из старого двухпанельного сплита
+      const old = JSON.parse(localStorage.saika_av_split || 'null');
+      if(old){ S.av.open = !!old.open && old.ratio > 0.18;
+               S.av.px = Math.round((old.ratio || 0.42) * 1200); }
     }
-    ensureFrame();
-    avTab.style.display='none';
-    split.style.display='block';
-    if(avMin){                           // аватар свёрнут в вкладку
-      chat.style.display='flex'; chat.style.flex='1';
-      pane.style.display='none'; split.style.display='none';
-      chatTab.style.display='none'; avTab.style.display='flex';
-    } else if(chatMin){                  // чат свёрнут в вкладку
-      chat.style.display='none';
-      pane.style.display='block'; pane.style.flex='1';
-      chatTab.style.display='flex'; split.style.display='none';
-    } else {
-      chat.style.display='flex'; pane.style.display='block';
-      chat.style.flex=`1 1 ${(1-st.ratio)*100}%`;
-      pane.style.flex=`0 0 ${st.ratio*100}%`;
-      chatTab.style.display='none';
-    }
+  }catch(e){}
+  const save = () => { try{ localStorage.saika_panes = JSON.stringify(S); }catch(e){} };
+
+  const DEF = {av:   {el: avPane, tab: avTab},
+               vp:   {el: vpPane, tab: vpTab},
+               chat: {el: chat,   tab: chatTab}};
+  const SPLITS = [avSplit, vpSplit];
+  const openKeys = () => S.order.filter(k => S[k].open);
+
+  function ensureFrame(){
+    if(frame && (!frame.src || frame.src === 'about:blank'))
+      frame.src = '/avatar?cam=full';
   }
-  avTab.onclick = ()=>{ st.open=true;
-    if(st.ratio<0.18||st.ratio>0.82) st.ratio=0.42; save(); apply(); };
-  chatTab.onclick = ()=>{ st.ratio=0.42; save(); apply(); };
-  split.ondblclick = ()=>{ st.ratio=0.5; save(); apply(); };
-  split.onmousedown = e=>{
-    e.preventDefault();
-    frame.style.pointerEvents='none';    // iframe не должен красть mousemove
-    const main=$id('main');
-    const move = ev=>{
-      const r=main.getBoundingClientRect();
-      const sysW = $id('sysbar').offsetWidth||0;
-      // аватар слева: ratio = сколько занято слева от разделителя
-      st.ratio = Math.min(1, Math.max(0,
-                 (ev.clientX - r.left - sysW) / (r.width - sysW)));
-      apply();
+  function room(){                     // сколько ширины вообще есть под панели
+    const gap = parseFloat(getComputedStyle(main).gap) || 0;
+    const sys = ($id('sysbar') || {offsetWidth: 0}).offsetWidth || 0;
+    const closed = 3 - openKeys().length;
+    const splits = Math.max(0, openKeys().length - 1);
+    return Math.max(120,
+      main.clientWidth - sys - gap * (3 + closed) - 34 * closed - 10 * splits);
+  }
+
+  /* ── раскладка ── */
+  function apply(){
+    if(!openKeys().length) S[S.order[0]].open = true;   // пустой ряд — это баг
+    if(S.av.open) ensureFrame();
+
+    let ord = 1, si = 0, prev = null;
+    SPLITS.forEach(s => { s.style.display = 'none'; s.dataset.i = ''; });
+    S.order.forEach(k => {
+      const d = DEF[k], o = S[k].open;
+      d.el.style.display = o ? 'flex' : 'none';
+      d.tab.style.display = o ? 'none' : 'flex';
+      if(o){
+        if(prev !== null && si < SPLITS.length){
+          const sp = SPLITS[si];
+          sp.style.display = 'block'; sp.style.order = ord++;
+          sp.dataset.i = String(si);     // граница между open[si] и open[si+1]
+          si++;
+        }
+        d.el.style.order = ord++;
+        prev = k;
+      } else d.tab.style.order = ord++;
+    });
+
+    // ширины: держим сумму равной доступному месту, последняя добирает остаток
+    const open = openKeys(), avail = room();
+    const sum = open.reduce((a, k) => a + Math.max(1, S[k].px), 0);
+    if(Math.abs(sum - avail) > 1 && sum > 0){
+      const kf = avail / sum;
+      open.forEach(k => { S[k].px = Math.max(1, Math.round(S[k].px * kf)); });
+    }
+    open.forEach((k, i) => {
+      DEF[k].el.style.flex = (i === open.length - 1)
+        ? '1 1 0' : '0 0 ' + Math.max(1, S[k].px) + 'px';
+    });
+  }
+
+  /* ── схлопывание с переездом на другую сторону (та самая карусель) ── */
+  function shut(k, side){
+    const before = openKeys().length;
+    S[k].open = false;
+    S[k].px = NICE;
+    S.order = S.order.filter(x => x !== k);
+    // выдавили ВПРАВО — вкладка появляется СЛЕВА, и наоборот
+    if(side === 'right') S.order.unshift(k); else S.order.push(k);
+
+    // ПРОВОРОТ. Три открытых -> два: это обычное схлопывание, ничего не
+    // вытаскиваем. А вот когда осталась бы ОДНА панель, ряд надо провернуть,
+    // иначе карусель упирается: тянуть больше нечего, границы нет, и дальше
+    // крутить можно только мышкой по вкладкам. Поэтому с той же стороны, куда
+    // уехала схлопнутая, достаём следующую вкладку — ряд едет по кругу
+    // сколько угодно, а число открытых панелей держится.
+    if(before >= 2 && openKeys().length < 2){
+      const rest = side === 'right'
+        ? S.order.slice(1)                       // соседи правее новой вкладки
+        : S.order.slice(0, -1).slice().reverse();
+      const cand = rest.filter(x => !S[x].open)[0];
+      if(cand){ openPane(cand); return; }        // openPane сам сохранит и разложит
+    }
+    save(); apply();
+  }
+
+  /* ── перетаскивание границы: пара меняется шириной один в один ── */
+  let drag = null;
+  function beginDrag(i, e){
+    const open = openKeys();
+    if(i < 0 || i + 1 >= open.length) return;
+    const lk = open[i], rk = open[i + 1];
+    drag = {lk: lk, rk: rk, armed: false,
+            sum: Math.max(2, S[lk].px + S[rk].px),
+            x0: DEF[lk].el.getBoundingClientRect().left};
+    document.body.classList.add('panes-drag');
+    move(e);
+    addEventListener('mousemove', move);
+    addEventListener('mouseup', end);
+  }
+  function move(e){
+    if(!drag) return;
+    let w = Math.round(e.clientX - drag.x0);
+    w = Math.max(0, Math.min(drag.sum, w));
+    S[drag.lk].px = w;
+    S[drag.rk].px = drag.sum - w;
+    // armed: схлопывать разрешаем только после того, как ОБЕ панели побывали
+    // заметно шире порога. Иначе вытягивание за вкладку кончалось, не
+    // начавшись: в момент захвата ширина новой панели ещё нулевая, и она
+    // тут же уезжала обратно. (2026-07-28, поймано прогоном в браузере.)
+    if(w > SHUT + 40 && drag.sum - w > SHUT + 40) drag.armed = true;
+    if(drag.armed){
+      if(w < SHUT){ const k = drag.lk; end(true); shut(k, 'left'); return; }
+      if(drag.sum - w < SHUT){ const k = drag.rk; end(true); shut(k, 'right'); return; }
+    }
+    apply();
+  }
+  function end(quiet){
+    drag = null;
+    document.body.classList.remove('panes-drag');
+    removeEventListener('mousemove', move);
+    removeEventListener('mouseup', end);
+    if(quiet !== true){ save(); apply(); }
+  }
+  SPLITS.forEach(sp => {
+    sp.onmousedown = e => {
+      e.preventDefault();
+      if(sp.dataset.i !== '') beginDrag(parseInt(sp.dataset.i, 10), e);
     };
-    const up = ()=>{ frame.style.pointerEvents='';
-      removeEventListener('mousemove',move); removeEventListener('mouseup',up);
-      save(); };
-    addEventListener('mousemove',move); addEventListener('mouseup',up);
-  };
+    sp.ondblclick = () => {
+      const open = openKeys(), w = Math.floor(room() / open.length);
+      open.forEach(k => { S[k].px = w; });
+      save(); apply();
+    };
+  });
+
+  /* ── открытие: клик по вкладке ИЛИ протяжка от неё ── */
+  function openPane(k, px){
+    if(S[k].open){ apply(); return; }
+    const want = Math.max(1, px || Math.min(NICE, Math.round(room() / 2)));
+    const open = openKeys();
+    if(open.length){
+      // место берём у самой широкой из открытых — она переживёт это спокойнее
+      const donor = open.slice().sort((a, b) => S[b].px - S[a].px)[0];
+      S[donor].px = Math.max(SHUT + 1, S[donor].px - want);
+    }
+    S[k].open = true; S[k].px = want;
+    save(); apply();
+  }
+  Object.keys(DEF).forEach(k => {
+    DEF[k].tab.onmousedown = e => {
+      e.preventDefault();
+      const x0 = e.clientX;
+      let opened = false;
+      const mv = ev => {
+        if(opened || Math.abs(ev.clientX - x0) < 4) return;
+        opened = true;
+        removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+        openPane(k, 8);
+        // тянем ту границу, где эта панель — растущая сторона
+        const open = openKeys(), i = open.indexOf(k);
+        beginDrag(i < open.length - 1 ? i : i - 1, ev);
+      };
+      const up = () => {
+        removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+        if(!opened) openPane(k);
+      };
+      addEventListener('mousemove', mv); addEventListener('mouseup', up);
+    };
+  });
+
+  addEventListener('resize', apply);
   apply();
+
+  window.saikaPanes = {
+    open: openPane, apply,
+    isOpen: k => !!(S[k] && S[k].open),
+    toggle: k => { if(S[k].open) shut(k, 'right'); else openPane(k); },
+  };
+
+  /* ── мобильный режим: третья кнопка в переключателе ── */
+  const wire = () => {
+    const tabs = $id('mob-tabs');
+    if(!tabs || tabs.querySelector('[data-m="vp"]')) return;
+    const b = document.createElement('button');
+    b.dataset.m = 'vp'; b.textContent = '🎙 Голос';
+    tabs.appendChild(b);
+    tabs.addEventListener('click', ev => {
+      const t = ev.target.closest('button'); if(!t) return;
+      document.body.classList.toggle('mob-vp', t.dataset.m === 'vp');
+      tabs.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === t));
+    });
+  };
+  wire(); setTimeout(wire, 600); setTimeout(wire, 2000);
 })();
 </script>
 <script>
@@ -7236,6 +7527,2026 @@ eqFrame();
   window.saikaPsyche = open;
 })();
 
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · ГОЛОС — узнавание говорящего и всё, что можно про голос показать.
+   (2026-07-28, вторая редакция: панель вместо шторки)
+
+   ПРИЧИНА ОТДЕЛЬНОГО СКРИПТА (как у слоя «Nocturne Glass»): основной код —
+   ws, чат, модели, слух — не трогаем. Этот блок надстраивается поверх
+   готовых узлов: наполняет панель #vp-pane (её создаёт менеджер панелей),
+   дорисовывает секцию в меню 🎙 и вешает СВОЙ слушатель на живой вебсокет.
+   Сломается — достаточно вырезать этот <script>.
+
+   ЧЕТЫРЕ СЛОЯ В ПАНЕЛИ, и каждый отвечает на свой вопрос:
+   1. КАРТА ГОЛОСОВ — «на кого это похоже». Реальная проекция эмбеддинга,
+      а не анимация под громкость: точка едет от того, КАК ты говоришь.
+   2. СПЕКТР — «как это выглядит физически». Считается В БРАУЗЕРЕ из того же
+      микрофонного потока (AnalyserNode): 60 кадров в секунду и НОЛЬ нагрузки
+      на сервер. Гнать спектр по вебсокету было бы и медленнее, и дороже.
+   3. ЛЕНТА ВРЕМЕНИ — «что было последнюю минуту»: кто говорил, каким тоном,
+      где она сомневалась. Собирается из тех же событий, что и точка.
+   4. КАРТОЧКИ ГОЛОСОВ — «кого она знает»: сколько слышала, когда в последний
+      раз, в каком диапазоне тона он живёт.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const toast = (t, o) => (window.saikaToast || (() => {}))(t, o);
+  async function api(url, body){
+    const opt = body ? {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)} : {};
+    const r = await fetch(url, opt);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+  const GREY = '#8892a6';
+  function hex(c, a){
+    const m = /^#([0-9a-f]{6})$/i.exec(c || '');
+    if(!m) return 'rgba(136,146,166,' + a + ')';
+    const n = parseInt(m[1], 16);
+    return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  const esc = s => String(s).replace(/[&<>"]/g,
+    c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  // ПОЧЕМУ не голос — одним словом. Без объяснения «не голос» читается как
+  // каприз: человек-то слышит, что звук был.
+  function noiseWhy(p){
+    if(!p || p.tone === undefined) return 'звук без голоса';
+    const w = [[p.tone, 'нет тона'], [p.shape, 'ровный спектр'],
+               [p.low, 'нет низа'], [p.hold, 'слишком коротко']];
+    w.sort((a, b) => a[0] - b[0]);
+    return w[0][1];
+  }
+  function ago(ts){
+    if(!ts) return 'ещё не слышала';
+    const d = Date.now() / 1000 - ts;
+    if(d < 60) return 'только что';
+    if(d < 3600) return Math.round(d / 60) + ' мин назад';
+    if(d < 86400) return Math.round(d / 3600) + ' ч назад';
+    return Math.round(d / 86400) + ' дн назад';
+  }
+
+  /* ─────────────────────────── состояние ─────────────────────────── */
+  let ST = null;
+  let CLOUD = {pts: [], colors: {}, kind: 'mirror'};
+  let hulls = {};
+  const live = {x: 0, y: 0, tx: 0, ty: 0, who: '', near: '', sim: 0, conf: 0,
+                energy: 0, pitch: 0, color: GREY, seen: 0, on: false,
+                started: false};
+  // ЕЁ СОБСТВЕННЫЙ ГОЛОС — вторая живая точка. Отдельная, а не «ещё один
+  // говорящий»: она может звучать ОДНОВРЕМЕННО с человеком (перебивание), и
+  // одной точкой на двоих это не показать.
+  const selfLive = {x: 0, y: 0, tx: 0, ty: 0, who: '', energy: 0, pitch: 0,
+                    color: '#9184d9', seen: 0, on: false, started: false};
+  // «НЕ ГОЛОС» — отдельное состояние, а не «незнакомый человек». Клац
+  // мышкой, стук по столу, шип кулера: звук есть, голоса нет. Раньше всё
+  // это получало подпись «незнакомый голос» и точку на карте.
+  const noiseLive = {seen: 0, score: 0, parts: {}, energy: 0};
+  let tail = [];
+  let selfTail = [];
+  let spin = 0;
+  let ribbon = [];                  // лента времени: события последней минуты
+  // источник спектра: auto — кто сейчас звучит, mic — только микрофон,
+  // tts — только её голос
+  let specSrc = 'auto';
+  try{ specSrc = localStorage.saika_vp_spec || 'auto'; }catch(e){}
+  const show = {cloud: true, terr: true, tail: true};
+
+  /* ─────────────────────────── стили ─────────────────────────── */
+  const css = document.createElement('style');
+  css.textContent = `
+  .vp-wrap{margin:4px 0 2px}
+  /* высота ФИКСИРОВАННАЯ: у canvas атрибут height задаёт и внутренний
+     размер, и (без CSS-высоты) внешний — иначе картинка «дышит» сама */
+  .vp-cv{width:100%;height:150px;display:block;border-radius:12px;cursor:zoom-in;
+    background:radial-gradient(120% 120% at 50% 40%,rgba(77,208,225,.07),
+      rgba(10,12,20,.55));border:1px solid rgba(255,255,255,.09)}
+  .vp-now{display:flex;align-items:center;gap:6px;font-size:11.5px;
+    margin:5px 1px 2px;min-height:16px}
+  .vp-dot{width:8px;height:8px;border-radius:50%;flex:none;
+    box-shadow:0 0 8px currentColor;background:currentColor}
+  .vp-dim{color:var(--dim)}
+  .vp-row{display:flex;gap:5px;align-items:center;margin:5px 0}
+  .vp-row input[type=text]{flex:1;min-width:0;background:var(--panel2);
+    color:var(--text);border:1px solid var(--border);border-radius:9px;
+    padding:5px 8px;font:12px inherit;outline:none}
+  .vp-btn{flex:none;background:var(--panel2);color:var(--text);
+    border:1px solid var(--border);border-radius:9px;padding:5px 9px;
+    font:12px inherit;cursor:pointer;transition:background .14s,color .14s}
+  .vp-btn:hover{background:rgba(255,255,255,.08)}
+  .vp-btn.acc{border-color:rgba(77,208,225,.5);color:#9fe7f0}
+  .vp-bar{height:4px;border-radius:3px;background:rgba(255,255,255,.1);
+    overflow:hidden;margin:4px 0}
+  .vp-bar i{display:block;height:100%;background:#4dd0e1;width:0;
+    transition:width .25s}
+  .vp-list .item{display:flex;align-items:center;gap:7px}
+  .vp-x{margin-left:auto;opacity:.45;cursor:pointer;font-size:11px}
+  .vp-x:hover{opacity:1;color:#ff8a80}
+
+  /* ── панель ── */
+  #vp-pane{flex-direction:column;padding:10px 12px 8px;gap:7px;font-size:12px}
+  #vp-pane .vp-h{display:flex;align-items:center;gap:7px;flex:none;
+    font-weight:600;font-size:13px}
+  #vp-pane .vp-h .sub{font-weight:400;font-size:10.5px;color:var(--dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #vp-pane .vp-h .vp-btn{padding:3px 7px;font-size:11px}
+  #vp-map{flex:1 1 auto;min-height:120px;width:100%;display:block;
+    border-radius:16px;border:1px solid rgba(255,255,255,.08);
+    background:radial-gradient(120% 120% at 50% 45%,rgba(77,208,225,.06),
+      rgba(8,10,18,.55))}
+  #vp-spec,#vp-time{width:100%;display:block;border-radius:12px;flex:none;
+    border:1px solid rgba(255,255,255,.07);background:rgba(8,10,18,.5)}
+  #vp-spec{height:74px} #vp-time{height:62px}
+  #vp-pane .vp-cap{flex:none;font-size:9.5px;text-transform:uppercase;
+    letter-spacing:.12em;color:rgba(233,233,237,.34);margin:1px 2px -3px;
+    flex-wrap:wrap;row-gap:3px}
+  #vp-cards{flex:0 1 auto;overflow-y:auto;max-height:34%;min-height:0;
+    display:flex;flex-direction:column;gap:5px}
+  .vp-card{display:flex;align-items:center;gap:8px;padding:6px 8px;
+    border-radius:12px;background:rgba(255,255,255,.045);
+    border:1px solid rgba(255,255,255,.07)}
+  .vp-card.live{border-color:currentColor;
+    box-shadow:0 0 0 1px currentColor inset,0 0 16px -4px currentColor}
+  .vp-card .nm{font-weight:600;font-size:12px;line-height:1.25}
+  .vp-card .sm{font-size:10px;color:var(--dim);line-height:1.3}
+  .vp-card .acts{margin-left:auto;display:flex;gap:4px;flex:none}
+  .vp-card{cursor:grab}
+  .vp-card.drop{outline:2px dashed currentColor;outline-offset:2px;
+    background:rgba(255,255,255,.06)}
+  .vp-row input::-webkit-search-cancel-button,
+  .vp-row input::-webkit-search-decoration{-webkit-appearance:none;display:none}
+  .vp-card .acts button{background:transparent;border:0;color:var(--dim);
+    cursor:pointer;font-size:12px;padding:2px 4px;border-radius:7px}
+  .vp-card .acts button:hover{background:rgba(255,255,255,.09);color:#fff}
+  #vp-pane.narrow #vp-cards,#vp-pane.narrow #vp-time{display:none}`;
+  document.head.appendChild(css);
+
+  /* ─────────────────── секция в меню слуха (🎙) ─────────────────── */
+  const pop = $id('pop-mic');
+  if(!pop) return;
+  const box = document.createElement('div');
+  box.innerHTML =
+    '<div class="title">Узнавание голоса</div>' +
+    '<div class="vp-wrap"><canvas id="vp-mini" class="vp-cv" ' +
+      'title="Твой голос в пространстве голосов. Клик — открыть панель"></canvas>' +
+      '<div class="vp-now"><span class="vp-dot" id="vp-mdot"></span>' +
+      '<span id="vp-mtxt" class="vp-dim">молчание</span></div></div>' +
+    '<div class="vp-row"><input type="search" id="vp-name" ' +
+      'placeholder="имя нового голоса" maxlength="32" autocomplete="off" ' +
+      'autocorrect="off" spellcheck="false" name="saika-lbl-1" ' +
+      'data-lpignore="true" data-1p-ignore data-form-type="other">' +
+      '<button class="vp-btn acc" id="vp-rec">Записать</button></div>' +
+    '<div class="vp-bar" id="vp-prog" style="display:none"><i></i></div>' +
+    '<div class="vp-list" id="vp-list"></div>' +
+    '<div class="vp-row"><button class="vp-btn" id="vp-open" style="flex:1">' +
+      '⤢ Открыть панель голоса</button>' +
+      '<button class="vp-btn" id="vp-onoff" title="Выключить модуль">◉</button>' +
+    '</div>';
+  // В НАЧАЛО меню: человек открывает 🎙 и сразу видит живой голос,
+  // настройки движка и микрофона лежат ниже — они нужны реже.
+  pop.insertBefore(box, pop.firstChild);
+
+  /* ─────────────────── наполнение панели ─────────────────── */
+  const pane = $id('vp-pane');
+  if(pane) pane.innerHTML =
+    '<div class="vp-h">👤 <span>Голос</span>' +
+      '<span class="sub" id="vp-sub"></span><span style="flex:1"></span>' +
+      '<button class="vp-btn" id="vp-t-clear" title="Стереть накопленные облака с карты. Голоса она помнит — облака просто начнут расти заново">🧹</button>' +
+      '<button class="vp-btn" id="vp-t-cloud" title="Облако прошлых фраз">◦</button>' +
+      '<button class="vp-btn" id="vp-t-terr" title="Территории голосов">⬡</button>' +
+      '<button class="vp-btn" id="vp-t-tail" title="Хвост живой точки">〜</button>' +
+    '</div>' +
+    '<canvas id="vp-map"></canvas>' +
+    '<div class="vp-cap" style="display:flex;align-items:center;gap:6px">' +
+      '<span id="vp-spec-cap">спектр</span>' +
+      '<button class="vp-btn" id="vp-spec-src" style="padding:1px 6px;' +
+        'font-size:9.5px;letter-spacing:0;text-transform:none"></button>' +
+      '<span style="flex:1"></span>' +
+      '<button class="vp-btn" id="vp-self" style="padding:1px 6px;' +
+        'font-size:9.5px;letter-spacing:0;text-transform:none"></button>' +
+    '</div><canvas id="vp-spec"></canvas>' +
+    '<div class="vp-cap">последняя минута</div><canvas id="vp-time"></canvas>' +
+    '<div class="vp-dim" id="vp-hear" style="font-size:10px;margin:-2px 0 4px"></div>' +
+    '<div class="vp-cap">знакомые голоса</div><div id="vp-cards"></div>' +
+    '<div class="vp-row"><input type="search" id="vp-name2" ' +
+      'placeholder="имя нового голоса" maxlength="32" autocomplete="off" ' +
+      'autocorrect="off" spellcheck="false" name="saika-lbl-2" ' +
+      'data-lpignore="true" data-1p-ignore data-form-type="other" ' +
+      'style="flex:1;min-width:0;background:var(--panel2);color:var(--text);' +
+      'border:1px solid var(--border);border-radius:9px;padding:5px 8px;' +
+      'font:12px inherit;outline:none">' +
+      '<button class="vp-btn acc" id="vp-rec2">Записать</button></div>' +
+    '<div class="vp-bar" id="vp-prog2" style="display:none"><i></i></div>' +
+    // ЖУРНАЛ СЛУХА. Живая панель отвечает на «что сейчас», журнал — на «кто
+    // и что было за час». Кнопка одна, потому что решение тут одно: слушать
+    // или не слушать.
+    // РЕЖИМ ПРОСЛУШИВАНИЯ СИСТЕМЫ. Отдельная кнопка, а не выбор устройства:
+    // через getDisplayMedia браузер отдаёт звук вкладки или всей системы без
+    // виртуальных кабелей и драйверов. Микрофон при этом глушим — иначе
+    // сервер получил бы два потока вперемешку.
+    '<div class="vp-cap" style="margin-top:4px">прослушивание системы</div>' +
+    '<div class="vp-row"><button class="vp-btn" id="vp-sys" style="flex:1">' +
+      '🖥 Слушать систему</button></div>' +
+    '<div class="vp-dim" id="vp-sysst" style="font-size:10.5px;padding:0 2px">' +
+    '</div>' +
+    '<div class="vp-cap" style="margin-top:4px">стенограмма</div>' +
+    '<div class="vp-row"><button class="vp-btn" id="vp-tr" style="flex:1">' +
+      '✎ Писать стенограмму</button>' +
+      '<button class="vp-btn" id="vp-trsave" title="Сохранить в файл и открыть">' +
+      'Файл</button></div>' +
+    '<div class="vp-dim" id="vp-trst" style="font-size:10.5px;padding:0 2px">' +
+    '</div>' +
+    '<div class="vp-cap" style="margin-top:4px">журнал слуха</div>' +
+    '<div class="vp-row"><button class="vp-btn" id="vp-log" style="flex:1">' +
+      '● Слушать час</button>' +
+      '<button class="vp-btn" id="vp-logrep" title="Собрать отчёт по ' +
+      'накопленному">Отчёт</button></div>' +
+    '<div class="vp-dim" id="vp-logst" style="font-size:10.5px;padding:0 2px">' +
+    '</div>';
+
+  function mark(){
+    [['vp-t-cloud', 'cloud'], ['vp-t-terr', 'terr'], ['vp-t-tail', 'tail']]
+      .forEach(([id, k]) => { const b = $id(id);
+        if(b) b.classList.toggle('acc', show[k]); });
+  }
+  ['cloud', 'terr', 'tail'].forEach(k => {
+    const b = $id('vp-t-' + k);
+    if(b) b.onclick = () => { show[k] = !show[k]; mark(); cloudDirty++; };
+  });
+  mark();
+  {
+    const bc = $id('vp-t-clear');
+    if(bc) bc.onclick = async e => {
+      e.stopPropagation();
+      if(!confirm('Стереть накопленные облака с карты?\n\nГолоса и их ' +
+                  'эталоны останутся — она по-прежнему всех узнаёт, просто ' +
+                  'карта начнёт рисоваться заново.')) return;
+      try{
+        const r = await api('/api/voiceprint/clear_map', {});
+        toast('Карта чистая: убрала ' + (r.removed || 0) + ' точек',
+              {kind: 'ok'});
+        ST = r;
+      }catch(err){ toast('Не вышло: ' + err.message, {kind: 'err'}); }
+      loadPoints(); paintPanel();
+    };
+  }
+
+  const SRC_LBL = {auto: 'авто — кто звучит', mic: '🎙 только микрофон',
+                   tts: '🔊 только её голос'};
+  function paintSrc(){
+    const b = $id('vp-spec-src');
+    if(b) b.textContent = SRC_LBL[specSrc] || specSrc;
+    const sb = $id('vp-self');
+    if(sb && ST) sb.textContent = ST.listen_self
+      ? '🔊 слышит себя' + (ST.self_known ? ' · знает свой голос' : ' · знакомится')
+      : '🔇 себя не слушает';
+  }
+  const srcBtn = $id('vp-spec-src');
+  if(srcBtn) srcBtn.onclick = () => {
+    specSrc = specSrc === 'auto' ? 'mic' : specSrc === 'mic' ? 'tts' : 'auto';
+    try{ localStorage.saika_vp_spec = specSrc; }catch(e){}
+    paintSrc();
+  };
+  const selfBtn = $id('vp-self');
+  if(selfBtn) selfBtn.onclick = async () => {
+    try{ ST = await api('/api/voiceprint/set',
+                        {listen_self: !(ST && ST.listen_self)}); }
+    catch(e){}
+    paintPanel();
+  };
+
+  const openPane = () => {
+    if(window.saikaPanes) window.saikaPanes.open('vp');
+    loadPoints(); refreshStatus(); kick();
+  };
+  $id('vp-open').onclick = e => { e.stopPropagation(); openPane(); };
+  $id('vp-mini').onclick = e => { e.stopPropagation(); openPane(); };
+
+  /* ─────────────────── запись эталона ─────────────────── */
+  async function recClick(inputId){
+    if(ST && ST.enroll && ST.enroll.name){
+      try{ await api('/api/voiceprint/enroll', {action: 'stop'}); }
+      catch(err){ toast('Не смогла дописать голос: ' + err.message, {kind: 'err'}); }
+      refreshStatus(); return;
+    }
+    const el = $id(inputId);
+    const name = ((el && el.value) || '').trim();
+    if(!name){ toast('Сначала имя — чей это голос', {kind: 'info'}); return; }
+    startEnroll(name);
+  }
+  async function startEnroll(name){
+    try{
+      await api('/api/voiceprint/enroll', {action: 'start', name, need: 24});
+      toast('Говори что угодно секунд пятнадцать — я слушаю голос, а не слова',
+            {kind: 'ok', ttl: 6000});
+      if(typeof micOn !== 'undefined' && !micOn)
+        toast('Микрофон выключен — включи 🎧, иначе записывать нечего',
+              {kind: 'err', ttl: 7000});
+    }catch(err){ toast('Не смогла начать запись: ' + err.message, {kind: 'err'}); }
+    refreshStatus();
+  }
+  // ПАРОЛЬНЫЙ МЕНЕДЖЕР ЛЕЗ В ПОЛЕ ИМЕНИ ГОЛОСА (2026-07-28, жалоба
+  // владельца: «нах он так делает, это начинает раздражать»). Chrome решает,
+  // что поле учётное, по эвристике — id, name и подсказка со словом «имя», —
+  // а autocomplete="off" для полей, признанных учётными, он игнорирует
+  // СОЗНАТЕЛЬНО. Поэтому одной строчкой это не чинится, нужно снять все три
+  // признака сразу: тип search (учётным такой не бывает), нейтральное name
+  // и readonly до первого клика — по readonly-полю подсказок не строят.
+  function noAutofill(el){
+    if(!el || el.dataset.naf) return;
+    el.dataset.naf = '1';
+    const off = () => el.setAttribute('readonly', 'readonly');
+    const on = () => el.removeAttribute('readonly');
+    off();
+    ['focus', 'mousedown', 'touchstart', 'pointerdown'].forEach(
+      ev => el.addEventListener(ev, on));
+    el.addEventListener('blur', off);
+  }
+  noAutofill($id('vp-name')); noAutofill($id('vp-name2'));
+
+  $id('vp-rec').onclick = e => { e.stopPropagation(); recClick('vp-name'); };
+  const rec2 = $id('vp-rec2'); if(rec2) rec2.onclick = () => recClick('vp-name2');
+  $id('vp-name').onclick = e => e.stopPropagation();
+  $id('vp-onoff').onclick = async e => {
+    e.stopPropagation();
+    try{ ST = await api('/api/voiceprint/set', {enabled: !(ST && ST.enabled)}); }
+    catch(err){}
+    paintPanel();
+  };
+  async function rename(oldName, newName){
+    const n = (newName || '').trim();
+    if(!n || n === oldName){ paintCards(); return; }
+    try{
+      const r = await api('/api/voiceprint/rename',
+                          {old: oldName, new: n, pin: true});
+      if(r.ok === false){ toast(r.error || 'не вышло', {kind: 'err'}); }
+      else toast('Запомнила: этот голос — ' + n + '. Имя закреплено, сама его ' +
+                 'менять не буду', {kind: 'ok', ttl: 7000});
+      ST = r;
+    }catch(e){ toast('Не переименовалось: ' + e.message, {kind: 'err'}); }
+    loadPoints(); paintPanel();
+  }
+
+  // СЛИЯНИЕ ГОЛОСОВ (2026-07-28, идея владельца). Перетащил плашку на
+  // плашку — сказал «это один и тот же человек». Тембр гуляет: сел, встал,
+  // отвернулся, подурачился — и она честно знакомится с «новым» голосом.
+  // Формально права, но человек знает лучше, и его знание тут главное.
+  // dragover не даёт прочитать dataTransfer (спецификация: данные видны
+  // только в drop), поэтому имя источника держим рядом — иначе подсветить
+  // цель под курсором нечем
+  const drag2 = {nm: ''};
+  document.addEventListener('dragstart', ev => {
+    const c = ev.target && ev.target.closest && ev.target.closest('.vp-card');
+    drag2.nm = c ? (c.dataset.nm || '') : '';
+  });
+  document.addEventListener('dragend', () => { drag2.nm = ''; });
+
+  async function mergeVoices(src, dst){
+    if(!src || !dst || src === dst) return;
+    try{
+      const r = await api('/api/voiceprint/merge', {src: src, dst: dst});
+      if(r.ok === false) toast(r.error || 'не вышло', {kind: 'err'});
+      else toast('Слила: «' + src + '» — это тот же голос, что «' + dst +
+                 '». Теперь эталон шире, и в обоих состояниях узнает сама',
+                 {kind: 'ok', ttl: 8000});
+      ST = r;
+    }catch(e){ toast('Не слилось: ' + e.message, {kind: 'err'}); }
+    loadPoints(); paintPanel();
+  }
+
+  async function forget(name){
+    try{ ST = await api('/api/voiceprint/forget', {name}); }
+    catch(err){ toast('Не забылось: ' + err.message, {kind: 'err'}); }
+    loadPoints(); paintPanel();
+  }
+
+  /* ─────────────── прослушивание системного звука ─────────────── */
+  // Тот же путь, что у микрофона: даунсемпл до 16к с усреднением и int16 в
+  // тот же вебсокет. Повторяем даунсемпл один в один — если брать каждый
+  // третий отсчёт без усреднения, получается алиасинг, и она слышит не то,
+  // что играет (это уже проходили с микрофоном, см. комментарий в startMic).
+  const SYS_WORKLET = `
+  class SysCap extends AudioWorkletProcessor{
+    constructor(){ super(); this.buf=[]; this.ratio=sampleRate/16000;
+      this.acc=0; this.sum=0; this.cnt=0; }
+    process(inputs){
+      const ch=inputs[0][0]; if(!ch) return true;
+      for(let i=0;i<ch.length;i++){
+        this.sum+=ch[i]; this.cnt++; this.acc++;
+        if(this.acc>=this.ratio){ this.acc-=this.ratio;
+          this.buf.push(this.sum/this.cnt); this.sum=0; this.cnt=0; }
+      }
+      if(this.buf.length>=1600){
+        const out=new Int16Array(this.buf.length);
+        for(let i=0;i<this.buf.length;i++){
+          let v=Math.max(-1,Math.min(1,this.buf[i])); out[i]=v*32767; }
+        this.port.postMessage(out.buffer,[out.buffer]); this.buf=[];
+      }
+      return true;
+    }
+  }
+  registerProcessor('syscap',SysCap);`;
+  let sysStream = null, sysCtx = null, sysNode = null, sysLvl = 0;
+
+  function paintSys(){
+    const b = $id('vp-sys'), st = $id('vp-sysst');
+    if(!b) return;
+    b.textContent = sysStream ? '■ Прекратить' : '🖥 Слушать систему';
+    b.classList.toggle('acc', !!sysStream);
+    if(st) st.textContent = sysStream
+      ? 'слушает системный звук · распознаёт речь и голоса, но не отвечает'
+      : 'звук с компьютера вместо микрофона — включи кино и посмотри, что она '
+        + 'из него вытащит. Отвечать при этом не будет';
+  }
+
+  async function sysStart(){
+    try{
+      // видео просим не ради картинки: без него Chrome не предлагает
+      // «поделиться звуком» в диалоге выбора
+      const st = await navigator.mediaDevices.getDisplayMedia(
+        {video: true, audio: {echoCancellation: false, noiseSuppression: false,
+                              autoGainControl: false}});
+      const at = st.getAudioTracks();
+      if(!at.length){
+        st.getTracks().forEach(t => t.stop());
+        toast('В окне выбора надо отметить «Поделиться звуком» — без галочки ' +
+              'браузер отдаёт только картинку', {kind: 'err', ttl: 9000});
+        return;
+      }
+      st.getVideoTracks().forEach(t => t.stop());   // картинка не нужна
+      sysStream = new MediaStream(at);
+      at[0].onended = () => sysStop();
+      if(typeof micOn !== 'undefined' && micOn && typeof stopMic === 'function')
+        stopMic();                                   // два потока в один ws нельзя
+      sysCtx = new AudioContext();
+      const blob = new Blob([SYS_WORKLET], {type: 'application/javascript'});
+      await sysCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+      sysNode = new AudioWorkletNode(sysCtx, 'syscap');
+      sysCtx.createMediaStreamSource(sysStream).connect(sysNode);
+      // отдаём поток наружу: спектр (плоский и объёмный) рисует именно то,
+      // что сейчас слушает сервер, а не выключенный микрофон
+      window.saikaSysStream = sysStream; window.saikaSysCtx = sysCtx;
+      sysNode.port.onmessage = e => {
+        if(typeof ws !== 'undefined' && ws && ws.readyState === 1) ws.send(e.data);
+        const a = new Int16Array(e.data);
+        let s2 = 0;
+        for(let i = 0; i < a.length; i += 8) s2 += (a[i] / 32768) ** 2;
+        sysLvl = Math.sqrt(s2 / Math.max(1, a.length / 8));
+      };
+      if(typeof ws !== 'undefined' && ws && ws.readyState === 1)
+        ws.send(JSON.stringify({type: 'observe', on: true}));
+      toast('Слушаю систему. Речь не распознаю — просто смотрю, какие там ' +
+            'голоса и звуки. Журнал слуха ниже пишет всё это в отчёт.',
+            {kind: 'ok', ttl: 9000});
+    }catch(e){
+      toast('Не получилось взять системный звук: ' + (e.message || e),
+            {kind: 'err', ttl: 8000});
+      sysStop();
+      return;
+    }
+    paintSys(); kick();
+  }
+
+  function sysStop(){
+    try{ if(sysNode) sysNode.disconnect(); }catch(e){}
+    try{ if(sysStream) sysStream.getTracks().forEach(t => t.stop()); }catch(e){}
+    try{ if(sysCtx) sysCtx.close(); }catch(e){}
+    sysNode = sysCtx = sysStream = null;
+    window.saikaSysStream = window.saikaSysCtx = null;
+    if(typeof ws !== 'undefined' && ws && ws.readyState === 1)
+      ws.send(JSON.stringify({type: 'observe', on: false}));
+    paintSys();
+  }
+  const sysBtn = $id('vp-sys');
+  if(sysBtn) sysBtn.onclick = () => sysStream ? sysStop() : sysStart();
+  paintSys();
+
+  /* ─────────────────── стенограмма ─────────────────── */
+  let TR = null;
+  function paintTr(){
+    const b = $id('vp-tr'), st = $id('vp-trst');
+    if(!b || !TR) return;
+    b.textContent = TR.on ? '■ Остановить запись' : '✎ Писать стенограмму';
+    b.classList.toggle('acc', !!TR.on);
+    st.innerHTML = TR.on
+      ? 'пишет · строк ' + TR.lines + ', знаков ' + TR.chars +
+        (TR.te ? ' · знаки препинания ставит' : ' · без пунктуации (нет silero_te)')
+      : TR.lines
+        ? 'накоплено строк ' + TR.lines +
+          (TR.file ? ' · <a href="/transcript/' + TR.file + '" target="_blank" ' +
+            'style="color:#9fe7f0">открыть файл</a>' : '')
+        : 'сплошную речь она режет мельче и пишет всё подряд — с именами ' +
+          'говорящих и пометкой, как это было сказано';
+  }
+  const trBtn = $id('vp-tr');
+  if(trBtn) trBtn.onclick = async () => {
+    try{
+      TR = TR && TR.on ? await api('/api/transcript/stop', {})
+                       : await api('/api/transcript/start', {});
+    }catch(e){}
+    paintTr();
+  };
+  const trSave = $id('vp-trsave');
+  if(trSave) trSave.onclick = async () => {
+    try{
+      const r = await api('/api/transcript/save', {});
+      if(r.file) window.open('/transcript/' + r.file, '_blank');
+      TR = await api('/api/transcript');
+    }catch(e){ toast('Не сохранилось: ' + e.message, {kind: 'err'}); }
+    paintTr();
+  };
+
+  /* ─────────────────── журнал слуха ─────────────────── */
+  let LOG = null;
+  function paintLog(){
+    const b = $id('vp-log'), st = $id('vp-logst'), rb = $id('vp-logrep');
+    if(!b || !LOG) return;
+    b.textContent = LOG.on ? '■ Остановить' : '● Слушать час';
+    b.classList.toggle('acc', !!LOG.on);
+    const mm = Math.round((LOG.left_s || 0) / 60);
+    st.innerHTML = LOG.on
+      ? 'слушает · осталось ' + (mm ? mm + ' мин' : 'меньше минуты') +
+        ' · речи ' + LOG.voices + ', звуков ' + LOG.sounds
+      : (LOG.voices || LOG.sounds)
+        ? 'накоплено: речи ' + LOG.voices + ', звуков ' + LOG.sounds +
+          (LOG.report ? ' · <a href="/earlog/' + LOG.report +
+            '" target="_blank" style="color:#9fe7f0">открыть отчёт</a>' : '')
+        : 'включи — час послушает комнату и покажет, кто говорил и что звучало';
+    if(rb) rb.disabled = !(LOG.voices || LOG.sounds);
+  }
+  const logBtn = $id('vp-log');
+  if(logBtn) logBtn.onclick = async () => {
+    try{
+      LOG = LOG && LOG.on ? await api('/api/earlog/stop', {})
+                          : await api('/api/earlog/start', {minutes: 60});
+    }catch(e){}
+    paintLog();
+  };
+  const repBtn = $id('vp-logrep');
+  if(repBtn) repBtn.onclick = async () => {
+    repBtn.textContent = '…';
+    try{
+      const r = await api('/api/earlog/report', {});
+      toast('Отчёт готов: голосов ' + r.voices + ', видов звуков ' + r.sounds,
+            {kind: 'ok', ttl: 8000});
+      window.open('/earlog/' + r.file, '_blank');
+      LOG = await api('/api/earlog');
+    }catch(e){ toast('Отчёт не собрался: ' + e.message, {kind: 'err'}); }
+    repBtn.textContent = 'Отчёт';
+    paintLog();
+  };
+
+  /* ─────────────────── данные ─────────────────── */
+  // ГДЕ ТЕРЯЮТСЯ СЛОВА. Четыре разных беды выглядят в чате одинаково —
+  // пустотой: очередь уронила звук, VAD не услышал речи, движок вернул
+  // пустоту, фильтр галлюцинаций выбросил текст. Строка ниже показывает
+  // числа, и разбирательство занимает секунду вместо вечера.
+  function paintHear(h){
+    const el = document.getElementById('vp-hear');
+    if(!el) return;
+    if(!h || !h.chunks){ el.textContent = ''; return; }
+    const bits = [];
+    if(h.dropped) bits.push('уронила ' + h.dropped);
+    bits.push('фраз ' + (h.segments || 0) +
+              (h.empty ? ' (пустых ' + h.empty + ')' : ''));
+    if(h.rms || h.thr) bits.push('уровень ' + Math.round(h.rms * 1000) +
+                                 ' / порог ' + Math.round(h.thr * 1000));
+    if(h.q > 5) bits.push('в очереди ' + h.q);
+    if(h.lag) bits.push('ждут распознавания ' + h.lag);
+    // по стадиям, а не одним числом: одно число врало — 99 чанков из 100
+    // движка вообще не видят, и среднее показывало 2мс при полной очереди
+    const st = [];
+    if(h.den_ms) st.push('шумодав ' + h.den_ms);
+    if(h.cut_ms) st.push('нарезка ' + h.cut_ms);
+    if(h.stt_ms) st.push('движок ' + Math.round(h.stt_ms));
+    if(st.length) bits.push(st.join(' / ') + ' мс');
+    el.textContent = 'слух: ' + bits.join(' · ');
+    // порог выше голоса — самая частая и самая незаметная причина тишины
+    el.style.color = (h.rms && h.thr && h.rms < h.thr) ? '#ffb74d' : '';
+  }
+
+  async function refreshStatus(){
+    try{ ST = await api('/api/voiceprint'); paintPanel(); }catch(e){}
+    try{ paintHear(await api('/api/hear')); }catch(e){}
+    try{ LOG = await api('/api/earlog'); paintLog(); }catch(e){}
+    try{ TR = await api('/api/transcript'); paintTr(); }catch(e){}
+  }
+  async function loadPoints(){
+    try{
+      CLOUD = await api('/api/voiceprint/points');
+      hulls = {}; cloudDirty++;
+      const by = {};
+      CLOUD.pts.forEach(p => { if(p.who) (by[p.who] = by[p.who] || []).push([p.x, p.y]); });
+      Object.keys(by).forEach(n => {
+        const pts = by[n];
+        if(pts.length < 3) return;
+        // ТЕРРИТОРИЯ ТОЛЬКО ИЗ ПЛОТНОГО ОБЛАКА. Когда проекция
+        // переобучается (или сменился энкодер), точки одного голоса
+        // какое-то время лежат в двух разных системах координат — и
+        // «территория» превращается в кривую через полкарты. Это не
+        // территория, это артефакт: считаем разброс и такие не рисуем.
+        const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+        const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+        const sp = Math.sqrt(pts.reduce((a, p) =>
+          a + (p[0] - cx) ** 2 + (p[1] - cy) ** 2, 0) / pts.length);
+        if(sp > 0.75) return;
+        hulls[n] = hull(pts.filter(p =>
+          Math.hypot(p[0] - cx, p[1] - cy) < sp * 2.2));
+      });
+    }catch(e){}
+  }
+
+  function speakerRows(){
+    if(!ST) return '';
+    return Object.keys(ST.speakers || {}).map(n =>
+      '<div class="item"><span class="vp-dot" style="color:' +
+      ST.speakers[n].color + '"></span><span>' + esc(n) + '</span>' +
+      '<span class="vp-dim" style="font-size:10.5px">' +
+      ST.speakers[n].vectors + '</span>' +
+      '<span class="vp-x" data-n="' + esc(n) + '" title="Забыть голос">✕</span></div>'
+    ).join('');
+  }
+
+  function paintPanel(){
+    if(!ST) return;
+    const en = ST.enroll || {};
+    [['vp-rec', 'vp-prog'], ['vp-rec2', 'vp-prog2']].forEach(([rid, pid]) => {
+      const rec = $id(rid), bar = $id(pid);
+      if(rec){ rec.textContent = en.name ? 'Готово' : 'Записать';
+               rec.classList.toggle('acc', !en.name); }
+      if(bar){ bar.style.display = en.name ? '' : 'none';
+        if(en.name) bar.firstChild.style.width =
+          Math.min(100, 100 * (en.got || 0) / Math.max(1, en.need)) + '%'; }
+    });
+    const onoff = $id('vp-onoff');
+    if(onoff){ onoff.textContent = ST.enabled ? '◉' : '○';
+      onoff.title = ST.enabled ? 'Выключить узнавание голоса'
+                               : 'Включить узнавание голоса'; }
+    const list = $id('vp-list');
+    if(list){
+      list.innerHTML = speakerRows() ||
+        '<div class="vp-dim" style="font-size:11px;padding:2px">' +
+        'пока никого не знает — запиши первый голос</div>';
+      list.querySelectorAll('.vp-x').forEach(x => {
+        x.onclick = ev => { ev.stopPropagation(); forget(x.dataset.n); };
+      });
+    }
+    paintSrc();
+    const KIND = {mirror: 'набирает голоса', pca: 'PCA', umap: 'UMAP'};
+    const sub = $id('vp-sub');
+    if(sub) sub.textContent = ST.enabled
+      ? '· ' + (KIND[ST.kind] || ST.kind) + ' · ' + (ST.cloud || 0) + ' точек · ' +
+        (ST.backend === 'ecapa' ? 'ECAPA 192' : 'лёгкий 68') +
+        (ST.noise_seen ? ' · отсеяно не-голоса ' + ST.noise_seen : '')
+      : '· выключено';
+    paintCards();
+  }
+
+  function paintCards(){
+    const box2 = $id('vp-cards');
+    if(!box2 || !ST) return;
+    const names = Object.keys(ST.speakers || {});
+    if(!names.length){
+      box2.innerHTML = '<div class="vp-dim" style="font-size:11px">' +
+        'никого ещё не знает — впиши имя внизу и жми «Записать»</div>';
+      return;
+    }
+    const fresh = live.on && performance.now() - live.seen < 1400;
+    box2.innerHTML = names.map(n => {
+      const s = ST.speakers[n];
+      const isLive = fresh && live.who === n;
+      const pitch = s.pitch_hi ? s.pitch_lo + '–' + s.pitch_hi + ' Гц' : 'тон не мерян';
+      // ПЛАВАЮЩАЯ МЕТКА: пока имя только предполагается, показываем его с
+      // процентом и спрашиваем. Закреплённое руками имя такой метки не имеет
+      // вовсе — по нему вопросов нет.
+      const g = s.guess ? '<div class="sm" style="color:' + s.color + '">' +
+        'похоже, это ' + esc(s.guess) + ' · ' +
+        Math.round((s.guess_conf || 0) * 100) + '% · ' +
+        '<a href="#" data-yes="' + esc(n) + '" data-name="' + esc(s.guess) +
+        '" style="color:inherit">так и есть</a></div>' : '';
+      return '<div class="vp-card' + (isLive ? ' live' : '') +
+        '" draggable="true" data-nm="' + esc(n) + '" style="color:' +
+        s.color + '"><span class="vp-dot"></span><div style="flex:1;min-width:0">' +
+        '<div class="nm" style="color:var(--text)">' + esc(n) +
+        (s.pinned ? ' <span class="sm" title="имя закреплено вручную">📌</span>'
+                  : s.auto ? ' <span class="sm" title="познакомилась сама">✨</span>'
+                  : '') + '</div>' +
+        '<div class="sm">' + ago(s.last) + ' · ' + (s.heard || 0) + ' раз · ' +
+        pitch + '</div>' + g + '</div><div class="acts">' +
+        '<button draggable="false" data-ren="' + esc(n) + '" title="Переименовать и закрепить">✎</button>' +
+        '<button draggable="false" data-add="' + esc(n) + '" title="Дописать эталон живой речью">＋</button>' +
+        '<button draggable="false" data-del="' + esc(n) + '" title="Забыть голос">✕</button>' +
+        '</div></div>';
+    }).join('');
+    // ПЕРЕТАЩИЛ ПЛАШКУ НА ПЛАШКУ — СКАЗАЛ «ЭТО ОДИН ЧЕЛОВЕК».
+    // Кнопки для этого не хватило бы: нужно указать ДВА голоса, а жест
+    // «взял и положил на другой» говорит это сам, без диалогов и списков.
+    box2.querySelectorAll('.vp-card').forEach(card => {
+      card.ondragstart = ev => {
+        // ГРАБЛИ 2026-07-28: карточка целиком draggable, и нажатие на ✕
+        // Chrome трактовал как начало перетаскивания — клик не рождался
+        // вовсе, голос «не удалялся». Кнопки из захвата исключены.
+        if(ev.target && ev.target.closest && ev.target.closest('.acts')){
+          ev.preventDefault(); return;
+        }
+        ev.dataTransfer.setData('text/plain', card.dataset.nm);
+        ev.dataTransfer.effectAllowed = 'move';
+        card.style.opacity = '.45';
+      };
+      card.ondragend = () => {
+        card.style.opacity = '';
+        box2.querySelectorAll('.vp-card').forEach(c => c.classList.remove('drop'));
+      };
+      card.ondragover = ev => {
+        const src = drag2.nm;
+        if(!src || src === card.dataset.nm) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        card.classList.add('drop');
+      };
+      card.ondragleave = () => card.classList.remove('drop');
+      card.ondrop = ev => {
+        ev.preventDefault();
+        card.classList.remove('drop');
+        const src = ev.dataTransfer.getData('text/plain') || drag2.nm;
+        const dst = card.dataset.nm;
+        if(!src || !dst || src === dst) return;
+        // спрашиваем ОДИН раз и по-человечески: слияние необратимо, а
+        // разложить обратно уже нечем — векторы после склейки общие
+        if(confirm('Считать, что «' + src + '» и «' + dst + '» — один и тот '
+                   + 'же человек?\n\nОни сольются в «' + dst + '», эталон '
+                   + 'станет шире, и дальше она будет узнавать этот голос в '
+                   + 'обоих состояниях. Разделить обратно будет нельзя.'))
+          mergeVoices(src, dst);
+      };
+    });
+    box2.querySelectorAll('[data-add]').forEach(b =>
+      b.onclick = () => startEnroll(b.dataset.add));
+    box2.querySelectorAll('[data-del]').forEach(b =>
+      b.onclick = () => forget(b.dataset.del));
+    box2.querySelectorAll('[data-yes]').forEach(a =>
+      a.onclick = ev => { ev.preventDefault();
+        rename(a.dataset.yes, a.dataset.name); });
+    box2.querySelectorAll('[data-ren]').forEach(b =>
+      b.onclick = () => {
+        const card = b.closest('.vp-card');
+        const nm = card.querySelector('.nm');
+        const inp = document.createElement('input');
+        inp.type = 'search'; inp.value = b.dataset.ren; inp.maxLength = 32;
+        inp.autocomplete = 'off'; inp.spellcheck = false;
+        inp.name = 'saika-lbl-r'; inp.setAttribute('data-lpignore', 'true');
+        inp.style.cssText = 'width:100%;background:var(--panel2);color:var(--text);' +
+          'border:1px solid var(--border);border-radius:8px;padding:3px 6px;' +
+          'font:12px inherit;outline:none';
+        noAutofill(inp);
+        nm.replaceWith(inp); inp.focus(); inp.select();
+        inp.onkeydown = ev => {
+          if(ev.key === 'Enter') rename(b.dataset.ren, inp.value);
+          if(ev.key === 'Escape') paintCards();
+        };
+        inp.onblur = () => setTimeout(paintCards, 120);
+      });
+  }
+
+  /* ─────────────────── события с сервера ─────────────────── */
+  function onEvent(m){
+    if(m.type === 'voiceprint'){
+      if(m.state === 'voice'){
+        live.tx = m.x; live.ty = m.y; live.who = m.who || '';
+        live.near = m.near || ''; live.sim = m.sim || 0; live.conf = m.conf || 0;
+        live.energy = m.energy || 0; live.pitch = m.pitch || 0;
+        live.color = m.color || GREY; live.seen = performance.now();
+        live.on = true;
+        // объёмный спектр берёт отсюда цвет и подпись — свой источник
+        // событий заводить незачем
+        window.__vpLiveColor = live.color;
+        window.__vpLiveWho = live.who ? '· ' + live.who : '· незнакомый голос';
+        if(!live.started){ live.started = true; live.x = m.x; live.y = m.y; }
+        ribbon.push({t: Date.now(), who: live.who, c: live.color,
+                     p: live.pitch, e: live.energy, k: live.conf});
+        if(ribbon.length > 400) ribbon = ribbon.slice(-400);
+        kick();
+      } else if(m.state === 'self'){
+        selfLive.tx = m.x; selfLive.ty = m.y; selfLive.who = m.who || '';
+        selfLive.energy = m.energy || 0; selfLive.pitch = m.pitch || 0;
+        selfLive.color = m.color || '#9184d9';
+        selfLive.seen = performance.now(); selfLive.on = true;
+        if(!selfLive.started){ selfLive.started = true;
+                               selfLive.x = m.x; selfLive.y = m.y; }
+        ribbon.push({t: Date.now(), who: selfLive.who, c: selfLive.color,
+                     p: selfLive.pitch, e: selfLive.energy, k: 1, self: true});
+        if(ribbon.length > 400) ribbon = ribbon.slice(-400);
+        kick();
+      } else if(m.state === 'self_idle'){
+        selfLive.on = false;
+      } else if(m.state === 'noise'){
+        noiseLive.seen = performance.now();
+        noiseLive.score = m.score || 0;
+        noiseLive.parts = m.parts || {};
+        noiseLive.energy = m.energy || 0;
+        live.on = false;                    // точку НЕ двигаем: это не голос
+        ribbon.push({t: Date.now(), who: '', c: '#5a6376', p: 0,
+                     e: noiseLive.energy, k: 0, noise: true});
+        if(ribbon.length > 400) ribbon = ribbon.slice(-400);
+        kick();
+      } else live.on = false;
+    } else if(m.type === 'voiceprint_enroll'){
+      if(ST) ST.enroll = {name: m.name, got: m.got, need: m.need};
+      paintPanel();
+      if(!m.name){ refreshStatus(); loadPoints(); }
+    } else if(m.type === 'voiceprint_met'){
+      toast('Познакомилась с новым голосом: ' + m.who +
+            '. Назови его в списке — и она запомнит', {kind: 'ok', ttl: 9000});
+      refreshStatus(); loadPoints();
+    } else if(m.type === 'voiceprint_renamed'){
+      toast('Услышала имя: «' + m.old + '» теперь ' + m.new, {kind: 'ok', ttl: 8000});
+      refreshStatus();
+    } else if(m.type === 'voiceprint_name'){
+      if(ST && ST.speakers && ST.speakers[m.who]){
+        ST.speakers[m.who].guess = m.guess;
+        ST.speakers[m.who].guess_conf = m.conf;
+        paintCards();
+      }
+    } else if(m.type === 'voiceprint_refit'){
+      loadPoints(); refreshStatus();          // координаты у всех точек новые
+    } else if(m.type === 'unloaded'){
+      refreshStatus();                        // «выгрузить всё» гасит и нас
+    }
+  }
+  // свой слушатель на живом сокете; ws пересоздаётся при переподключении,
+  // поэтому проверяем не «повесили ли уже», а «тот ли это объект»
+  let wsSeen = null;
+  setInterval(() => {
+    try{
+      if(typeof ws === 'undefined' || !ws || ws === wsSeen) return;
+      wsSeen = ws;
+      ws.addEventListener('message', e => {
+        if(typeof e.data !== 'string') return;
+        if(e.data.indexOf('voiceprint') < 0 && e.data.indexOf('unloaded') < 0) return;
+        try{ onEvent(JSON.parse(e.data)); }catch(err){}
+      });
+    }catch(err){}
+  }, 700);
+
+  /* ───────── спектр: считаем в браузере из живого микрофона ─────────
+     Тот же поток, что уходит в распознавание (micStream) — второй
+     getUserMedia открывать нельзя, это уже проходили: свои constraints,
+     свой AGC, и в итоге модель и картинка слышат РАЗНОЕ. */
+  // ЧТО СЕЙЧАС ВХОДЯЩИЙ ЗВУК (правка 2026-07-28). В режиме «слушать
+  // систему» микрофон намеренно выключен — два потока в один вебсокет не
+  // отправишь. А спектр всё это время оставался прибит к micStream и
+  // честно рисовал тишину: окно выглядело зависшим, хотя распознавание
+  // прекрасно работало и текст шёл. Берём тот поток, который РЕАЛЬНО
+  // уходит в слух, кем бы он ни был.
+  window.saikaHearSrc = function(){
+    // Системный поток проверяем так же придирчиво, как микрофонный: вкладку,
+    // которой делились, можно закрыть, и дорожка умрёт молча. Кнопка при
+    // этом ещё говорит «Прекратить», а спектр уже пустой — ровно то, что
+    // выглядит как «графики отключились, не срабатывают».
+    const sys = window.saikaSysStream, sctx = window.saikaSysCtx;
+    if(sys && sctx && sctx.state !== 'closed'
+       && sys.getAudioTracks().some(t => t.readyState === 'live'))
+      return {ctx: sctx, stream: sys, who: 'система'};
+    if(sys && typeof sysStop === 'function'
+       && !sys.getAudioTracks().some(t => t.readyState === 'live'))
+      try{ sysStop(); }catch(e){}   // дорожка умерла — снимаем режим честно
+    // ГРАБЛИ 2026-07-28: микрофон выключили — а спектр не погас, последний
+    // кадр размазался по всему полю. Дело в том, что stopMic() дорожки
+    // останавливает и контекст закрывает, но переменные micStream/audioCtx
+    // остаются заполненными, и анализатор на закрытом контексте отдаёт
+    // ПОСЛЕДНИЙ буфер снова и снова. Спрашиваем состояние, а не наличие
+    // объекта: живая дорожка и поднятый флаг микрофона.
+    const live = typeof micOn !== 'undefined' && micOn
+      && typeof micStream !== 'undefined' && micStream
+      && micStream.getAudioTracks().some(t => t.readyState === 'live')
+      && typeof audioCtx !== 'undefined' && audioCtx
+      && audioCtx.state !== 'closed';
+    if(live) return {ctx: audioCtx, stream: micStream, who: 'микрофон'};
+    return null;
+  };
+  let analyser = null, freq = null, ctxSeen = null, streamSeen = null;
+  function ensureAnalyser(){
+    try{
+      const s = window.saikaHearSrc();
+      if(!s){ ctxSeen = streamSeen = null; return (analyser = null); }
+      if(s.ctx === ctxSeen && s.stream === streamSeen && analyser) return analyser;
+      ctxSeen = s.ctx; streamSeen = s.stream;
+      analyser = s.ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.55;
+      s.ctx.createMediaStreamSource(s.stream).connect(analyser);
+      freq = new Uint8Array(analyser.frequencyBinCount);
+      return analyser;
+    }catch(e){ analyser = null; return null; }
+  }
+  // ЕЁ голос: ответвляемся от той же ветки, что играет в колонки (ttsVolNode),
+  // ПОСЛЕ громкости — показываем ровно то, что слышно. Анализатор никуда не
+  // подключён дальше, поэтому звук не двоится.
+  let sAnalyser = null, sFreq = null, sCtxSeen = null;
+  function ensureSelfAnalyser(){
+    try{
+      if(typeof playCtx === 'undefined' || !playCtx) return null;
+      if(typeof ttsVolNode === 'undefined' || !ttsVolNode) return null;
+      if(playCtx === sCtxSeen && sAnalyser) return sAnalyser;
+      sCtxSeen = playCtx;
+      sAnalyser = playCtx.createAnalyser();
+      sAnalyser.fftSize = 1024;
+      sAnalyser.smoothingTimeConstant = 0.5;
+      ttsVolNode.connect(sAnalyser);
+      sFreq = new Uint8Array(sAnalyser.frequencyBinCount);
+      return sAnalyser;
+    }catch(e){ sAnalyser = null; return null; }
+  }
+  function speakingNow(){
+    try{ return typeof saikaSpeaking === 'function' && saikaSpeaking(); }
+    catch(e){ return false; }
+  }
+  const specOff = document.createElement('canvas');
+  function drawSpec(cv){
+    if(!cv) return;
+    const d = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(60, Math.round(cv.getBoundingClientRect().width * d));
+    const h = Math.max(30, Math.round(74 * d));
+    if(cv.width !== w || cv.height !== h){
+      cv.width = w; cv.height = h;
+      specOff.width = w; specOff.height = h;
+    }
+    // ЧЕЙ спектр рисуем. auto: пока звучит она — её, иначе микрофон. Это
+    // почти всегда то, что нужно: два спектра поверх друг друга смешиваются
+    // в кашу, а разговор по очереди читается сам собой.
+    const herTurn = specSrc === 'tts' || (specSrc === 'auto' && speakingNow());
+    const a = herTurn ? ensureSelfAnalyser() : ensureAnalyser();
+    const bins = herTurn ? sFreq : freq;
+    const tone = herTurn ? selfLive.color
+      : (live.on && performance.now() - live.seen < 900 ? live.color : GREY);
+    const oc = specOff.getContext('2d');
+    // бегущая строка: сдвигаем накопленное влево и дорисовываем свежий столбец
+    oc.globalCompositeOperation = 'copy';
+    oc.drawImage(specOff, -2 * d, 0);
+    oc.globalCompositeOperation = 'source-over';
+    oc.clearRect(w - 2 * d, 0, 2 * d, h);
+    if(a && bins){
+      a.getByteFrequencyData(bins);
+      // логарифм по частоте: голос живёт внизу, линейная шкала отдаёт ему
+      // одну десятую высоты и выглядит пустой
+      const N = 48, lo = 2, hi = Math.min(bins.length, 320);
+      for(let i = 0; i < N; i++){
+        const f0 = Math.round(lo * Math.pow(hi / lo, i / N));
+        const f1 = Math.max(f0 + 1, Math.round(lo * Math.pow(hi / lo, (i + 1) / N)));
+        let m = 0;
+        for(let k = f0; k < f1 && k < bins.length; k++) m = Math.max(m, bins[k]);
+        const v = m / 255;
+        if(v <= 0.02) continue;
+        const y = h - (i + 1) * h / N;
+        oc.fillStyle = hex(tone, Math.min(1, v * 1.25));
+        oc.fillRect(w - 2 * d, y, 2 * d, h / N + 1);
+      }
+    }
+    const c = cv.getContext('2d');
+    c.clearRect(0, 0, w, h);
+    c.drawImage(specOff, 0, 0);
+    if(!a){
+      c.fillStyle = 'rgba(233,233,237,.32)';
+      c.font = Math.round(11 * d) + 'px system-ui,sans-serif';
+      c.textAlign = 'center';
+      c.fillText(herTurn ? 'её спектр появится, когда она заговорит'
+                         : 'включи микрофон 🎧 или прослушивание системы',
+                 w / 2, h / 2 + 4 * d);
+    }
+    // подпись «чей это спектр» — иначе в режиме авто непонятно, кого видно
+    c.fillStyle = hex(tone, .75);
+    c.font = Math.round(9.5 * d) + 'px system-ui,sans-serif';
+    c.textAlign = 'left';
+    const src = window.saikaHearSrc ? window.saikaHearSrc() : null;
+    c.fillText(herTurn ? (ST && ST.self_name ? ST.self_name : 'она')
+                       : (live.who || (src ? src.who : 'микрофон')),
+               6 * d, 12 * d);
+  }
+
+  /* ───────── лента времени: кто, каким тоном, где сомневалась ───────── */
+  function drawTime(cv){
+    if(!cv) return;
+    const d = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(60, Math.round(cv.getBoundingClientRect().width * d));
+    const h = Math.max(30, Math.round(62 * d));
+    if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+    const c = cv.getContext('2d');
+    c.clearRect(0, 0, w, h);
+    const now = Date.now(), SPAN = 60000;
+    ribbon = ribbon.filter(r => now - r.t < SPAN);
+    if(!ribbon.length){
+      c.fillStyle = 'rgba(233,233,237,.3)';
+      c.font = Math.round(11 * d) + 'px system-ui,sans-serif';
+      c.textAlign = 'center';
+      c.fillText('за минуту никто не говорил', w / 2, h / 2 + 4 * d);
+      return;
+    }
+    const X = t => w - (now - t) / SPAN * w;
+    // громкость заливкой снизу
+    ribbon.forEach(r => {
+      const x = X(r.t), bw = Math.max(2 * d, w / 90);
+      c.fillStyle = hex(r.c, .22 + .3 * r.e);
+      c.fillRect(x - bw / 2, h - r.e * h * 0.7 - 4 * d, bw, r.e * h * 0.7 + 4 * d);
+    });
+    // линия тона: 70..300 Гц по высоте
+    c.beginPath();
+    let started = false;
+    ribbon.forEach(r => {
+      if(!r.p){ started = false; return; }
+      const y = h - 6 * d - (Math.min(300, Math.max(70, r.p)) - 70) / 230 * (h - 14 * d);
+      started ? c.lineTo(X(r.t), y) : c.moveTo(X(r.t), y);
+      started = true;
+    });
+    c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = 1.4 * d; c.stroke();
+    // ДВЕ ПОЛОСКИ СВЕРХУ, а не одна: верхняя — она, нижняя — люди. Так
+    // видно очередь в разговоре и перебивания (полоски накладываются по
+    // времени). Одной строкой это выглядело бы как один говорящий.
+    ribbon.forEach(r => {
+      const x = X(r.t), bw = Math.max(2 * d, w / 90);
+      if(r.noise){            // шум — тонкой серой засечкой у самого низа
+        c.fillStyle = 'rgba(150,160,180,.6)';
+        c.fillRect(x - bw / 2, h - 6 * d, bw, 6 * d);
+        return;
+      }
+      c.fillStyle = hex(r.c, r.self ? .8 : (r.who ? .35 + .65 * r.k : .35));
+      c.fillRect(x - bw / 2, r.self ? 0 : 6 * d, bw, 5 * d);
+    });
+    c.fillStyle = 'rgba(233,233,237,.3)';
+    c.font = Math.round(9 * d) + 'px system-ui,sans-serif';
+    c.textAlign = 'left';  c.fillText('минуту назад', 4 * d, h - 3 * d);
+    c.textAlign = 'right'; c.fillText('сейчас', w - 4 * d, h - 3 * d);
+  }
+
+  /* ───────── карта голосов ───────── */
+  let cloudDirty = 0;
+  const offs = new WeakMap();
+  function offOf(cv){
+    let o = offs.get(cv);
+    if(!o){ o = {cv: document.createElement('canvas'), key: ''}; offs.set(cv, o); }
+    return o;
+  }
+  const map = (v, s, c) => c + v * s;
+
+  function fit(cv, cssH){
+    const r = cv.getBoundingClientRect();
+    const d = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(80, Math.round(r.width * d));
+    const h = Math.max(60, Math.round((cssH || r.height || r.width * .62) * d));
+    if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  }
+
+  function buildCloud(o, w, h, s, cx, cy){
+    const key = w + 'x' + h + '|' + CLOUD.pts.length + '|' + show.cloud +
+                show.terr + '|' + Object.keys(hulls).join(',') + '|' + cloudDirty;
+    if(key === o.key) return;
+    o.key = key;
+    const off = o.cv;
+    off.width = w; off.height = h;
+    const c = off.getContext('2d');
+    c.clearRect(0, 0, w, h);
+    c.strokeStyle = 'rgba(255,255,255,.045)'; c.lineWidth = 1;
+    for(let r = 0.25; r <= 1.25; r += 0.25){
+      c.beginPath(); c.arc(cx, cy, r * s, 0, 6.2832); c.stroke();
+    }
+    c.beginPath(); c.moveTo(cx - s * 1.3, cy); c.lineTo(cx + s * 1.3, cy);
+    c.moveTo(cx, cy - s * 1.3); c.lineTo(cx, cy + s * 1.3); c.stroke();
+    if(show.terr) Object.keys(hulls).forEach(n => {
+      const col = (CLOUD.colors || {})[n] || GREY, pts = hulls[n];
+      c.beginPath();
+      pts.forEach((p, i) => { const x = map(p[0], s, cx), y = map(-p[1], s, cy);
+        i ? c.lineTo(x, y) : c.moveTo(x, y); });
+      c.closePath();
+      c.fillStyle = hex(col, .10); c.fill();
+      c.strokeStyle = hex(col, .30); c.lineWidth = 1.4; c.stroke();
+    });
+    if(show.cloud){
+      const rad = Math.max(1.1, s * 0.012);
+      CLOUD.pts.forEach(p => {
+        c.beginPath();
+        c.arc(map(p.x, s, cx), map(-p.y, s, cy), rad, 0, 6.2832);
+        c.fillStyle = hex((CLOUD.colors || {})[p.who] || GREY, .34); c.fill();
+      });
+    }
+  }
+
+  function drawMap(cv, big){
+    if(!cv || !cv.getBoundingClientRect().width) return;
+    fit(cv, big ? 0 : 150);
+    const ctx = cv.getContext('2d'), w = cv.width, h = cv.height;
+    const s = Math.min(w, h) / 2 / 1.35, cx = w / 2, cy = h / 2;
+    ctx.clearRect(0, 0, w, h);
+    const o = offOf(cv);
+    buildCloud(o, w, h, s, cx, cy);
+    ctx.drawImage(o.cv, 0, 0);
+
+    // имя территории — НАД контуром: в центре живёт активная точка со своей
+    // подписью, и два одинаковых имени налезали друг на друга
+    if(show.terr && big) Object.keys(hulls).forEach(n => {
+      const pts = hulls[n];
+      const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+      const top = Math.max.apply(null, pts.map(p => p[1]));
+      ctx.font = '500 ' + Math.round(s * .052) + 'px system-ui,sans-serif';
+      ctx.fillStyle = hex((CLOUD.colors || {})[n] || GREY, .8);
+      ctx.textAlign = 'center';
+      ctx.fillText(n, map(mx, s, cx), map(-top, s, cy) - s * .035);
+    });
+
+    const now = performance.now();
+    const fresh = live.on && (now - live.seen) < 1400;
+    const selfFresh = selfLive.on && (now - selfLive.seen) < 1400;
+    if(show.tail){
+      for(const t of tail.concat(selfTail)){
+        const a = 1 - (now - t.t) / 1600;
+        if(a <= 0) continue;
+        ctx.beginPath();
+        ctx.arc(map(t.x, s, cx), map(-t.y, s, cy), Math.max(1, s * .02 * a), 0, 6.2832);
+        ctx.fillStyle = hex(t.c, a * .5); ctx.fill();
+      }
+      tail = tail.filter(t => now - t.t < 1600);
+      selfTail = selfTail.filter(t => now - t.t < 1600);
+    }
+
+    // ЕЁ ТОЧКА — кольцо, а не заливка. Разной формой, а не только цветом:
+    // цвет ещё надо запомнить, а «полая она / сплошные мы» читается сразу и
+    // не теряется, когда обе точки рядом.
+    if(selfFresh){
+      const sx = map(selfLive.x, s, cx), sy = map(-selfLive.y, s, cy);
+      const rr = s * (.05 + .05 * selfLive.energy);
+      const g2 = ctx.createRadialGradient(sx, sy, 0, sx, sy, rr * 2.4);
+      g2.addColorStop(0, hex(selfLive.color, .5));
+      g2.addColorStop(1, hex(selfLive.color, 0));
+      ctx.beginPath(); ctx.arc(sx, sy, rr * 2.4, 0, 6.2832);
+      ctx.fillStyle = g2; ctx.fill();
+      ctx.beginPath(); ctx.arc(sx, sy, rr, 0, 6.2832);
+      ctx.setLineDash([]);
+      ctx.lineWidth = Math.max(1.5, s * .018);
+      ctx.strokeStyle = hex(selfLive.color, .95); ctx.stroke();
+      ctx.beginPath(); ctx.arc(sx, sy, Math.max(1, rr * .28), 0, 6.2832);
+      ctx.fillStyle = hex(selfLive.color, .95); ctx.fill();
+      if(big && !fresh){
+        ctx.textAlign = 'left';
+        ctx.font = Math.round(s * .08) + 'px system-ui,sans-serif';
+        ctx.fillStyle = hex(selfLive.color, .95);
+        ctx.fillText((selfLive.who || 'она') + ' говорит', sx + rr * 2.1, sy - rr);
+      }
+    }
+    // «не голос» на карте не рисуем точкой вообще — только подписью внизу.
+    // Ставить точку значило бы утверждать, что у стука есть место в
+    // пространстве ГОЛОСОВ; его там нет.
+    if(!fresh && big && now - noiseLive.seen < 1200){
+      ctx.textAlign = 'center';
+      ctx.font = Math.round(s * .06) + 'px system-ui,sans-serif';
+      ctx.fillStyle = 'rgba(233,233,237,.42)';
+      // подпись у нижнего края холста, а не «под облаком»: облако бывает
+      // любого размера, и привязка к его радиусу уводила текст за кадр
+      ctx.fillText('слышу звук, но это не голос — ' + noiseWhy(noiseLive.parts),
+                   cx, h - Math.max(8, s * 0.05));
+    }
+    if(!fresh) return;
+
+    const px = map(live.x, s, cx), py = map(-live.y, s, cy);
+    const r = s * (.045 + .05 * live.energy);
+    const conf = live.who ? live.conf : 0;
+    ctx.save();
+    ctx.translate(px, py); ctx.rotate(spin * (.4 + .6 * (1 - conf)));
+    ctx.beginPath(); ctx.arc(0, 0, r + s * (.10 - .045 * conf), 0, 6.2832);
+    ctx.setLineDash([Math.max(2, s * .03), Math.max(1, s * (26 - 22 * conf) / 700)]);
+    ctx.lineWidth = Math.max(1, s * (.008 + .014 * conf));
+    ctx.strokeStyle = hex(live.color, .25 + .6 * conf);
+    ctx.stroke(); ctx.restore();
+
+    const g = ctx.createRadialGradient(px, py, 0, px, py, r * 2.6);
+    g.addColorStop(0, hex(live.color, .85)); g.addColorStop(1, hex(live.color, 0));
+    ctx.beginPath(); ctx.arc(px, py, r * 2.6, 0, 6.2832); ctx.fillStyle = g; ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832); ctx.fillStyle = '#fff'; ctx.fill();
+
+    if(big){
+      ctx.textAlign = 'left';
+      ctx.font = Math.round(s * .085) + 'px system-ui,sans-serif';
+      ctx.fillStyle = hex(live.color, .95);
+      ctx.fillText(live.who || 'незнакомый голос', px + r * 2.2, py - r);
+      ctx.fillStyle = 'rgba(233,233,237,.5)';
+      ctx.font = Math.round(s * .062) + 'px system-ui,sans-serif';
+      ctx.fillText((live.who ? 'похожесть ' + live.sim.toFixed(2)
+                    : live.near ? 'ближе всего: ' + live.near + ' ' + live.sim.toFixed(2)
+                    : 'никого ещё не знает') +
+                   (live.pitch ? ' · тон ' + live.pitch + ' Гц' : ''),
+                   px + r * 2.2, py + r * .5);
+    }
+  }
+
+  /* ─────────────────── цикл ─────────────────── */
+  let running = false;
+  function paneVisible(){
+    return !!(pane && pane.offsetParent !== null && pane.clientWidth > 40);
+  }
+  function kick(){
+    if(running) return;
+    if(!paneVisible() && !pop.classList.contains('show')) return;
+    running = true; requestAnimationFrame(loop);
+  }
+  let cardTick = 0;
+  function loop(){
+    const mini = pop.classList.contains('show'), big = paneVisible();
+    if(!mini && !big){ running = false; return; }
+    live.x += (live.tx - live.x) * .16;
+    live.y += (live.ty - live.y) * .16;
+    selfLive.x += (selfLive.tx - selfLive.x) * .16;
+    selfLive.y += (selfLive.ty - selfLive.y) * .16;
+    spin += .02;
+    const now = performance.now();
+    const fresh = live.on && now - live.seen < 1400;
+    const selfFresh = selfLive.on && now - selfLive.seen < 1400;
+    if(fresh && (!tail.length || now - tail[tail.length - 1].t > 28))
+      tail.push({x: live.x, y: live.y, t: now, c: live.color});
+    if(selfFresh && (!selfTail.length || now - selfTail[selfTail.length - 1].t > 28))
+      selfTail.push({x: selfLive.x, y: selfLive.y, t: now, c: selfLive.color});
+
+    if(mini){
+      drawMap($id('vp-mini'), false);
+      const dot = $id('vp-mdot'), txt = $id('vp-mtxt');
+      if(dot) dot.style.color = fresh ? live.color : 'rgba(255,255,255,.18)';
+      if(txt){
+        const nz = now - noiseLive.seen < 1200;
+        txt.textContent = !ST || !ST.enabled ? 'выключено'
+          : fresh ? (live.who ? live.who + ' · ' + live.sim.toFixed(2)
+              : 'незнакомый' + (live.near ? ' (ближе: ' + live.near + ')' : ''))
+          : selfFresh ? (selfLive.who || 'она') + ' говорит'
+          : nz ? 'не голос · ' + noiseWhy(noiseLive.parts)
+          : 'молчание';
+        txt.className = (fresh && live.who) || selfFresh ? '' : 'vp-dim';
+        if(!fresh && selfFresh && dot) dot.style.color = selfLive.color;
+      }
+    }
+    if(big){
+      pane.classList.toggle('narrow', pane.clientWidth < 260);
+      drawMap($id('vp-map'), true);
+      drawSpec($id('vp-spec'));
+      if(!pane.classList.contains('narrow')) drawTime($id('vp-time'));
+      if(++cardTick % 30 === 0) paintCards();   // «только что» и подсветка живого
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // выпуклая оболочка (обход Эндрю): контур территории голоса
+  function hull(p){
+    const q = p.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if(q.length < 3) return q;
+    const cross = (o, a, b) =>
+      (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for(const pt of q){
+      while(lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], pt) <= 0) lo.pop();
+      lo.push(pt);
+    }
+    for(let i = q.length - 1; i >= 0; i--){
+      const pt = q[i];
+      while(up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], pt) <= 0) up.pop();
+      up.push(pt);
+    }
+    lo.pop(); up.pop();
+    return lo.concat(up);
+  }
+
+  /* ─────────────────── запуск ─────────────────── */
+  new MutationObserver(() => {
+    if(pop.classList.contains('show')){
+      refreshStatus();
+      if(!CLOUD.pts.length) loadPoints();
+      kick();
+    }
+  }).observe(pop, {attributes: true, attributeFilter: ['class']});
+  new MutationObserver(() => kick()).observe(pane || document.body,
+    {attributes: true, attributeFilter: ['style', 'class']});
+  addEventListener('resize', () => kick());
+  refreshStatus(); loadPoints(); kick();
+  setInterval(() => {
+    if(!document.hidden && (paneVisible() || pop.classList.contains('show')))
+      refreshStatus();
+  }, 4000);
+  window.saikaVoiceprint = openPane;
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · ШУМОДАВ — выбор движка и выученный профиль шума (2026-07-28)
+
+   Живёт в том же меню 🎙, что микрофон и движок слуха: шумоподавление —
+   часть тракта слуха, и разносить их по разным углам интерфейса значит
+   заставлять человека помнить, где что.
+
+   ЗАЧЕМ ПОКАЗЫВАТЬ ПРОФИЛЬ. Раньше шумодав был галочкой «вкл», и понять,
+   работает ли он, было нельзя в принципе. Здесь видно, ЧТО именно она
+   считает шумом: горбы внизу — гул кулера и наводка сети, ровная спинка
+   сверху — шипение тракта. Молчишь несколько секунд — профиль подтягивается
+   под комнату; включил вытяжку — горб уезжает вправо на глазах.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const pop = $id('pop-mic');
+  const anchor = $id('btn-mic-ns');
+  if(!pop || !anchor) return;
+  async function api(url, body){
+    const opt = body ? {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)} : {};
+    const r = await fetch(url, opt);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  const NAMES = {
+    off:         ['Выключен', 'звук идёт как есть — точка отсчёта'],
+    gate:        ['Ворота', 'молчишь — тишина. Копейки по цене'],
+    spectral:    ['Вычитание спектра', 'учит шум комнаты и вычитает его'],
+    wiener:      ['Винер (самообучаемый)', 'то же, но без бульканья в тишине'],
+    noisereduce: ['noisereduce', 'библиотека, нестационарный режим'],
+    rnnoise:     ['RNNoise', 'маленькая нейросеть, 48кГц'],
+    deepfilter:  ['DeepFilterNet', 'лучшее качество, самая высокая цена'],
+  };
+
+  const css = document.createElement('style');
+  css.textContent = `
+  .dn-row{display:flex;align-items:center;gap:7px;padding:7px 10px;
+    border-radius:11px;cursor:pointer;font-size:12.5px;transition:background .14s}
+  .dn-row:hover{background:rgba(255,255,255,.06)}
+  .dn-row.sel{color:#cec7f0;background:rgba(145,132,217,.16);
+    box-shadow:inset 0 0 0 1px rgba(145,132,217,.35)}
+  .dn-row .why{font-size:10.5px;color:var(--dim);line-height:1.25}
+  .dn-row .bad{font-size:10.5px;color:#e0655f}
+  .dn-cv{width:100%;height:64px;display:block;border-radius:10px;margin:5px 0 2px;
+    border:1px solid rgba(255,255,255,.08);background:rgba(8,10,18,.5)}
+  .dn-note{font-size:10.5px;color:var(--dim);padding:0 2px 4px;line-height:1.35}
+  .dn-mini{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+    border-radius:9px;padding:4px 8px;font:11.5px inherit;cursor:pointer}
+  .dn-mini:hover{background:rgba(255,255,255,.08)}`;
+  document.head.appendChild(css);
+
+  const box = document.createElement('div');
+  box.innerHTML =
+    '<div class="title">Шумодав · движок</div><div id="dn-list"></div>' +
+    '<div class="title">Что она считает шумом</div>' +
+    '<canvas id="dn-cv" class="dn-cv" title="Выученный спектр шума: слева ' +
+      'низкие частоты, справа высокие"></canvas>' +
+    '<div class="dn-note" id="dn-note"></div>' +
+    '<div style="display:flex;gap:5px;padding:0 2px 4px">' +
+      '<button class="dn-mini" id="dn-relearn" style="flex:1">' +
+        '↻ Переучить профиль</button>' +
+      '<button class="dn-mini" id="dn-bench" title="Как запустить стенд">' +
+        '📏 Стенд</button></div>';
+  anchor.parentNode.insertBefore(box, anchor.nextSibling);
+  box.addEventListener('click', e => e.stopPropagation());
+
+  let ST = null;
+  function paint(){
+    if(!ST) return;
+    // ВЫБРАН и РАБОТАЕТ — теперь разные вещи. Раньше неустановленный
+    // движок оставался выбранным и молча пропускал звук как есть: снаружи
+    // это выглядело как «переключаю, а разницы нет» — разницы и не было,
+    // работал ноль. Теперь подсвечиваются оба: выбор человека и тот, кто
+    // реально трудится вместо него.
+    const want = ST.wanted || ST.engine;
+    $id('dn-list').innerHTML = (ST.engines || []).map(k => {
+      const n = NAMES[k] || [k, ''];
+      const sel = k === want;
+      const work = k === ST.engine && ST.ok;
+      const bad = sel && !work;
+      let why = n[1];
+      if(bad) why = 'не встал: ' + (ST.error || ST.blocked || '') + ' · ' +
+                    (ST.needs || '') + ' — пока вместо него «' +
+                    ((NAMES[ST.engine] || [ST.engine])[0]) + '»';
+      return '<div class="dn-row' + (sel ? ' sel' : '') +
+        (work && !sel ? ' sel' : '') + '" data-e="' + k + '">' +
+        '<div style="flex:1;min-width:0"><div>' + n[0] +
+        (work && !sel ? ' <span class="why">· работает сейчас</span>' : '') +
+        '</div><div class="' + (bad ? 'bad' : 'why') + '">' + why +
+        '</div></div>' + (work && ST.ms_per_100ms
+          ? '<span class="why">' + ST.ms_per_100ms + ' мс/100мс</span>' : '') +
+        '</div>';
+    }).join('');
+    $id('dn-list').querySelectorAll('.dn-row').forEach(r => {
+      r.onclick = async ev => {
+        ev.stopPropagation();
+        try{ ST = await api('/api/denoise/set', {engine: r.dataset.e}); }
+        catch(e){}
+        paint();
+      };
+    });
+    const p = ST.profile || {bands: [], learned: 0};
+    const note = $id('dn-note');
+    if(note) note.textContent = ST.engine === 'off'
+      ? 'Движок выключен — профиль не учится.'
+      : p.learned
+        ? 'Профиль учится сам, по кадрам без речи. Набрано ' + p.learned +
+          ' кадров. Обработка стоит ' + (ST.ms_per_100ms || 0) +
+          ' мс на каждые 100 мс звука. Снимает ' +
+          (ST.cut_db || 0) + ' дБ — это единственный способ увидеть его ' +
+          'работу: спектр выше рисуется из сырого микрофона, ДО шумодава.'
+        : 'Профиль пока пуст — скажи что-нибудь и помолчи пару секунд.';
+    draw(p);
+  }
+
+  function draw(p){
+    const cv = $id('dn-cv');
+    if(!cv) return;
+    const d = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(60, Math.round(cv.getBoundingClientRect().width * d));
+    const h = Math.round(64 * d);
+    if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+    const c = cv.getContext('2d');
+    c.clearRect(0, 0, w, h);
+    const b = p.bands || [];
+    if(!b.length){
+      c.fillStyle = 'rgba(233,233,237,.3)';
+      c.font = Math.round(11 * d) + 'px system-ui,sans-serif';
+      c.textAlign = 'center';
+      c.fillText('профиль ещё не набран', w / 2, h / 2 + 4 * d);
+      return;
+    }
+    const bw = w / b.length;
+    for(let i = 0; i < b.length; i++){
+      const v = Math.max(0.02, b[i]);
+      c.fillStyle = 'rgba(145,132,217,' + (0.25 + 0.6 * v) + ')';
+      c.fillRect(i * bw, h - v * (h - 12 * d) - 2 * d, Math.max(1, bw - 1),
+                 v * (h - 12 * d) + 2 * d);
+    }
+    // подписи по краям: без них непонятно, где низ, а где верх спектра
+    c.fillStyle = 'rgba(233,233,237,.34)';
+    c.font = Math.round(8.5 * d) + 'px system-ui,sans-serif';
+    c.textAlign = 'left';
+    c.fillText((p.hz && p.hz[0] ? p.hz[0] : 60) + ' Гц', 3 * d, 10 * d);
+    c.textAlign = 'right';
+    c.fillText(Math.round((p.hz && p.hz[p.hz.length - 1] ? p.hz[p.hz.length - 1]
+                           : 8000) / 1000) + ' кГц', w - 3 * d, 10 * d);
+  }
+
+  $id('dn-relearn').onclick = async e => {
+    e.stopPropagation();
+    try{ ST = await api('/api/denoise/relearn', {}); }catch(err){}
+    paint();
+  };
+  $id('dn-bench').onclick = e => {
+    e.stopPropagation();
+    (window.saikaToast || (() => {}))(
+      'Стенд шумодава: в папке проекта запусти  python -m tools.denoise_bench ' +
+      '--rec 15 --stt  — он запишет 15 секунд с этого микрофона, прогонит ' +
+      'через все движки и покажет, сколько каждый давит шума, не съедает ли ' +
+      'речь и сколько стоит на твоём железе.', {kind: 'info', ttl: 16000});
+  };
+
+  async function refresh(){
+    try{ ST = await api('/api/denoise'); paint(); }catch(e){}
+  }
+  new MutationObserver(() => {
+    if(pop.classList.contains('show')) refresh();
+  }).observe(pop, {attributes: true, attributeFilter: ['class']});
+  refresh();
+  setInterval(() => {
+    if(!document.hidden && pop.classList.contains('show')) refresh();
+  }, 2500);
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   САЙКА · ВЫКЛЮЧАТЕЛЬ МОЗГОВ (2026-07-28)
+
+   Отдельный режим «слушает, но молчит». Не то же самое, что «выгрузить всё
+   из памяти»: модель остаётся загруженной и готовой, её просто не зовут —
+   вернуть обратно можно тем же кликом, без прогрева.
+
+   ЗАЧЕМ. Пока идёт опыт с голосами (или просто кино), каждая услышанная
+   фраза рождает ответ, и эксперимент превращается в разговор Сайки с
+   телевизором. Слух, отпечаток голоса и журнал при этом обязаны работать —
+   выключается ровно одно звено.
+
+   Кнопка живёт НАД списком моделей и вне него: список перерисовывается
+   каждые пять секунд, и вставленная внутрь строка пропадала бы.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const list = $id('model-list');
+  if(!list || !list.parentNode) return;
+
+  const css = document.createElement('style');
+  css.textContent = `
+  #llm-off{display:flex;align-items:center;gap:8px;padding:8px 11px;margin:2px 0 4px;
+    border-radius:12px;cursor:pointer;font-size:12.5px;
+    border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);
+    transition:background .15s,border-color .15s,color .15s}
+  #llm-off:hover{background:rgba(255,255,255,.08)}
+  #llm-off.on{color:#ffb4ae;border-color:rgba(224,101,95,.5);
+    background:rgba(224,101,95,.14)}
+  #llm-off .why{font-size:10.5px;color:var(--dim);line-height:1.25}
+  #llm-off.on .why{color:rgba(255,180,174,.75)}`;
+  document.head.appendChild(css);
+
+  const row = document.createElement('div');
+  row.id = 'llm-off';
+  row.title = 'Слух, узнавание голоса и журнал продолжают работать. ' +
+              'Модель остаётся в памяти — просто не отвечает.';
+  list.parentNode.insertBefore(row, list);
+
+  let off = false;
+  function paint(){
+    row.classList.toggle('on', off);
+    row.innerHTML = '<span style="font-size:14px">' + (off ? '🔇' : '⏻') +
+      '</span><div style="flex:1;min-width:0"><div>' +
+      (off ? 'Мозги выключены — слушает, но молчит' : 'Выключить мозги') +
+      '</div><div class="why">' +
+      (off ? 'нажми, чтобы снова отвечала · модель из памяти не выгружалась'
+           : 'слух и узнавание голоса продолжат работать, ответов не будет') +
+      '</div></div>';
+    const chip = $id('btn-model');
+    if(chip) chip.classList.toggle('idle', off);
+  }
+  row.onclick = async e => {
+    e.stopPropagation();
+    try{
+      const r = await fetch('/api/llm/off', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({on: !off})});
+      off = (await r.json()).off;
+    }catch(err){}
+    paint();
+  };
+
+  // состояние берём из общего опроса статуса — отдельный запрос тут лишний
+  setInterval(() => {
+    try{
+      // status — глобальная переменная основного скрипта (let, а не window.*)
+      const v = typeof status !== 'undefined' && status && status.llm
+                ? !!status.llm.off : off;
+      if(v !== off){ off = v; paint(); }
+    }catch(e){}
+  }, 1500);
+  (async () => {
+    try{
+      const st = await (await fetch('/api/status')).json();
+      off = !!(st.llm && st.llm.off);
+    }catch(e){}
+    paint();
+  })();
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · ОБЪЁМНЫЙ СПЕКТР — голос как рельеф (2026-07-28)
+
+   Плоская бегущая строка спектра отвечает на вопрос «что звучит сейчас».
+   Объём отвечает на другой: КАК ЭТО УСТРОЕНО. Гармоники становятся
+   параллельными хребтами, форманты — горами, шипение — ровным плато,
+   щелчок — одиноким пиком поперёк всего диапазона. На плоской картинке всё
+   это тоже есть, но читается только привычным глазом; в рельефе видно сразу.
+
+   ТРИ ОСИ: вправо — частота (логарифмически, потому что ухо слышит
+   логарифмом: разница между 100 и 200 Гц больше, чем между 6000 и 6100),
+   в глубину — время (ближний край всегда «сейчас»), вверх — громкость.
+
+   ПОЧЕМУ БЕЗ WEBGL И БЕЗ БИБЛИОТЕК. Здесь рисуется чуть больше пяти тысяч
+   точек в кадр — обычный canvas справляется с этим не напрягаясь, а
+   трёхмерность даёт ручная проекция в двадцать строк. Тащить ради этого
+   three.js значило бы добавить зависимость и вебгл-контекст (второй на
+   странице, рядом с аватаром) там, где хватает арифметики.
+
+   ПОРЯДОК ОТРИСОВКИ — художником: от дальних срезов к ближним, каждый
+   срез заливается непрозрачным низом. Так ближние гребни честно закрывают
+   дальние, и рельеф читается как рельеф, а не как каша из линий.
+
+   ПРАВКА 2026-07-28 (три ошибки разом, все всплыли на живом экране):
+
+   1) «Ровно» РОВНЫМ НЕ БЫЛО. Кнопка возвращала камеру в тот же косой
+      三-четвертной ракурс (наклон 0.72 рад ≈ 41°), из которого человек и
+      хотел выйти. Теперь «сбоку» — это буквально yaw=0, pitch=0: взгляд
+      строго вдоль оси времени, и на экране получается ПРИВЫЧНЫЙ спектр,
+      частота слева направо, громкость вверх, а история просто уходит
+      вглубь за ним. Ровно — значит ровно.
+
+   2) БЛИЖНИЙ КРАЙ БЫЛ ДАЛЬНИМ. Свежий срез стоял в z=+1, а перспектива
+      УМЕНЬШАЕТ то, что дальше по z: «сейчас» рисовалось мельче и выше
+      всего остального, будто время течёт от нас. Отсюда и ощущение
+      «странных углов» — картинка была вывернута наизнанку. Свежий срез
+      переехал в z=-1, к зрителю.
+
+   3) ПОРЯДОК ХУДОЖНИКА БЫЛ ПРИБИТ ГВОЗДЯМИ к одному ракурсу. Стоило
+      обойти рельеф с другой стороны — и дальние срезы начинали закрывать
+      ближние. Теперь глубина каждого среза СЧИТАЕТСЯ под текущую камеру и
+      срезы сортируются, поэтому вид верен с любой стороны — что и позволило
+      снять зажим наклона: крутить можно как угодно, хоть снизу.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $id = s => document.getElementById(s);
+  const ROWS = 90;          // срезов по времени (~3 секунды при 30 к/с)
+  const COLS = 72;          // полос по частоте
+  const GREY = '#8892a6';
+
+  const grid = [];          // grid[0] — самый свежий срез
+  for(let i = 0; i < ROWS; i++) grid.push(new Float32Array(COLS));
+
+  // depth — сжатие оси времени. В виде «сбоку» история должна лежать
+  // плотным шлейфом ЗА текущим спектром, а не растягиваться на пол-экрана.
+  const cam = {yaw: -0.5, pitch: 0.72, dist: 3.6, zoom: 1, depth: 1};
+  const VIEWS = {
+    side: {yaw: 0,    pitch: 0,      depth: 0.5, zoom: 1},    // привычный спектр
+    top:  {yaw: 0,    pitch: 1.5708, depth: 1,   zoom: 0.72}, // водопад сверху
+    iso:  {yaw: -0.5, pitch: 0.72,   depth: 1,   zoom: 0.82}  // объём
+  };
+  let colour = GREY, open = false, raf = 0;
+
+  /* ── стили ── */
+  const css = document.createElement('style');
+  css.textContent = `
+  #s3-sheet{position:fixed;inset:0;z-index:90;display:none;
+    background:radial-gradient(120% 120% at 50% 30%,#12142100,#05060b 75%),#05060b}
+  #s3-sheet.show{display:block}
+  #s3-cv{position:absolute;inset:0;width:100%;height:100%;display:block;
+    cursor:grab;touch-action:none}
+  #s3-cv.drag{cursor:grabbing}
+  #s3-bar{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;
+    gap:10px;padding:12px 16px;font-size:12.5px;color:#e9e9ed;
+    background:linear-gradient(180deg,rgba(6,7,13,.75),transparent);
+    pointer-events:none}
+  #s3-bar b{font-size:14px;font-weight:600}
+  #s3-bar .dim{color:rgba(233,233,237,.5);font-size:11.5px}
+  #s3-bar button{pointer-events:auto;background:rgba(255,255,255,.06);
+    color:#e9e9ed;border:1px solid rgba(255,255,255,.16);border-radius:10px;
+    padding:5px 10px;font:12px inherit;cursor:pointer}
+  #s3-bar button:hover{background:rgba(255,255,255,.13)}
+  #s3-bar button.on{background:rgba(145,132,217,.28);
+    border-color:rgba(145,132,217,.6)}
+  #s3-lvl{font-variant-numeric:tabular-nums}
+  #s3-hint{position:absolute;left:16px;bottom:14px;font-size:11.5px;
+    color:rgba(233,233,237,.4);pointer-events:none}`;
+  document.head.appendChild(css);
+
+  const sheet = document.createElement('div');
+  sheet.id = 's3-sheet';
+  sheet.innerHTML =
+    '<canvas id="s3-cv"></canvas>' +
+    '<div id="s3-bar"><b>🧊 Объёмный спектр</b>' +
+      '<span class="dim" id="s3-who"></span>' +
+      '<span class="dim" id="s3-lvl"></span><span style="flex:1"></span>' +
+      '<button id="s3-side" title="Строго сбоку: обычный спектр — частота ' +
+        'слева направо, громкость вверх (клавиша 1)">Сбоку</button>' +
+      '<button id="s3-top" title="Сверху: водопад — время вниз (клавиша 2)"' +
+        '>Сверху</button>' +
+      '<button id="s3-iso" title="Объёмный ракурс (клавиша 3)">Объём</button>' +
+      '<button id="s3-full">Во весь экран</button>' +
+      '<button id="s3-close">✕</button></div>' +
+    '<div id="s3-hint">тяни мышью — повернуть (без ограничений) · ' +
+      'колесо — приблизить · 1/2/3 — ракурсы · Esc — закрыть</div>';
+  document.body.appendChild(sheet);
+
+  /* ── источник звука: тот же, что у плоского спектра ── */
+  let anMic = null, fMic = null, ctxMic = null, streamMic = null;
+  let anTts = null, fTts = null, ctxTts = null;
+  // источник — общий с плоским спектром: микрофон ИЛИ системный звук,
+  // смотря что сейчас уходит в распознавание (см. saikaHearSrc)
+  function micAnalyser(){
+    try{
+      const s = window.saikaHearSrc ? window.saikaHearSrc() : null;
+      if(!s){ ctxMic = streamMic = null; return (anMic = null); }
+      if(s.ctx === ctxMic && s.stream === streamMic && anMic) return anMic;
+      ctxMic = s.ctx; streamMic = s.stream;
+      anMic = s.ctx.createAnalyser();
+      anMic.fftSize = 2048; anMic.smoothingTimeConstant = 0.45;
+      s.ctx.createMediaStreamSource(s.stream).connect(anMic);
+      fMic = new Uint8Array(anMic.frequencyBinCount);
+      return anMic;
+    }catch(e){ return (anMic = null); }
+  }
+  function ttsAnalyserOwn(){
+    try{
+      if(typeof playCtx === 'undefined' || !playCtx) return null;
+      if(typeof ttsVolNode === 'undefined' || !ttsVolNode) return null;
+      if(playCtx === ctxTts && anTts) return anTts;
+      ctxTts = playCtx;
+      anTts = playCtx.createAnalyser();
+      anTts.fftSize = 2048; anTts.smoothingTimeConstant = 0.4;
+      ttsVolNode.connect(anTts);
+      fTts = new Uint8Array(anTts.frequencyBinCount);
+      return anTts;
+    }catch(e){ return (anTts = null); }
+  }
+  function speaking(){
+    try{ return typeof saikaSpeaking === 'function' && saikaSpeaking(); }
+    catch(e){ return false; }
+  }
+
+  /* ── новый срез: логарифм по частоте ── */
+  let live = 0, silent = 0;
+  function sample(){
+    const her = speaking();
+    const a = her ? ttsAnalyserOwn() : micAnalyser();
+    const bins = her ? fTts : fMic;
+    const row = new Float32Array(COLS);
+    if(a && bins){
+      a.getByteFrequencyData(bins);
+      const lo = 2, hi = Math.min(bins.length, 620);
+      for(let i = 0; i < COLS; i++){
+        const f0 = Math.round(lo * Math.pow(hi / lo, i / COLS));
+        const f1 = Math.max(f0 + 1,
+                            Math.round(lo * Math.pow(hi / lo, (i + 1) / COLS)));
+        let m = 0;
+        for(let k = f0; k < f1 && k < bins.length; k++)
+          if(bins[k] > m) m = bins[k];
+        row[i] = m / 255;
+      }
+      silent = 0;
+    }else{
+      // ГРАБЛИ: пустой экран одинаково выглядит и при тишине, и когда
+      // анализатора нет вовсе. Считаем такие кадры и говорим об этом вслух.
+      silent++;
+    }
+    push(row, her);
+  }
+  function push(row, her){
+    grid.pop();
+    grid.unshift(row);
+    let p = 0;
+    for(let i = 0; i < row.length; i++) if(row[i] > p) p = row[i];
+    live = p;
+    try{
+      const c = window.__vpLiveColor;
+      colour = her ? '#9184d9' : (c || GREY);
+    }catch(e){}
+  }
+
+  /* ── проекция ──
+     Точка (x, y, z): x — частота [-1..1], y — громкость [0..1],
+     z — время, где -1 это «сейчас» (к зрителю), +1 — три секунды назад. */
+  function project(x, y, z, w, h){
+    z *= cam.depth;
+    const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+    let X = x * cy + z * sy;
+    let Z = -x * sy + z * cy;
+    // ЗНАК НАКЛОНА. Со старым знаком камера смотрела снизу: дальний по
+    // времени срез уезжал ВНИЗ экрана, а ближний — вверх, и это дрались с
+    // перспективой, которая ближний увеличивает. Взгляд получался
+    // вывернутый — то самое «странные углы». Теперь как у нормального
+    // водопада: что дальше — то выше и мельче.
+    let Y = y * cp + Z * sp;
+    Z = -y * sp + Z * cp;
+    const d = cam.dist;
+    const k = (d / Math.max(0.35, d + Z)) * cam.zoom;
+    return [w / 2 + X * k * (Math.min(w, h) * 0.42),
+            h / 2 - Y * k * (Math.min(w, h) * 0.42) + h * 0.04];
+  }
+  // Глубина среза под ТЕКУЩУЮ камеру — то, по чему сортируется отрисовка.
+  // Больше значение = дальше от зрителя (см. k в project).
+  function depthOf(z){
+    return z * cam.depth * Math.cos(cam.yaw) * Math.cos(cam.pitch);
+  }
+
+  function draw(){
+    const cv = $id('s3-cv');
+    if(!cv) return;
+    const d = Math.min(2, window.devicePixelRatio || 1);
+    const r = cv.getBoundingClientRect();
+    const w = Math.max(200, Math.round(r.width * d));
+    const h = Math.max(200, Math.round(r.height * d));
+    if(cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+    const c = cv.getContext('2d');
+    c.clearRect(0, 0, w, h);
+
+    // пол: сетка частот, чтобы рельеф на чём-то стоял
+    c.strokeStyle = 'rgba(255,255,255,.06)';
+    c.lineWidth = 1;
+    for(let i = 0; i <= 6; i++){
+      const x = -1 + 2 * i / 6;
+      const a = project(x, 0, -1, w, h), b = project(x, 0, 1, w, h);
+      c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+    }
+    for(let i = 0; i <= 4; i++){
+      const z = -1 + 2 * i / 4;
+      const a = project(-1, 0, z, w, h), b = project(1, 0, z, w, h);
+      c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+    }
+
+    // ХУДОЖНИКОМ: сначала дальние срезы, потом ближние. Что дальше, а что
+    // ближе — зависит от камеры, поэтому порядок не зашит, а вычисляется.
+    const order = [];
+    for(let ri = 0; ri < ROWS; ri++)
+      order.push([depthOf(-1 + 2 * ri / (ROWS - 1)), ri]);
+    order.sort((a, b) => b[0] - a[0]);
+
+    const rgb = hexRgb(colour);
+    for(const [, ri] of order){
+      const row = grid[ri];
+      const z = -1 + 2 * ri / (ROWS - 1);   // -1 = «сейчас», у зрителя
+      const age = 1 - ri / (ROWS - 1);      // 1 = свежий срез
+      let peak = 0, pk = 0;
+      const pts = [];
+      for(let ci = 0; ci < COLS; ci++){
+        const v = row[ci];
+        if(v > peak){ peak = v; pk = ci; }
+        const x = -1 + 2 * ci / (COLS - 1);
+        pts.push(project(x, v * 0.85, z, w, h));
+      }
+      // пустой срез не рисуем — кроме самого свежего: он держит «дно»,
+      // чтобы в тишине было видно, что окно живое, а не замёрзло
+      if(peak < 0.012 && ri > 0) continue;
+      const base0 = project(-1, 0, z, w, h);
+      const base1 = project(1, 0, z, w, h);
+      c.beginPath();
+      c.moveTo(base0[0], base0[1]);
+      for(const p of pts) c.lineTo(p[0], p[1]);
+      c.lineTo(base1[0], base1[1]);
+      c.closePath();
+      // градиент строим от вершины к полу ЭТОГО среза: при свободном
+      // вращении «верх экрана» перестаёт совпадать с «верхом рельефа»
+      const yTop = pts[pk][1];
+      const yBase = (base0[1] + base1[1]) / 2;
+      const grad = c.createLinearGradient(
+        0, yTop, 0, Math.abs(yBase - yTop) < 1 ? yTop + 1 : yBase);
+      grad.addColorStop(0, `rgba(${rgb},${(0.16 + 0.5 * peak) * (0.25 + 0.75 * age)})`);
+      grad.addColorStop(1, 'rgba(8,10,18,0.92)');
+      c.fillStyle = grad;
+      c.fill();
+      c.beginPath();
+      pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]));
+      c.lineWidth = Math.max(1, d * (0.6 + 0.9 * age));
+      c.strokeStyle = `rgba(${rgb},${(0.25 + 0.65 * peak) * (0.2 + 0.8 * age)})`;
+      c.stroke();
+    }
+
+    // подписи осей — без них объём красивый, но немой
+    c.fillStyle = 'rgba(233,233,237,.45)';
+    c.font = Math.round(11 * d) + 'px system-ui,sans-serif';
+    const HZ = [60, 250, 1000, 4000];
+    for(let i = 0; i < HZ.length; i++){
+      const x = -1 + 2 * (i + 0.5) / HZ.length;
+      const p = project(x, 0, -1.06, w, h);
+      c.textAlign = 'center';
+      c.fillText(HZ[i] >= 1000 ? (HZ[i] / 1000) + ' кГц' : HZ[i] + ' Гц',
+                 p[0], p[1] + 13 * d);
+    }
+    const pn = project(1.06, 0, -1, w, h), pf = project(1.06, 0, 1, w, h);
+    c.textAlign = 'left';
+    c.fillText('сейчас', pn[0] + 6 * d, pn[1]);
+    // строго сбоку ось времени вырождается в точку — две подписи налезли бы
+    // друг на друга и читались как мусор. Показываем только ближнюю.
+    if(Math.abs(pn[1] - pf[1]) > 14 * d)
+      c.fillText('3 сек назад', pf[0] + 6 * d, pf[1]);
+  }
+
+  function hexRgb(hex){
+    const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+    if(!m) return '136,146,166';
+    const n = parseInt(m[1], 16);
+    return (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
+  }
+
+  /* ── цикл ── */
+  let last = 0;
+  function loop(t){
+    if(!open){ raf = 0; return; }
+    if(t - last > 32){ last = t; sample(); }        // ~30 срезов в секунду
+    draw();
+    const who = $id('s3-who');
+    const src = window.saikaHearSrc ? window.saikaHearSrc() : null;
+    if(who) who.textContent = speaking() ? '· звучит она'
+      : (window.__vpLiveWho || '· ' + (src ? src.who : 'микрофон'));
+    const lv = $id('s3-lvl');
+    if(lv) lv.textContent = silent > 30 ? '· нет сигнала (звук не включён?)'
+      : (live < 0.01 ? '· тишина'
+        : '· ' + Math.round(20 * Math.log10(Math.max(live, 1e-4))) + ' дБ');
+    raf = requestAnimationFrame(loop);
+  }
+
+  /* ── управление ── */
+  const cv = $id('s3-cv');
+  let drag = null;
+  cv.onmousedown = e => {
+    drag = {x: e.clientX, y: e.clientY, yaw: cam.yaw, pitch: cam.pitch};
+    cv.classList.add('drag');
+  };
+  addEventListener('mousemove', e => {
+    if(!drag) return;
+    // Зажима наклона больше нет: порядок отрисовки считается под камеру,
+    // поэтому рельеф корректен хоть снизу, хоть вверх ногами.
+    cam.yaw = drag.yaw + (e.clientX - drag.x) * 0.006;
+    cam.pitch = drag.pitch + (e.clientY - drag.y) * 0.005;
+    mark();
+  });
+  addEventListener('mouseup', () => { drag = null; cv.classList.remove('drag'); });
+  cv.onwheel = e => {
+    e.preventDefault();
+    cam.zoom = Math.max(0.5, Math.min(3, cam.zoom * (e.deltaY < 0 ? 1.12 : 0.89)));
+  };
+
+  function view(name){
+    const v = VIEWS[name];
+    if(!v) return;
+    cam.yaw = v.yaw; cam.pitch = v.pitch; cam.depth = v.depth; cam.zoom = v.zoom;
+    mark(name);
+  }
+  function mark(name){
+    // подсветка активной кнопки: если камеру крутили руками — ни одна
+    for(const k of ['side', 'top', 'iso']){
+      const b = $id('s3-' + k);
+      if(b) b.classList.toggle('on', k === name);
+    }
+  }
+  $id('s3-side').onclick = () => view('side');
+  $id('s3-top').onclick = () => view('top');
+  $id('s3-iso').onclick = () => view('iso');
+  $id('s3-full').onclick = () => {
+    if(document.fullscreenElement) document.exitFullscreen();
+    else sheet.requestFullscreen && sheet.requestFullscreen();
+  };
+  $id('s3-close').onclick = () => close();
+  addEventListener('keydown', e => {
+    if(!open) return;
+    if(e.key === 'Escape') close();
+    else if(e.key === '1') view('side');
+    else if(e.key === '2') view('top');
+    else if(e.key === '3') view('iso');
+  });
+
+  function show(){
+    open = true;
+    sheet.classList.add('show');
+    if(!raf) raf = requestAnimationFrame(loop);
+  }
+  function close(){
+    open = false;
+    sheet.classList.remove('show');
+    if(document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+
+  // кнопка в панели голоса, рядом с плоским спектром
+  function wire(){
+    const cap = $id('vp-spec-cap');
+    if(!cap || $id('s3-open')) return;
+    const b = document.createElement('button');
+    b.id = 's3-open'; b.className = 'vp-btn';
+    b.style.cssText = 'padding:1px 6px;font-size:9.5px;letter-spacing:0;' +
+                      'text-transform:none';
+    b.textContent = '🧊 объём';
+    b.title = 'Спектр в трёх измерениях: частота, время, громкость. ' +
+              'Можно крутить и развернуть на весь экран';
+    b.onclick = e => { e.stopPropagation(); show(); };
+    cap.parentNode.insertBefore(b, cap.nextSibling);
+  }
+  wire(); setTimeout(wire, 800); setTimeout(wire, 2500);
+  view('iso');
+
+  // наружу: открыть окно и подсунуть срез из другого источника
+  window.saikaSpec3D = {open: show, close: close, push: push, view: view};
+})();
+</script>
+
+
+<script>
+/* ═══ ГЛУШИЛКА АВТОЗАПОЛНЕНИЯ — ДЛЯ ВСЕХ ПОЛЕЙ СРАЗУ (2026-07-28) ═══
+   Chrome сохранил «kimi-k3» как пароль для этого адреса (владелец вводил
+   ключ API) и с тех пор вписывает его в ЛЮБОЕ текстовое поле страницы,
+   которое сочтёт логином: имя голоса, поиск по способностям — что угодно.
+   Точечная защита превратилась в прятки; правило одно и общее: каждое
+   текстовое поле получает autocomplete=off, нейтральное имя и readonly до
+   первого касания (по readonly-полям Chrome подсказок не строит). Снятие —
+   на focus/mousedown, так что и программный .focus() работает.
+   Родное лечение никто не отменял: Chrome → Управление паролями → удалить
+   запись для 127.0.0.1:8765 — но код обязан жить и без этого. */
+(function(){
+  function shield(el){
+    if(el.dataset.naf || el.type === 'password') return;
+    el.dataset.naf = '1';
+    if(!el.getAttribute('autocomplete')) el.setAttribute('autocomplete', 'off');
+    el.setAttribute('data-lpignore', 'true');
+    el.setAttribute('data-1p-ignore', '');
+    el.setAttribute('data-form-type', 'other');
+    // readonly только если поле сейчас не в фокусе и пустое: занятое поле
+    // трогать нельзя, а в сфокусированном человек уже печатает
+    const arm = () => {
+      if(document.activeElement !== el && !el.value)
+        el.setAttribute('readonly', 'readonly');
+    };
+    const disarm = () => el.removeAttribute('readonly');
+    ['focus', 'mousedown', 'touchstart', 'pointerdown'].forEach(
+      ev => el.addEventListener(ev, disarm));
+    el.addEventListener('blur', () => setTimeout(arm, 60));
+    arm();
+  }
+  function sweep(root){
+    (root.querySelectorAll
+      ? root.querySelectorAll('input[type=text],input[type=search],input:not([type])')
+      : []).forEach(shield);
+    if(root.matches && root.matches('input')) shield(root);
+  }
+  sweep(document);
+  new MutationObserver(muts => {
+    for(const m of muts)
+      for(const n of m.addedNodes)
+        if(n.nodeType === 1) sweep(n);
+  }).observe(document.body, {childList: true, subtree: true});
+})();
 </script>
 </body>
 </html>
