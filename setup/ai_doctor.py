@@ -147,20 +147,40 @@ def ask_llm(ctx):
         return []
 
 
+# НЕПРИКАСАЕМЫЕ ПАКЕТЫ (2026-07-29, живой случай: модель решила «для общего
+# исправления окружения» сделать pip install --force-reinstall torch — а на
+# PyPI лежит колесо БЕЗ CUDA. Докачалось бы — видеокарта отвалилась бы у
+# всего: GigaAM, ECAPA, Qwen3-TTS. Спасло только то, что владелец закрыл
+# окно на 21-м мегабайте из 122). Правило: фундамент окружения ИИ-доктор не
+# трогает никогда — такие вещи ставятся своим индексом и своими руками.
+FORBIDDEN_PKG = ("torch", "torchvision", "torchaudio", "ctranslate2",
+                 "nvidia", "cuda", "onnxruntime", "numpy", "transformers",
+                 "tokenizers")
+
+
+def _pkg_ok(p: str) -> bool:
+    base = p.split("==")[0].split(">=")[0].strip().lower()
+    if any(base == f or base.startswith(f + "-") or f in base
+           for f in FORBIDDEN_PKG):
+        _log(f"[защита] {p}: фундаментальный пакет — руками, не доктором")
+        return False
+    return True
+
+
 def execute(act) -> str:
     """Выполнить одно действие из белого списка. Возвращает '', 'done'."""
     a = act.get("action")
     if a == "pip_install":
         pkgs = [p for p in act.get("packages", [])
                 if isinstance(p, str) and SAFE_PKG.match(p)
-                and not p.strip().startswith("-")]
+                and not p.strip().startswith("-") and _pkg_ok(p)]
         if pkgs:
             _log(f"[fix] pip install {' '.join(pkgs)}")
             _pip("install", *pkgs, "--timeout", "180", "--retries", "5")
     elif a == "pip_force_reinstall":
         pkgs = [p for p in act.get("packages", [])
                 if isinstance(p, str) and SAFE_PKG.match(p)
-                and not p.strip().startswith("-")]
+                and not p.strip().startswith("-") and _pkg_ok(p)]
         if pkgs:
             _log(f"[fix] pip install --force-reinstall --no-deps {' '.join(pkgs)}")
             _pip("install", "--force-reinstall", "--no-deps", *pkgs,

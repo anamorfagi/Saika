@@ -80,10 +80,15 @@ class Transcript:
 
     def _warm_bg(self):
         """Поднять silero_te в отдельном потоке. Пока он не готов, текст
-        идёт без знаков; готов — следующая фраза уже с ними."""
-        if self._te_tried:
+        идёт без знаков; готов — следующая фраза уже с ними.
+
+        Повторяем не чаще раза в полчаса: одна неудача (github мигнул) не
+        должна оставлять СУТОЧНУЮ запись без запятых до перезапуска."""
+        now = time.time()
+        if self._te_tried and now - getattr(self, "_te_ts", 0) < 1800:
             return
         self._te_tried = True
+        self._te_ts = now
 
         def run():
             try:
@@ -126,8 +131,24 @@ class Transcript:
             # длинное предложение закрываем сами: ждать точки от диктора,
             # который говорит абзацами, можно до вечера
             if len(self._pending) > int(CFG.get("transcript.max_chars", 320)):
-                return self._flush(engine)
+                r = self._flush(engine)
+                self._autosave()
+                return r
+        self._autosave()
         return None
+
+    def _autosave(self):
+        """Раз в десять минут — на диск. Суточная запись не имеет права
+        пропасть из-за одного падения процесса на восьмом часу (2026-07-29,
+        владелец затевает дневной стресс-тест). Пишем В ТОТ ЖЕ файл."""
+        if not self.on or time.time() - getattr(self, "_auto_ts", 0) < 600:
+            return
+        self._auto_ts = time.time()
+        try:
+            self.save()
+            log.info("Стенограмма: автосохранение (%d строк)", len(self.lines))
+        except Exception as e:
+            log.warning("Стенограмма: автосохранение не удалось: %s", e)
 
     def _flush(self, engine=""):
         if not self._pending:
@@ -150,6 +171,10 @@ class Transcript:
         self.lines = []
         self._pending = ""
         self.file = ""
+        # имя файла фиксируется на старте: автосохранение переписывает ОДИН
+        # файл, а не плодит по файлу каждые десять минут
+        self._stamp = time.strftime("%Y%m%d_%H%M")
+        self._auto_ts = time.time()
         log.info("Стенограмма: пишу")
         return self.status()
 
@@ -171,7 +196,7 @@ class Transcript:
     def save(self):
         self.flush()
         DIR.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d_%H%M")
+        stamp = getattr(self, "_stamp", "") or time.strftime("%Y%m%d_%H%M")
         p = DIR / f"transcript_{stamp}.md"
         head = [f"# Стенограмма — {time.strftime('%d.%m.%Y %H:%M')}", ""]
         who_prev = None

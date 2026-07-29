@@ -72,7 +72,16 @@ class VadSegmenter:
         self.threshold = vad.get("rms_threshold", 0.012)
         self.silence_ms = vad.get("silence_ms", 700)
         self.min_speech_ms = vad.get("min_speech_ms", 300)
-        self.max_segment_s = vad.get("max_segment_s", 25)
+        # ПРЕДЕЛ КУСКА — 12с, а не 25 (2026-07-29, разбор рабочего дня
+        # владельца). Разговор ОДНОГО человека сам режется паузами, и предел
+        # не срабатывает почти никогда. А в комнате, где говорят несколько,
+        # пауз нет вовсе: сегмент дорастает до предела, GigaAM видит кусок
+        # длиннее двадцати секунд, лезет в longform — и в логе появляются
+        # «распознала за 17.7с», «20.1с», «23.1с». Всё это время очередь
+        # копится, а текст на экране стоит. Двенадцать секунд: longform не
+        # трогаем никогда, задержка сверху ограничена, а фраза рвётся редко —
+        # пауза в 700мс между предложениями всё-таки случается.
+        self.max_segment_s = vad.get("max_segment_s", 12)
         self.preroll_ms = vad.get("preroll_ms", 240)
         self.adaptive = vad.get("adaptive", True)
         self.sr = CFG.get("stt.sample_rate", 16000)

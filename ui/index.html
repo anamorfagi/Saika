@@ -3418,6 +3418,117 @@ function eqFrame(){
 eqFrame();
 </script>
 <script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · КАРТА ГОЛОСОВ — ПЫЛЬ, КОТОРАЯ СОБИРАЕТСЯ В ГОЛОСА (2026-07-29)
+
+   ЧТО НЕ ТАК БЫЛО. Радарные кольца — это метафора прибора: сетка, шкала,
+   развёртка. Она обещает точность, которой тут нет и быть не может: место
+   точки на карте не значит «столько-то герц», это проекция многомерного
+   отпечатка, у неё нет ни севера, ни делений. Кольца врали.
+
+   ЧТО ВМЕСТО. Поле почти невидимой пыли во весь рост окна — ровно тысяча
+   точек, каждая живёт на своём месте и еле светится. Появился звук — пыль
+   в той области НАМАГНИЧИВАЕТСЯ: подтягивается, сгущается, светлеет от
+   тесноты. Замолчал — медленно расходится по домам. Ничего не обещает,
+   ничего не измеряет, просто показывает, где сейчас живёт звук.
+
+   ДВА РОДА ПРИТЯЖЕНИЯ, и это важно:
+     ГОЛОС — точка проекции (кто говорит), тянет сильно и красит пыль в
+             свой цвет. Так территория человека проступает сама, из пыли,
+             а не рисуется контуром.
+     ЧАСТОТЫ — живой спектр: полоса по горизонтали (низ слева, верх
+             справа), энергия полосы тянет пыль вверх. Отсюда «звуки на
+             разных частотах притягивают точки в свою область» — буквально.
+
+   ПОЧЕМУ ЕЛЕ ВИДНО. Пыль не информация, она среда. Видно должно быть
+   СГУЩЕНИЕ, а не отдельные пылинки: глаз читает облако целиком. Поэтому
+   альфа одной точки 0.05-0.12, и только в сгустке она набирает яркость.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function(){
+  const N = 1000;               // пылинок; на канвасе это ~0.6мс на кадр
+  const HOME = 0.015;           // пружина домой: поле не должно пустеть
+  const DRAG = 0.86;            // вязкость: без неё пыль звенит
+  const PULL = 0.048;           // сила магнита
+  const GREY = '#8892a6';
+
+  const P = new Float32Array(N * 6);   // x y vx vy hx hy
+  const PC = new Array(N).fill(GREY);  // цвет, в который окрашена пылинка
+  const PA = new Float32Array(N);      // насколько пылинка «захвачена» 0..1
+
+  // ЗЕРНО ПРИБИТО: при перезапуске поле то же самое. Пыль — это фон, и он
+  // не должен каждый раз выглядеть новым местом.
+  let seed = 20260729;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296)
+                    / 4294967296;
+
+  // ПОЛЕ — ПРЯМОУГОЛЬНИК ВО ВЕСЬ ХОЛСТ, не круг: пыль должна жить по всему
+  // окну, включая углы, иначе снова получается «прибор с круглым экраном».
+  for(let i = 0; i < N; i++){
+    const x = rnd() * 2 - 1, y = rnd() * 2 - 1;
+    P[i*6] = x; P[i*6+1] = y; P[i*6+4] = x; P[i*6+5] = y;
+  }
+
+  const att = [];               // магниты этого кадра
+
+  /** Добавить магнит. x,y в [-1,1]; w — сила; r — радиус захвата. */
+  function pull(x, y, w, r, color){
+    att.push({x: x, y: y, w: w, r: r, c: color || GREY});
+  }
+
+  function step(){
+    for(let i = 0; i < N; i++){
+      const o = i * 6;
+      let ax = (P[o+4] - P[o]) * HOME, ay = (P[o+5] - P[o+1]) * HOME;
+      let best = 0, bc = null;
+      for(const a of att){
+        const dx = a.x - P[o], dy = a.y - P[o+1];
+        const d2 = dx*dx + dy*dy;
+        // мягкое ядро: вблизи не рвёт, вдали не тянет
+        const f = a.w / (1 + d2 / (a.r * a.r)) ;
+        ax += dx * f * PULL; ay += dy * f * PULL;
+        if(f > best){ best = f; bc = a.c; }
+      }
+      P[o+2] = (P[o+2] + ax) * DRAG;
+      P[o+3] = (P[o+3] + ay) * DRAG;
+      P[o]   += P[o+2];
+      P[o+1] += P[o+3];
+      // захваченность решает и яркость, и цвет — но плавно, без мигания
+      const want = Math.min(1, best * 1.6);
+      PA[i] += (want - PA[i]) * 0.08;
+      if(bc && want > 0.25) PC[i] = bc;
+      else if(PA[i] < 0.05) PC[i] = GREY;
+    }
+    att.length = 0;
+  }
+
+  /** Рисует В ЧУЖОЙ контекст и НЕ чистит его: пыль — фон, поверх неё лягут
+      облако точек и живая точка говорящего. */
+  function paint(c, w, h, dpr){
+    const sx = w / 2, sy = h / 2;
+    const d = Math.max(1, dpr || 1);
+    for(let i = 0; i < N; i++){
+      const o = i * 6;
+      const px = w/2 + P[o] * sx, py = h/2 + P[o+1] * sy;
+      if(px < -4 || py < -4 || px > w + 4 || py > h + 4) continue;
+      const a = 0.09 + 0.52 * PA[i] * PA[i];   // квадрат: сгусток вспыхивает
+      c.fillStyle = hexA(PC[i], a);
+      const s = d * (PA[i] > 0.5 ? 1.6 : 1.0);
+      c.fillRect(px, py, s, s);
+    }
+  }
+
+  function hexA(hex, a){
+    const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+    if(!m) return `rgba(136,146,166,${a})`;
+    const n = parseInt(m[1], 16);
+    return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;
+  }
+
+  window.saikaDust = {pull: pull, step: step, paint: paint, N: N};
+})();
+</script>
+
+<script>
 /* ============ ТРИ ПАНЕЛИ-КАРУСЕЛЬ: аватар · голос · чат ============
    (2026-07-28, вторая редакция; пришло на смену сплиту чат/аватар 2026-07-25)
 
@@ -7652,17 +7763,21 @@ eqFrame();
   #vp-pane .vp-h .sub{font-weight:400;font-size:10.5px;color:var(--dim);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #vp-pane .vp-h .vp-btn{padding:3px 7px;font-size:11px}
-  #vp-map{flex:1 1 auto;min-height:120px;width:100%;display:block;
+  /* КАРТА ВО ВЕСЬ РОСТ (2026-07-29). Было min-height:120px — и карта
+     ужималась в полоску, стоило спискам голосов подрасти: главное в панели
+     оказывалось самым мелким. Теперь у неё приоритет по высоте, а списки
+     ужимаются сами (у них свой overflow). */
+  #vp-map{flex:1 1 auto;min-height:min(52vh,520px);width:100%;display:block;
     border-radius:16px;border:1px solid rgba(255,255,255,.08);
-    background:radial-gradient(120% 120% at 50% 45%,rgba(77,208,225,.06),
-      rgba(8,10,18,.55))}
+    background:radial-gradient(130% 120% at 50% 40%,rgba(77,208,225,.05),
+      rgba(8,10,18,.60))}
   #vp-spec,#vp-time{width:100%;display:block;border-radius:12px;flex:none;
     border:1px solid rgba(255,255,255,.07);background:rgba(8,10,18,.5)}
   #vp-spec{height:74px} #vp-time{height:62px}
   #vp-pane .vp-cap{flex:none;font-size:9.5px;text-transform:uppercase;
     letter-spacing:.12em;color:rgba(233,233,237,.34);margin:1px 2px -3px;
     flex-wrap:wrap;row-gap:3px}
-  #vp-cards{flex:0 1 auto;overflow-y:auto;max-height:34%;min-height:0;
+  #vp-cards{flex:0 1 auto;overflow-y:auto;max-height:26%;min-height:0;
     display:flex;flex-direction:column;gap:5px}
   .vp-card{display:flex;align-items:center;gap:8px;padding:6px 8px;
     border-radius:12px;background:rgba(255,255,255,.045);
@@ -8229,13 +8344,14 @@ eqFrame();
       return '<div class="vp-card' + (isLive ? ' live' : '') +
         '" draggable="true" data-nm="' + esc(n) + '" style="color:' +
         s.color + '"><span class="vp-dot"></span><div style="flex:1;min-width:0">' +
-        '<div class="nm" style="color:var(--text)">' + esc(n) +
+        '<div class="nm" data-ren="' + esc(n) + '" title="Кликни — переименуй" ' +
+          'style="color:var(--text);cursor:text">' + esc(n) +
         (s.pinned ? ' <span class="sm" title="имя закреплено вручную">📌</span>'
                   : s.auto ? ' <span class="sm" title="познакомилась сама">✨</span>'
                   : '') + '</div>' +
         '<div class="sm">' + ago(s.last) + ' · ' + (s.heard || 0) + ' раз · ' +
         pitch + '</div>' + g + '</div><div class="acts">' +
-        '<button draggable="false" data-ren="' + esc(n) + '" title="Переименовать и закрепить">✎</button>' +
+        '<button draggable="false" data-col="' + esc(n) + '" title="Сменить цвет">◑</button>' +
         '<button draggable="false" data-add="' + esc(n) + '" title="Дописать эталон живой речью">＋</button>' +
         '<button draggable="false" data-del="' + esc(n) + '" title="Забыть голос">✕</button>' +
         '</div></div>';
@@ -8282,6 +8398,25 @@ eqFrame();
           mergeVoices(src, dst);
       };
     });
+    // ПАЛИТРА (2026-07-29). Золото в списке отсутствует намеренно: это
+    // цвет создателя, сервер его и не отдаст (см. registry.set_color).
+    const PAL = ['#4dd0e1', '#ffb74d', '#ba68c8', '#81c784',
+                 '#f06292', '#9fa8da', '#4db6ac', '#ff8a65'];
+    box2.querySelectorAll('[data-col]').forEach(b =>
+      b.onclick = async ev => {
+        ev.stopPropagation();
+        const name = b.dataset.col;
+        const cur = ((ST.speakers || {})[name] || {}).color || '';
+        const i = PAL.indexOf(cur);
+        const next = PAL[(i + 1) % PAL.length];
+        try{
+          const r = await api('/api/voiceprint/color',
+                              {name: name, color: next});
+          if(r.ok === false) toast(r.error || 'не вышло', {kind: 'err'});
+          else ST = r;
+        }catch(e){ toast('Цвет не сменился: ' + e.message, {kind: 'err'}); }
+        loadPoints(); paintPanel();
+      });
     box2.querySelectorAll('[data-add]').forEach(b =>
       b.onclick = () => startEnroll(b.dataset.add));
     box2.querySelectorAll('[data-del]').forEach(b =>
@@ -8289,10 +8424,16 @@ eqFrame();
     box2.querySelectorAll('[data-yes]').forEach(a =>
       a.onclick = ev => { ev.preventDefault();
         rename(a.dataset.yes, a.dataset.name); });
+    // ПЕРЕИМЕНОВАНИЕ — КЛИКОМ ПО ИМЕНИ (2026-07-29, жалоба владельца: «всё
+    // так же не могу быстро подписывать голоса»). Карандашик был лишним
+    // шагом и лишней мишенью в 14 пикселей: чтобы подписать голос в живом
+    // разговоре, надо попасть в иконку, а рука в этот момент занята. Само
+    // имя — мишень во всю ширину карточки, промахнуться нельзя.
     box2.querySelectorAll('[data-ren]').forEach(b =>
-      b.onclick = () => {
-        const card = b.closest('.vp-card');
-        const nm = card.querySelector('.nm');
+      b.onclick = ev => {
+        ev.stopPropagation();
+        const nm = b.classList.contains('nm') ? b
+                 : b.closest('.vp-card').querySelector('.nm');
         const inp = document.createElement('input');
         inp.type = 'search'; inp.value = b.dataset.ren; inp.maxLength = 32;
         inp.autocomplete = 'off'; inp.spellcheck = false;
@@ -8606,12 +8747,12 @@ eqFrame();
     off.width = w; off.height = h;
     const c = off.getContext('2d');
     c.clearRect(0, 0, w, h);
-    c.strokeStyle = 'rgba(255,255,255,.045)'; c.lineWidth = 1;
-    for(let r = 0.25; r <= 1.25; r += 0.25){
-      c.beginPath(); c.arc(cx, cy, r * s, 0, 6.2832); c.stroke();
-    }
-    c.beginPath(); c.moveTo(cx - s * 1.3, cy); c.lineTo(cx + s * 1.3, cy);
-    c.moveTo(cx, cy - s * 1.3); c.lineTo(cx, cy + s * 1.3); c.stroke();
+    // РАДАРА БОЛЬШЕ НЕТ (2026-07-29, решение владельца). Кольца и
+    // перекрестье — метафора прибора: шкала, развёртка, отсчёт. Они обещали
+    // точность, которой тут нет: место точки — это проекция многомерного
+    // отпечатка голоса, у неё нет ни севера, ни делений, ни «столько-то
+    // герц». Вместо сетки — поле пыли, которое само сгущается там, где
+    // звучит (см. saikaDust ниже по файлу).
     if(show.terr) Object.keys(hulls).forEach(n => {
       const col = (CLOUD.colors || {})[n] || GREY, pts = hulls[n];
       c.beginPath();
@@ -8631,12 +8772,78 @@ eqFrame();
     }
   }
 
+  /* ПЫЛЬ: ЧТО ЕЁ ТЯНЕТ (2026-07-29, замысел владельца — «точки из
+     пространства магнитятся туда, где проявляется звук»).
+
+     Три рода магнитов, по убыванию силы:
+       живой голос — точка того, кто говорит прямо сейчас. Тянет сильнее
+                     всех и красит пыль в свой цвет: территория человека
+                     проступает из пыли сама, её не надо обводить;
+       территории — центры знакомых голосов. Едва тянут, чтобы поле помнило
+                     форму комнаты, даже когда все молчат;
+       частоты    — живой спектр: полоса слева направо (низ -> верх), а
+                     энергия полосы тянет пыль вверх. Это и есть буквальное
+                     «звук на такой-то частоте притягивает точки в свою
+                     область».
+     Координаты магнитов переводим в систему пыли: у неё прямоугольник
+     [-1,1] на весь холст, у карты — круг радиуса s. */
+  function dust(ctx, w, h, s, cx, cy){
+    const D = window.saikaDust;
+    if(!D) return;
+    const nx = v => v * s / (w / 2), ny = v => -v * s / (h / 2);
+    const now = performance.now();
+
+    if(live.on && now - live.seen < 1400)
+      D.pull(nx(live.x), ny(live.y), 0.45 + 0.85 * (live.energy || 0.3),
+             0.30, live.color);
+    if(selfLive.on && now - selfLive.seen < 1400)
+      D.pull(nx(selfLive.x), ny(selfLive.y),
+             0.40 + 0.80 * (selfLive.energy || 0.3), 0.28, selfLive.color);
+
+    Object.keys(hulls).forEach(n => {
+      const pts = hulls[n];
+      const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+      const my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+      D.pull(nx(mx), ny(my), 0.10, 0.34, (CLOUD.colors || {})[n] || GREY);
+    });
+
+    // частоты берём из того же анализатора, что рисует спектр — второй
+    // открывать нельзя, это уже проходили (свои constraints, свой AGC)
+    try{
+      const herTurn = specSrc === 'tts' || (specSrc === 'auto' && speakingNow());
+      const a = herTurn ? ensureSelfAnalyser() : ensureAnalyser();
+      const bins = herTurn ? sFreq : freq;
+      if(a && bins){
+        a.getByteFrequencyData(bins);
+        const B = 22, lo = 2, hi = Math.min(bins.length, 320);
+        const tone = herTurn ? selfLive.color
+          : (live.on && now - live.seen < 900 ? live.color : GREY);
+        for(let i = 0; i < B; i++){
+          const f0 = Math.round(lo * Math.pow(hi / lo, i / B));
+          const f1 = Math.max(f0 + 1,
+                              Math.round(lo * Math.pow(hi / lo, (i + 1) / B)));
+          let m = 0;
+          for(let k = f0; k < f1 && k < bins.length; k++)
+            if(bins[k] > m) m = bins[k];
+          const e = m / 255;
+          if(e <= 0.18) continue;
+          D.pull(-0.92 + 1.84 * i / (B - 1), 0.88 - 1.5 * e,
+                 0.30 * e, 0.12, tone);
+        }
+      }
+    }catch(e){}
+
+    D.step();
+    D.paint(ctx, w, h, Math.min(2, window.devicePixelRatio || 1));
+  }
+
   function drawMap(cv, big){
     if(!cv || !cv.getBoundingClientRect().width) return;
     fit(cv, big ? 0 : 150);
     const ctx = cv.getContext('2d'), w = cv.width, h = cv.height;
     const s = Math.min(w, h) / 2 / 1.35, cx = w / 2, cy = h / 2;
     ctx.clearRect(0, 0, w, h);
+    if(big) dust(ctx, w, h, s, cx, cy);
     const o = offOf(cv);
     buildCloud(o, w, h, s, cx, cy);
     ctx.drawImage(o.cv, 0, 0);

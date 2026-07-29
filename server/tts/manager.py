@@ -100,15 +100,8 @@ class Qwen3Engine:
                     f"({_avail_gb:.1f} ГБ, нужно ~8): закрой лишнее или "
                     f"увеличь файл подкачки Windows. Пока говорю запасным "
                     f"голосом.")
-            # под общим замком тяжёлых загрузок: на старте ECAPA, Vosk и
-            # этот движок поднимаются одновременно, и параллельный импорт
-            # внутренностей torch роняет пришедшего вторым с «Duplicate
-            # registration» (см. server/torch_gate.py; живой лог 2026-07-28 —
-            # qwen3 падал с этой ошибкой два запуска подряд)
-            from server.torch_gate import TORCH_GATE
-            with TORCH_GATE:
-                import torch
-                from qwen_tts import Qwen3TTSModel
+            import torch
+            from qwen_tts import Qwen3TTSModel
 
             cfg = CFG.get("tts.qwen3", {})
             attn = cfg.get("attn", "auto")
@@ -225,6 +218,54 @@ class SileroEngine:
     # tts.silero.model, если кому-то важно именно его звучание.
     DEFAULT_PACK = "v5_cis_base"
 
+    def _model_file(self, pack):
+        """Где torch.hub держит чекпоинт этого пакета."""
+        import torch
+        from pathlib import Path as _P
+        return (_P(torch.hub.get_dir()) / "snakers4_silero-models_master" /
+                "src" / "silero" / "model" / f"{pack}.pt")
+
+    def _drop_if_corrupt(self, pack) -> bool:
+        """Битый чекпоинт удаляем САМИ, до попытки загрузки (2026-07-29).
+
+        ПОВОД — две недели незакрывающейся петли у владельца. Оборванная
+        закачка оставляет файл ПОЛНОГО имени, но без «оглавления» zip в
+        конце (central directory пишется последней). torch.hub видит файл
+        на месте и говорит «уже скачано» — открывает, падает, и так каждый
+        раз. Наша же починка «удаляю битый файл и качаю заново» чистила не
+        тот каталог и в этот кэш не заглядывала.
+
+        Проверка стоит миллисекунды (читается только оглавление), а лечение
+        честное: нет оглавления — файла нет, torch скачает заново. Заодно
+        подбираем .partial-обрубки, которые копятся от сорванных попыток.
+        Важно на плохом интернете: перекачивается ТОЛЬКО битое.
+        """
+        try:
+            f = self._model_file(pack)
+        except Exception:
+            return False
+        if not f.exists():
+            return False
+        try:
+            import zipfile
+            with zipfile.ZipFile(f) as z:
+                z.namelist()
+            return False                     # целый — не трогаем
+        except Exception as e:
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                for junk in f.parent.glob(f.name + "*.partial"):
+                    junk.unlink()
+                log.warning("Silero: чекпоинт %s битый (%s, %.1f МБ) — удалила, "
+                            "качаю заново", pack, type(e).__name__, size / 1e6)
+                return True
+            except Exception as e2:
+                log.warning("Silero: чекпоинт %s битый, но удалить не вышло "
+                            "(%s) — закрой Сайку и снеси файл руками: %s",
+                            pack, e2, f)
+                return False
+
     def load(self):
         if self.model:
             return
@@ -236,6 +277,7 @@ class SileroEngine:
         # только на второй MIT-вариант
         for cand in (pack, "v5_cis_base_nostress"):
             try:
+                self._drop_if_corrupt(cand)   # обрубок мешает torch'у качать
                 self.model, _ = torch.hub.load(
                     "snakers4/silero-models", "silero_tts",
                     language="ru", speaker=cand, trust_repo=True)

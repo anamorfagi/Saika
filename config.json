@@ -68,7 +68,7 @@
       }
     ],
     "fast_mode": true,
-    "fast_context_chars": 24000,
+    "fast_context_chars": 45000,
     "reasoning_effort": "none",
     "router": {
       "enabled": true
@@ -155,7 +155,7 @@
   },
   "tts": {
     "engine": "qwen3",
-    "enabled": true,
+    "enabled": false,
     "disabled": [],
     "output_device": "CABLE Input",
     "output_device_dup": "WH-1000XM4",
@@ -180,7 +180,8 @@
       "model": "v5_cis_base",
       "speaker": "",
       "sample_rate": 48000,
-      "_note": "v5_cis_base — MIT. Прежний v4_ru под CC-BY-NC: коммерческое использование запрещено."
+      "_note": "v5_cis_base — MIT. Прежний v4_ru под CC-BY-NC: коммерческое использование запрещено.",
+      "model_reinstall": "true"
     },
     "edge": {
       "voice": "ru-RU-SvetlanaNeural"
@@ -357,7 +358,7 @@
     }
   },
   "vision": {
-    "enabled": false,
+    "enabled": true,
     "tools": true,
     "monitor": 0,
     "camera_index": -1,
@@ -413,5 +414,8 @@
   },
   "denoise": {
     "engine": "noisereduce"
+  },
+  "voiceprint": {
+    "enabled": false
   }
 }

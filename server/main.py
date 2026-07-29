@@ -1132,6 +1132,16 @@ def guard_status():
     return GUARD.status()
 
 
+@app.get("/api/room")
+def room_state():
+    """Сколько людей сейчас в комнате и какого они цвета. Лёгкий роут:
+    интерфейс дёргает его часто, чтобы решать, как раскладывать диалог."""
+    try:
+        return voiceprint.room(float(CFG.get("voiceprint.room_window_s", 180)))
+    except Exception as e:
+        return {"people": [], "n": 0, "crowd": False, "error": str(e)[:120]}
+
+
 @app.get("/api/hear")
 def hear_stat():
     """Только счётчики слуха. Отдельным лёгким роутом, а не внутри
@@ -3159,9 +3169,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     CHARS_PER_TOKEN = 1.5                      # воркер всё равно подрежет точно; тут просто ориентир
     ANSWER_RESERVE_TOKENS = 1500               # место под сам ответ
     budget = int((n_ctx - ANSWER_RESERVE_TOKENS) * CHARS_PER_TOKEN)
+    # кто именно ограничил бюджет — чтобы предупреждение называло настоящего
+    # виновника, а не советовало поднять то, что уже поднято (2026-07-29:
+    # окно выросло до 32768, а бюджет так и стоял 24000 — его держал ручной
+    # потолок llm.context_chars из config.json, о котором совет молчал)
+    budget_src = "окно движка"
     cfg_budget = CFG.get("llm.context_chars")  # ручной потолок, если задан
-    if cfg_budget:
-        budget = min(budget, int(cfg_budget))
+    if cfg_budget and int(cfg_budget) < budget:
+        budget = int(cfg_budget)
+        budget_src = "ручной потолок llm.context_chars=%s в config.json" \
+                     % cfg_budget
     # быстрый режим: короче история — реже сдвигается якорь, а значит реже
     # случается «одна полная пережёвка промпта» на ровном месте
     if CFG.get("llm.fast_mode", False):
@@ -3208,13 +3225,17 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # системный промпт и каждый ход платит полным prefill. Ни одного признака
     # в интерфейсе при этом нет — поэтому пишем прямым текстом, что чинить.
     if budget - tools_chars < len(system) * 1.2:
-        cure = ("подними llamacpp.n_ctx в config.json (сейчас %s; поставь "
-                "32768, как в locallm_gguf) — правится при ОСТАНОВЛЕННОЙ "
-                "Сайке, движок стартует с новым окном сам"
-                % (CFG.get("llamacpp", {}) or {}).get("n_ctx", "?")
-                if CFG.get("llm.backend") == "llamacpp"
-                else "подними Context Length у модели в LM Studio и "
-                     "перезагрузи её")
+        if budget_src != "окно движка":
+            cure = ("бюджет держит %s — подними его до 45000 или убери "
+                    "совсем (правится при ОСТАНОВЛЕННОЙ Сайке)" % budget_src)
+        elif CFG.get("llm.backend") == "llamacpp":
+            cure = ("подними llamacpp.n_ctx в config.json (сейчас %s) — "
+                    "правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с "
+                    "новым окном сам"
+                    % (CFG.get("llamacpp", {}) or {}).get("n_ctx", "?"))
+        else:
+            cure = ("подними Context Length у модели в LM Studio и "
+                    "перезагрузи её")
         log.warning(
             "Окно контекста мало: под систему нужно ~%d симв + инструменты "
             "%d, а всего бюджета %d (окно %s токенов). Модель молча режет "
@@ -4680,6 +4701,18 @@ async def ws_endpoint(ws: WebSocket):
             _sp, _spc = voiceprint.who_now()
             if _sp:
                 r["speaker"], r["speaker_conf"] = _sp, round(_spc, 2)
+                # цвет говорящего — тот же, что у его территории на карте.
+                # Нужен интерфейсу, чтобы реплики разных людей отличались
+                # не только подписью (2026-07-29, замысел владельца:
+                # разговор нескольких людей раскладывается по облачкам).
+                try:
+                    _v = voiceprint.S.reg.speakers.get(_sp) or {}
+                    if _v.get("color"):
+                        r["speaker_color"] = _v["color"]
+                    if _v.get("owner"):
+                        r["speaker_owner"] = True
+                except Exception:
+                    pass
             voiceprint.note_text(r.get("text", ""), _sp)
         except Exception as e:
             log.debug("метка говорящего: %s", e)

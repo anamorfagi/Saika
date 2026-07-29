@@ -171,6 +171,34 @@ def who_now(max_age=2.5):
     return S.who_last, float(ev.get("conf", 0.0))
 
 
+def room(window_s: float = 180.0):
+    """КТО СЕЙЧАС В КОМНАТЕ (2026-07-29, замысел владельца).
+
+    Отвечает на вопрос «я тут один или нас несколько» — тот самый, от
+    которого зависит, как раскладывать чат: разговор с ней в одну колонку
+    или беседа нескольких людей облачками. Считаем по факту: какие голоса
+    подавали признаки жизни за последние N минут, с их цветами.
+
+    Она сама в счёт НЕ идёт: её собственный голос звучит из колонок и в
+    «сколько людей рядом» ему делать нечего."""
+    now = time.time()
+    me = self_name()
+    who = []
+    for name, st in S.reg.stat.items():
+        if name == me or name not in S.reg.speakers:
+            continue
+        last = float(st.get("last", 0) or 0)
+        if now - last > window_s:
+            continue
+        v = S.reg.speakers[name]
+        who.append({"name": name, "color": v.get("color", ""),
+                    "owner": bool(v.get("owner")),
+                    "ago": round(now - last, 1),
+                    "heard": int(st.get("n", 0))})
+    who.sort(key=lambda x: x["ago"])
+    return {"people": who, "n": len(who), "crowd": len(who) >= 2}
+
+
 def prosody():
     """Как звучал последний узнанный кусок: тон, энергия и рабочий диапазон
     говорящего. Нужен стенограмме для пометок настроения («тихо», «на
@@ -461,6 +489,7 @@ def status():
         "listen_self": listen_self(),
         "self_known": self_name() in S.reg.speakers,
         "owner": S.reg.owner_name(),
+        "room": room(),
         "last": S.last_event,
         **S.proj.state(),
     }
