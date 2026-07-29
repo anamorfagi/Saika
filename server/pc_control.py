@@ -149,9 +149,49 @@ def apps(query: str = "", limit: int = 40) -> list:
     return out[:limit] if limit else out
 
 
+# РУССКАЯ РАСКЛАДКА ГОЛОСОМ (2026-07-29). Названия программ латинские, а
+# произносят их по-русски: «корел дро», «фотошоп», «блендер». Распознавание
+# честно пишет кириллицей — и точное сравнение проваливается на ровном месте.
+# Таблица грубая нарочно: нам не нужна правильная транслитерация, нужно
+# лишь сблизить строки настолько, чтобы их поймало нечёткое сравнение.
+_RU2LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _norm(s: str) -> str:
+    """Строка без пробелов, знаков и регистра, кириллица — латиницей.
+    «Coral Draft», «CorelDRAW 2021», «корел дро» сходятся в одно поле."""
+    s = (s or "").lower()
+    # диграфы до побуквенной замены: «эксель» должен стать exel, а не eksel,
+    # иначе от excel его отделяет лишняя буква и совпадение не дотягивает
+    for a, b in (("кс", "x"), ("ья", "ya"), ("ье", "ye")):
+        s = s.replace(a, b)
+    out = []
+    for ch in s:
+        if ch in _RU2LAT:
+            out.append(_RU2LAT[ch])
+        elif ch.isalnum():
+            out.append(ch)
+    return "".join(out)
+
+
 def _score(name: str, q: str) -> int:
     """Насколько ярлык похож на то, что попросили. Голосом просят коротко
-    («блендер», «стим»), а в «Пуске» лежат «Blender 4.2» и «Steam Client»."""
+    («блендер», «стим»), а в «Пуске» лежат «Blender 4.2» и «Steam Client».
+
+    НЕЧЁТКОЕ СРАВНЕНИЕ ДОБАВЛЕНО 2026-07-29 по живому промаху: владелец
+    сказал «открой Корел Драфт», распознавание написало «CoralDraft», а
+    программа зовётся «CorelDRAW». Ни одно точное правило не срабатывает:
+    подстроки нет, общих слов нет — и Сайка отвечала «не нашла», хотя
+    ярлык лежал прямо перед ней. Человек услышал название один раз и
+    повторяет как запомнил; попадать в написание побуквенно — не его
+    работа. Поэтому последним рубежом идёт похожесть строк, и она же
+    вытягивает опечатки распознавания."""
     n = name.lower()
     if n == q:
         return 100
@@ -165,6 +205,83 @@ def _score(name: str, q: str) -> int:
         return 45
     if qw & words:
         return 25
+    # ПОСЛЕДНИЙ РУБЕЖ: ПОХОЖЕСТЬ ПО БУКВАМ.
+    # Стенд показал, что сравнивать строку целиком мало: «Adobe Photoshop
+    # 2024» против «фотошоп» — это 18 букв против 8, и любая честная мера
+    # похожести тонет в марке производителя и номере версии. Поэтому имя
+    # разбирается на кусочки, и запрос меряется с КАЖДЫМ: целиком, по
+    # отдельным словам, по первым двум словам. Совпало с «photoshop» —
+    # достаточно, остальное в названии человека не интересует.
+    nq = _norm(q)
+    if len(nq) < 3:
+        return 0
+    parts = [_norm(name)]
+    ws = [w for w in re.findall(r"[A-Za-zА-Яа-яЁё]+", name) if len(w) > 2]
+    parts += [_norm(w) for w in ws]
+    if len(ws) >= 2:
+        parts.append(_norm(ws[0] + ws[1]))
+    # Сначала СОБИРАЕМ все признаки, потом решаем — ранний return 40 на
+    # префиксе перехватывал даже точное «телеграм» = telegram и не пускал
+    # его к уверенному баллу (стенд 2026-07-29 поймал на первом же прогоне)
+    best, near = 0.0, False
+    import difflib
+    for cand in parts:
+        if len(cand) < 3:
+            continue
+        if cand == nq:
+            # слово имени целиком совпало: «телеграм» = telegram из
+            # «Telegram Desktop» — это ОНО, спрашивать нечего
+            return 46
+        if nq in cand or cand.startswith(nq[:5]):
+            near = True
+        # и с НАЧАЛОМ кандидата той же длины: короткое «корел» против
+        # длинного «coreldraw» иначе тонет — половина букв кандидата не
+        # имеет пары, и честная мера похожести падает ниже порога, хотя
+        # человек назвал программу совершенно узнаваемо
+        r = max(difflib.SequenceMatcher(None, cand, nq).ratio(),
+                difflib.SequenceMatcher(None, cand[:len(nq) + 2], nq).ratio())
+        if r > best:
+            best = r
+    # КУСОЧКИ ЗАПРОСА (2026-07-29, живой пример владельца: «клауд код» не
+    # находило Claude — целиком «klaudkod» слишком далёк от «claude», а вот
+    # слово «клауд» уже узнаваемо). Слова запроса мерим с именем по одному.
+    # Потолок кусочку — НИЖЕ любой оценки целой фразы (стенд поймал
+    # инверсию: «корел драфт» ставил PHOTO-PAINT (кусок «корел» = слово
+    # имени) выше CorelDRAW (целая фраза похожа на 0.84) — и «да» человека
+    # запоминало НЕ ТУ программу навсегда). Целая фраза — свидетельство
+    # сильнее фрагмента, всегда.
+    frag = False
+    for sw in (_norm(w) for w in re.findall(r"[A-Za-zА-Яа-яЁё\d'-]+", q)):
+        if frag:
+            break
+        if len(sw) < 3 or sw == nq:
+            continue
+        for cand in parts:
+            if len(cand) < 3:
+                continue
+            if cand == sw or sw in cand or cand.startswith(sw[:5]):
+                frag = True
+                break
+            rr = max(difflib.SequenceMatcher(None, cand, sw).ratio(),
+                     difflib.SequenceMatcher(None, cand[:len(sw) + 2],
+                                             sw).ratio())
+            if rr >= 0.7:
+                frag = True
+                break
+    # ПОЧТИ ТОЧНО = ТОЧНО (2026-07-29, просьба владельца: «геншин импакт мы
+    # же можем понять»). genshinimpakt против genshinimpact — одна буква из
+    # тринадцати, это не «похоже», это ОНО с акцентом распознавалки. Такому
+    # совпадению даём уверенный балл — запуск без лишнего вопроса. Порог 0.9
+    # строгий нарочно: «похожая» программа сюда не пролезет, а что пролезло
+    # ниже — уйдёт в «это оно?» и запомнится с первого ответа.
+    if best >= 0.9:
+        return 46
+    if near:
+        return 40
+    if best >= 0.62:
+        return int(10 + 28 * best)
+    if frag:
+        return 26            # кусочек: хватает попасть в вопрос, не в запуск
     return 0
 
 
@@ -178,33 +295,31 @@ def find_app(query: str) -> list:
     return [a for a, _s in scored[:8]]
 
 
-def launch(query: str) -> str:
-    """Запустить программу по человеческому названию."""
-    hits = find_app(query)
-    if not hits:
-        # каталог мог собраться до установки — пересобираем и пробуем ещё раз
-        build_index(force=True)
-        hits = find_app(query)
-    if not hits:
-        return (f"Не нашла «{query}» среди установленных программ. "
-                "Открой «Управление компом» в настройках и посмотри, что "
-                "вообще есть в каталоге — или назови иначе.")
-    # Несколько похожих — не гадаем молча: запускаем лучшее, но честно
-    # называем, что именно, чтобы промах был слышен сразу.
-    best = hits[0]
-    others = [h["name"] for h in hits[1:4]]
+def _memory():
+    """Память на программы. Отдельным модулем и лениво: если файла нет
+    (старая копия проекта), запуск по ярлыкам обязан работать как раньше."""
+    try:
+        from server import app_memory
+        return app_memory
+    except Exception as e:      # pragma: no cover
+        log.debug("память на программы недоступна: %s", e)
+        return None
+
+
+def _start(item: dict) -> str:
+    """Собственно запуск + честная проверка, что окно появилось."""
     try:
         if _IS_WIN:
-            os.startfile(best["path"])          # noqa: S606 — ярлык из «Пуска»
+            os.startfile(item["path"])          # noqa: S606 — ярлык из «Пуска»
         else:
-            subprocess.Popen(["xdg-open", best["path"]])
+            subprocess.Popen(["xdg-open", item["path"]])
     except Exception as e:
-        return f"Не смогла запустить «{best['name']}»: {e}"
+        return f"Не смогла запустить «{item['name']}»: {e}"
     # проверка результата: ждём до 3с, появилось ли ОКНО этой программы —
     # «запустила» без окна на экране человек читает как «ничего не произошло»
     seen = ""
     try:
-        want = (best["name"] or "").lower().split()[0]
+        want = (item["name"] or "").lower().split()[0]
         for _ in range(6):
             time.sleep(0.5)
             for w in windows(include_minimized=False):
@@ -216,12 +331,179 @@ def launch(query: str) -> str:
                 break
     except Exception:
         pass
-    msg = (f"Запустила {best['name']} — окно «{seen}» уже на экране." if seen
-           else f"Запустила {best['name']}, но окна пока не вижу — она может "
-                "грузиться или живёт в трее. Скажи человеку как есть.")
-    if others:
-        msg += " Похожие, если промахнулась: " + ", ".join(others) + "."
-    return msg
+    return (f"Запустила {item['name']} — окно «{seen}» уже на экране." if seen
+            else f"Запустила {item['name']}, но окна пока не вижу — она может "
+                 "грузиться или живёт в трее. Скажи человеку как есть.")
+
+
+# ОТВЕТ НА «ЭТО ОНО?» (2026-07-29). Отдельного инструмента у модели нет и не
+# надо: человек отвечает голосом в тот же запуск — «да», «второе», «нет».
+# Ловим это здесь, на входе launch, пока вопрос не протух.
+_YES = re.compile(r"^\s*(да|ага|угу|верно|точно|оно|это оно|именно|"
+                  r"подтверждаю|конечно|ну да)\b", re.I)
+_NO = re.compile(r"^\s*(нет|не|неа|не то|не оно|мимо)\b", re.I)
+_ORD = (("перв", 1), ("втор", 2), ("трет", 3), ("четв", 4),
+        ("1", 1), ("2", 2), ("3", 3), ("4", 4))
+
+
+def _as_answer(q: str):
+    """Номер выбора из фразы человека, 0 — «нет», None — это не ответ."""
+    s = (q or "").strip().lower()
+    if not s:
+        return None
+    if _NO.match(s):
+        return 0
+    for word, n in _ORD:
+        if word in s:
+            return n
+    if _YES.match(s):
+        return 1
+    return None
+
+
+def _wide_hits(q: str) -> list:
+    """Широкий заход: реестр App Paths и запущенные процессы. Дороже ярлыков,
+    поэтому только когда «Пуск» промолчал."""
+    mem = _memory()
+    if not mem:
+        return []
+    scored = []
+    for it in mem.wide_catalog():
+        s = _score(it["name"], q.lower())
+        if s > 0:
+            scored.append((it, s))
+    scored.sort(key=lambda p: -p[1])
+    return scored[:6]
+
+
+def launch(query: str) -> str:
+    """Запустить программу по человеческому названию.
+
+    ПОРЯДОК (2026-07-29, дословная просьба владельца: «она должна запустить
+    любую прогу по запросу; не знает — ищет в системе, в диспетчере, на
+    рабочем столе, сравнивает похожее и спрашивает ОДИН РАЗ „это оно?“,
+    и запоминает»):
+      0. это ответ на наш же вопрос — исполняем и запоминаем;
+      1. выученное — мгновенно, без вопросов;
+      2. ярлыки «Пуска» с уверенным совпадением — как раньше;
+      3. широкий заход + вопрос «это оно?» вместо тихой догадки.
+    Догадка запускается молча только когда совпадение уверенное. Тихая
+    ошибка дороже вопроса: её не видно и она повторяется каждый раз.
+    """
+    mem = _memory()
+    # хвостовая пунктуация распознавания («Telegram.») ломала точное
+    # совпадение и уводила уверенный запуск в лишний вопрос (2026-07-29)
+    q = (query or "").strip().strip(" .,!?…»«\"'")
+    # МУСОР ВОКРУГ НАЗВАНИЯ (2026-07-29, владелец: «распознаватель чуток
+    # лишнего захватил»). Голосом просят «ну открой мне геншин импакт
+    # пожалуйста» — командные и вежливые слова к имени программы не
+    # относятся и топят совпадение. Вычищаем их; если после чистки ничего
+    # не осталось (фраза целиком командная) — работаем с исходной.
+    _junk = {"открой", "открыть", "запусти", "запустить", "включи",
+             "включить", "вруби", "стартуй", "поставь", "запуск",
+             "пожалуйста", "плиз", "просто", "ну", "давай", "быстро",
+             "мне", "мой", "моя", "его", "её", "же", "ка", "а", "и",
+             "приложение", "программу", "программа", "прогу", "прога",
+             "игру", "игра", "на", "в", "компе", "пк", "снова", "опять",
+             "заново", "ещё", "еще", "раз"}
+    _kept = [w for w in re.findall(r"[\w'-]+", q) if w.lower() not in _junk]
+    if _kept and len(_kept) < len(re.findall(r"[\w'-]+", q)):
+        q = " ".join(_kept)
+
+    # 0. ОТВЕТ НА ВОПРОС
+    if mem and mem.pending():
+        pick = _as_answer(q)
+        if pick == 0:
+            mem.drop()
+            return ("Поняла, не то. Назови иначе — или скажи точное название, "
+                    "как оно подписано в «Пуске».")
+        if pick:
+            chosen = mem.confirm(pick)
+            if chosen:
+                return (f"Запомнила: «{mem.last_query()}» — это "
+                        f"{chosen['name']}. ") + _start(chosen)
+            return "Такого номера в списке не было — назови ещё раз."
+
+    if not q:
+        return "Не расслышала, что запускать."
+
+    # 1. ВЫУЧЕННОЕ
+    if mem:
+        rec = mem.recall(q)
+        if rec and Path(rec["path"]).exists():
+            mem.remember(q, rec["name"], rec["path"])   # счётчик обращений
+            return _start(rec)
+
+    # 1а. СИСТЕМНЫЕ ПРОГРАММЫ WINDOWS (2026-07-29, живой провал: «открой
+    # диспетчер задач» -> «не могу найти» — у системных программ нет ярлыка
+    # в «Пуске», их запускают по имени, как из окна «Выполнить»)
+    _builtin = {
+        "диспетчер задач": "taskmgr", "диспетчер": "taskmgr",
+        "блокнот": "notepad", "калькулятор": "calc",
+        "проводник": "explorer", "паинт": "mspaint", "пейнт": "mspaint",
+        "командная строка": "cmd", "консоль": "cmd", "терминал": "wt",
+        "панель управления": "control", "ножницы": "snippingtool",
+        "параметры": "ms-settings:", "настройки windows": "ms-settings:",
+        "регедит": "regedit", "реестр": "regedit",
+        "звук": "mmsys.cpl", "устройства": "devmgmt.msc",
+    }
+    _bk = q.lower()
+    _hit = _builtin.get(_bk) or next(
+        (v for k, v in _builtin.items() if k in _bk or _bk in k), "")
+    if _hit and _IS_WIN:
+        try:
+            os.startfile(_hit)              # noqa: S606 — системное имя
+            return f"Запустила ({_hit})."
+        except Exception as e:
+            log.debug("системный запуск %s: %s", _hit, e)
+
+    # 2. ЯРЛЫКИ
+    hits = find_app(q)
+    if not hits:
+        # каталог мог собраться до установки — пересобираем и пробуем ещё раз
+        build_index(force=True)
+        hits = find_app(q)
+    # _score сравнивает с нижним регистром — «Telegram» с большой буквы
+    # иначе тихо проигрывает собственному ярлыку (стенд 2026-07-29)
+    scored = [(a, _score(a["name"], q.lower())) for a in hits]
+    if scored:
+        best, bs = scored[0]
+        second = scored[1][1] if len(scored) > 1 else 0
+        # уверенно = попали по названию (не по буквенной похожести) и рядом
+        # нет второго такого же кандидата
+        if bs >= 45 and bs - second >= 20:
+            msg = _start(best)
+            others = [h["name"] for h, _s in scored[1:4]]
+            if others:
+                msg += " Похожие, если промахнулась: " + ", ".join(others) + "."
+            return msg
+
+    # 3. ШИРОКИЙ ЗАХОД И ВОПРОС
+    cands, seen = [], set()
+    for a, s in scored[:4]:
+        cands.append({"name": a["name"], "path": a["path"], "score": s})
+        seen.add(_norm(a["name"]))
+    for it, s in _wide_hits(q):
+        if _norm(it["name"]) in seen:
+            continue
+        seen.add(_norm(it["name"]))
+        cands.append({"name": it["name"], "path": it["path"], "score": s})
+    cands.sort(key=lambda c: -c["score"])
+    if not cands:
+        # ПОДСМАТРИВАНИЕ (2026-07-29): не знаю — так покажи. Две минуты
+        # следим, что человек запустит руками, и запоминаем навсегда.
+        if mem:
+            try:
+                mem.watch(q)
+            except Exception as e:
+                log.debug("вотчер не встал: %s", e)
+        return (f"Не нашла «{q}» ни в «Пуске», ни в реестре, ни среди "
+                f"запущенных программ. Запусти её сам ПРЯМО СЕЙЧАС — я две "
+                "минуты смотрю за системой, увижу, что это за программа, и "
+                "запомню навсегда. Или скажи мне путь к ней — тоже запомню.")
+    if not mem:
+        return _start(cands[0])
+    return mem.offer(q, cands[:4])
 
 
 # ──────────────────────────────── окна ────────────────────────────────
@@ -231,36 +513,71 @@ def _win32():
     return ctypes, wintypes, ctypes.windll.user32
 
 
-def _monitors() -> list:
-    """Прямоугольники мониторов по порядку — чтобы сказать, на каком экране
-    висит окно. Владелец просил именно это: «понимала, что на первом
-    экране, что на втором»."""
+def _mon_info() -> list:
+    """Мониторы С НОМЕРАМИ САМОЙ WINDOWS (2026-07-29, вопрос владельца в
+    живом тесте: «они не понимают, какой первый экран, какой второй?»).
+
+    Раньше нумеровали по положению: левый верхний = первый. Но человек
+    называет экраны так, как их подписывает Windows в настройках дисплея
+    (кнопка «Определить» рисует цифру на весь экран) — и если главный
+    монитор стоит справа, наши номера расходились с его. Теперь номер
+    берём из имени устройства (\\.\\DISPLAY2 -> 2): это ровно те цифры,
+    которые Windows показывает человеку. Возвращает по одному словарю на
+    монитор: num, rect (весь экран), work (без панели задач), primary."""
     if not _IS_WIN:
         return []
     ctypes, wintypes, user32 = _win32()
-    rects = []
+    out = []
+
+    class MONITORINFOEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD),
+                    ("szDevice", ctypes.c_wchar * 32)]
 
     MONITORENUMPROC = ctypes.WINFUNCTYPE(
         ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
         ctypes.POINTER(wintypes.RECT), ctypes.c_double)
 
     def cb(hmon, hdc, lprc, data):
-        r = lprc.contents
-        rects.append((r.left, r.top, r.right, r.bottom))
+        mi = MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        if not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            return 1
+        m = re.search(r"(\d+)$", mi.szDevice or "")
+        r, wk = mi.rcMonitor, mi.rcWork
+        out.append({"num": int(m.group(1)) if m else len(out) + 1,
+                    "rect": (r.left, r.top, r.right, r.bottom),
+                    "work": (wk.left, wk.top, wk.right, wk.bottom),
+                    "primary": bool(mi.dwFlags & 1)})
         return 1
 
     try:
         user32.EnumDisplayMonitors(0, 0, MONITORENUMPROC(cb), 0)
     except Exception as e:
         log.debug("мониторы не перечислились: %s", e)
-    # слева направо, сверху вниз — так же, как их видит человек
-    rects.sort(key=lambda r: (r[1], r[0]))
-    return rects
+    out.sort(key=lambda d: d["num"])
+    return out
+
+
+def _monitors() -> list:
+    """Прямоугольники мониторов в порядке номеров Windows — чтобы сказать,
+    на каком экране висит окно. Владелец просил именно это: «понимала, что
+    на первом экране, что на втором»."""
+    return [d["rect"] for d in _mon_info()]
 
 
 def _monitor_of(rect, mons) -> int:
+    """Номер экрана, на котором центр окна. mons — список прямоугольников
+    в порядке _mon_info(); возвращается НОМЕР WINDOWS, не позиция в списке
+    (они совпадают почти всегда, но DISPLAY1+DISPLAY3 тоже бывает)."""
     cx = (rect[0] + rect[2]) // 2
     cy = (rect[1] + rect[3]) // 2
+    info = _mon_info()
+    for d in info:
+        m = d["rect"]
+        if m[0] <= cx < m[2] and m[1] <= cy < m[3]:
+            return d["num"]
+    # окно целиком за краями (бывает у свёрнутых) — считаем по ближайшему
     for i, m in enumerate(mons):
         if m[0] <= cx < m[2] and m[1] <= cy < m[3]:
             return i + 1
@@ -380,12 +697,18 @@ def _is_self_window(w: dict) -> bool:
     except Exception:
         pass
     title = (w.get("title") or "").lower()
+    proc = (w.get("proc") or "").lower()
     # окно её веб-интерфейса: заголовок вкладки содержит адрес или имя
     if "127.0.0.1:8765" in title or "сайка —" in title \
             or title.startswith("сайка"):
         return True
-    # консоль, из которой запущен start.bat (заголовок задаёт start.bat)
-    if "start.bat" in title or "saika" in title:
+    # КОНСОЛЬ — ТОЛЬКО НАСТОЯЩАЯ (2026-07-29). Было «saika в заголовке» —
+    # и под это правило попадало любое окно проводника, открытое на папке
+    # C:\Saika, и любой файл с «saika» в имени. Свои окна из-за этого
+    # переставали слушаться команд без всякой причины. Консоль опознаём по
+    # процессу, а не по слову в заголовке.
+    if proc in ("cmd.exe", "conhost.exe", "windowsterminal.exe",
+                "powershell.exe") and ("saika" in title or "start.bat" in title):
         return True
     return False
 
@@ -420,25 +743,113 @@ def _aliases() -> dict:
     return out
 
 
+# ПАМЯТЬ НА ПОСЛЕДНЕЕ ОКНО (2026-07-29, живой диалог: «сверни код
+# приложения» -> свернула -> «открой это же окно» -> «какое окно ты имеешь
+# в виду?». Она сама только что его трогала — и не помнила. Человек в
+# разговоре ссылается местоимением, это нормальная речь, а не загадка).
+_last_target: dict = {"title": "", "ts": 0.0}
+
+
+def _touch(w: dict):
+    try:
+        _last_target.update(title=w.get("title", ""), ts=time.time())
+    except Exception:
+        pass
+
+
+_ANAPHORA = re.compile(
+    r"^(это|то|его|её|ее|же|обратно|сам\w*|котор\w*|окно|окна|приложени\w*|"
+    r"программ\w*|верни|снова|опять|\s)+$", re.I)
+
+
 def _match(query: str):
-    """Найти окно по куску заголовка или имени процесса (+русские алиасы)."""
+    """Найти окно по куску заголовка или имени процесса (+русские алиасы).
+    «Это же окно», «его», «обратно» — окно, с которым работали последней."""
     q = (query or "").strip().lower()
     if not q:
         return None
     ws = windows()
-    for w in ws:                       # точное вхождение в заголовок
-        if q in w["title"].lower():
+
+    # местоимение вместо названия -> последнее окно, которое трогали
+    if _last_target["title"] and time.time() - _last_target["ts"] < 600 \
+            and _ANAPHORA.fullmatch(q):
+        lt = _last_target["title"].lower()
+        for w in ws:
+            if w["title"].lower() == lt:
+                return w
+        # окно могло сменить заголовок (браузер) — берём по началу
+        for w in ws:
+            if w["title"].lower()[:20] == lt[:20]:
+                return w
+
+    # ЧУЖИЕ ОКНА ВПЕРЁД (2026-07-29, живой промах: «перенеси хром» двигало
+    # «Сайка — Google Chrome», её собственную вкладку — она крупнее всех и
+    # стояла первой в списке). Когда человек называет браузер, он имеет в
+    # виду СВОЁ окно, не окно Сайки; её вкладка — только если больше некому.
+    def pick(cands):
+        if not cands:
+            return None
+        other = [c for c in cands if not _is_self_window(c)]
+        return (other or cands)[0]
+
+    w = pick([w for w in ws if q in w["title"].lower()])
+    if w:                              # точное вхождение в заголовок
+        return w
+    w = pick([w for w in ws if q in (w["proc"] or "").lower()])
+    if w:                              # иначе по имени процесса
+        return w
+    # СПЕЦ-ВЕТКИ ДО АЛИАСОВ: у алиасов «папка -> explorer» жадный захват,
+    # и «рабочая папка» уезжала в ПЕРВОЕ окно проводника (стенд поймал)
+
+    # «ОКНО, ГДЕ ДИСК Ц» (2026-07-29, живой промах: «закрой окно, где диск
+    # Ц» закрыло ДИСПЕТЧЕР ЗАДАЧ — нечёткое сравнение наскребло 28 баллов
+    # на «дispetcher», а настоящее окно зовётся «System (C:)» и по-русски
+    # не матчится вообще). Буквы дисков говорят по-русски — переводим и
+    # ищем «(C:)» в заголовке проводника.
+    _dm = re.search(r"диск\w*\s+([а-яa-z])", q)
+    if _dm:
+        _lat = {"ц": "c", "с": "c", "д": "d", "е": "e", "ф": "f", "ж": "g",
+                "г": "g", "х": "h", "и": "i", "й": "j", "к": "k", "л": "l"}
+        letter = _lat.get(_dm.group(1), _dm.group(1))
+        w = pick([w for w in ws
+                  if f"({letter.upper()}:)" in w["title"]
+                  or w["title"].lower().startswith(letter + ":")])
+        if w:
             return w
-    for w in ws:                       # иначе по имени процесса
-        if q in (w["proc"] or "").lower():
-            return w
+
+    # «РАБОЧАЯ ПАПКА» — окно проводника с рабочей директорией (files.roots)
+    if "рабоч" in q and ("папк" in q or "директор" in q):
+        try:
+            from server import file_hands
+            for r in file_hands.roots():
+                nm = Path(r).name.lower()
+                w = pick([w for w in ws if nm in w["title"].lower()])
+                if w:
+                    return w
+        except Exception:
+            pass
+
     _al = _aliases()
     alias = _al.get(q) or next((v for k, v in _al.items() if k in q), "")
     if alias:
-        for w in ws:
-            if alias in (w["proc"] or "").lower() \
-                    or alias in w["title"].lower():
-                return w
+        w = pick([w for w in ws
+                  if alias in (w["proc"] or "").lower()
+                  or alias in w["title"].lower()])
+        if w:
+            return w
+    # НЕЧЁТКО — как и с программами: «Coral Draft» должно находить окно
+    # CorelDRAW. Берём лучшее совпадение по заголовку или процессу и только
+    # если оно уверенное: ошибиться окном хуже, чем не найти.
+    best, bs = None, 0
+    for w in ws:
+        sc = max(_score(w["title"], q), _score(w["proc"] or "", q))
+        if sc > bs:
+            best, bs = w, sc
+    # порог поднят 25 -> 34 (2026-07-29): на 28 баллах «диск ц» дотянулось
+    # до «Диспетчер задач», и ЗАКРЫЛОСЬ чужое окно. Слабая догадка не
+    # оправдывает действие над чужим окном — лучше честное «не нашла».
+    if best is not None and bs >= 34:
+        return best
     return None
 
 
@@ -510,6 +921,7 @@ def window_minimize(query: str) -> str:
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
+    _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
     user32.ShowWindow(w["hwnd"], 6)                # SW_MINIMIZE
     if not _verify(w["hwnd"], "min"):
@@ -521,6 +933,7 @@ def window_focus(query: str) -> str:
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
+    _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
     user32.ShowWindow(w["hwnd"], 9)                # SW_RESTORE
     user32.SetForegroundWindow(w["hwnd"])
@@ -540,6 +953,7 @@ def window_maximize(query: str = "", full: bool = False) -> str:
     w = _match(query) if query else _foreground()
     if not w:
         return f"Не нашла окно «{query}»." if query else "Не вижу активного окна."
+    _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
     user32.ShowWindow(w["hwnd"], 3)                # SW_MAXIMIZE
     user32.SetForegroundWindow(w["hwnd"])
@@ -564,6 +978,7 @@ def window_restore(query: str = "") -> str:
     w = _match(query) if query else _foreground()
     if not w:
         return "Не нашла такое окно."
+    _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
     user32.ShowWindow(w["hwnd"], 9)                # SW_RESTORE
     if not _verify(w["hwnd"], "normal"):
@@ -593,6 +1008,7 @@ def window_close(query: str) -> str:
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
+    _touch(w)   # помним: «это же окно» — про него
     if _is_self_window(w):
         return ("отказ: это моё собственное окно — закрыв его, я умру "
                 "посреди разговора. Если нужно меня выключить, попроси "
@@ -627,10 +1043,16 @@ def minimize_all(keep: str = "") -> str:
     _, _, user32 = _win32()
     k = (keep or "").strip().lower()
     done, stuck = [], []
+    # СВОИ ОКНА ТОЖЕ СВОРАЧИВАЕМ (2026-07-29, владелец: «когда говорю
+    # свернуть окна, она не сворачивает себя, браузер остаётся»). Раньше
+    # они исключались «чтобы Сайка не ослепла» — но свернуть не значит
+    # закрыть: сервер живёт, вебсокет держится, окно поднимается одним
+    # кликом. Просьба «сверни всё» означает ровно всё, иначе стол не
+    # чистый и человек доделывает руками. Правило теперь такое: СВОРАЧИВАТЬ
+    # можно всё, ЗАКРЫВАТЬ себя нельзя (см. window_close).
     todo = [w for w in windows(include_minimized=False)
             if not (k and (k in w["title"].lower()
-                           or k in (w["proc"] or "").lower()))
-            and not _is_self_window(w)]   # своё окно не прячем от владельца
+                           or k in (w["proc"] or "").lower()))]
     for w in todo:
         try:
             user32.ShowWindow(w["hwnd"], 6)
@@ -669,15 +1091,46 @@ def minimize_all(keep: str = "") -> str:
     return msg
 
 
+def restore_all() -> str:
+    """РАЗВЕРНУТЬ ВСЁ СВЁРНУТОЕ (2026-07-29, живой тупик: «открой все окна»
+    -> у неё был только window_restore ПО ОДНОМУ, она честно вызывала его с
+    «для всех активных окон» и получала «не нашла такое окно». Обратная
+    операция к minimize_all обязана существовать: свернула всё — верни всё."""
+    if not _IS_WIN:
+        return "Окна есть только в Windows."
+    _, _, user32 = _win32()
+    done = []
+    for w in windows(include_minimized=True):
+        if not w.get("minimized"):
+            continue
+        try:
+            user32.ShowWindow(w["hwnd"], 9)        # SW_RESTORE
+            done.append(w["title"][:40])
+        except Exception:
+            pass
+    if not done:
+        return "Свёрнутых окон нет — разворачивать нечего."
+    return (f"Развернула {len(done)}: " + ", ".join(done[:6])
+            + ("…" if len(done) > 6 else "") + ".")
+
+
 def window_place(query: str, position: str = "center",
-                 width: int = 0, height: int = 0) -> str:
+                 width: int = 0, height: int = 0, monitor: int = 0) -> str:
     """РАССТАВИТЬ ОКНО (2026-07-28, просьба владельца): «по центру», «слева»,
     «в правый нижний угол», опционально с размером в процентах экрана.
-    Рабочая область берётся без панели задач (SPI_GETWORKAREA) — окно не
-    залезает под панель. Своё окно двигать можно — это не закрытие."""
-    w = _match(query)
+    monitor (2026-07-29): «на втором экране» = monitor=2 — позиции тогда
+    считаются от рабочей области ВТОРОГО монитора. -1 = «на другой экран»
+    (противоположный тому, где окно сейчас). 0 = где окно сейчас.
+    Рабочая область берётся без панели задач — окно не залезает под панель.
+    Своё окно двигать можно — это не закрытие."""
+    # без имени — двигаем АКТИВНОЕ окно: «перенеси на второй экран» сразу
+    # после разговора про хром означает «его же», а не «ничего» (живой
+    # промах 2026-07-29: пустой match -> «Не нашла окно „"»)
+    w = _match(query) if (query or "").strip() else _foreground()
     if not w:
-        return f"Не нашла окно «{query}»."
+        return (f"Не нашла окно «{query}»." if (query or "").strip()
+                else "Не вижу активного окна — назови кусок заголовка.")
+    _touch(w)   # помним: «это же окно» — про него
     import ctypes
     _, _, user32 = _win32()
     if _elevated(w.get("pid", 0)):
@@ -686,9 +1139,47 @@ def window_place(query: str, position: str = "center",
     class RECT(ctypes.Structure):
         _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long),
                     ("r", ctypes.c_long), ("b", ctypes.c_long)]
-    ra = RECT()
-    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0,
-                                               ctypes.byref(ra), 0)
+    # ЭКРАНЫ (2026-07-29, живой провал: «открой проводник на втором экране»
+    # — а позиции считались только от главного). Номера — те же, что Windows
+    # показывает кнопкой «Определить» в настройках дисплея: человек называет
+    # экраны именно этими цифрами.
+    info = _mon_info()
+    mon = int(monitor or 0)
+    by_num = {d["num"]: d for d in info}
+    if mon == -1:
+        # «на другой экран»: противоположный тому, где окно сейчас
+        if len(info) < 2:
+            return "Вижу только один экран — переносить некуда."
+        cur0 = RECT()
+        user32.GetWindowRect(w["hwnd"], ctypes.byref(cur0))
+        here = _monitor_of((cur0.l, cur0.t, cur0.r, cur0.b),
+                           [d["rect"] for d in info])
+        mon = next((d["num"] for d in info if d["num"] != here),
+                   info[0]["num"])
+    if mon and mon not in by_num:
+        have = ", ".join(str(d["num"]) for d in info) or "ни одного"
+        return (f"Такого экрана нет. Windows знает экраны: {have} "
+                "(это те же цифры, что в настройках дисплея по кнопке "
+                "«Определить»). Проверь, подключён ли монитор.")
+    if mon:
+        al, at, ar, ab = by_num[mon]["work"]
+    elif info:
+        # экран не назван — остаёмся на том, где окно живёт сейчас,
+        # а не тащим его молча на главный
+        cur0 = RECT()
+        user32.GetWindowRect(w["hwnd"], ctypes.byref(cur0))
+        ci = _monitor_of((cur0.l, cur0.t, cur0.r, cur0.b),
+                         [d["rect"] for d in info])
+        al, at, ar, ab = (by_num.get(ci) or info[0])["work"]
+    else:
+        ra0 = RECT()
+        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0,
+                                                   ctypes.byref(ra0), 0)
+        al, at, ar, ab = ra0.l, ra0.t, ra0.r, ra0.b
+
+    class _Area:                            # прежние имена, чтобы ниже не менять
+        l, t, r, b = al, at, ar, ab
+    ra = _Area()
     sw, sh = ra.r - ra.l, ra.b - ra.t
 
     # размер: проценты экрана; 0 = не менять текущий
@@ -727,7 +1218,25 @@ def window_place(query: str, position: str = "center",
     user32.ShowWindow(w["hwnd"], 9)            # SW_RESTORE: из свёрнутого
     if not user32.SetWindowPos(w["hwnd"], 0, x, y, ww, wh, 0x0004 | 0x0010):
         return _blocked_note(w, "двигать")
-    return (f"Поставила «{w['title'][:50]}» {position}"
+    # проверяем, куда окно встало НА САМОМ ДЕЛЕ — «поставила на второй
+    # экран», когда окно на первом, ровно то враньё, с которого начался
+    # этот фикс
+    where = ""
+    try:
+        fin = RECT()
+        user32.GetWindowRect(w["hwnd"], ctypes.byref(fin))
+        got = _monitor_of((fin.l, fin.t, fin.r, fin.b),
+                          [d["rect"] for d in info])
+        if mon and got and got != mon:
+            return (f"Двигала «{w['title'][:50]}» на экран {mon}, но окно "
+                    f"оказалось на экране {got} — оно сопротивляется "
+                    "(бывает у программ, которые сами помнят своё место). "
+                    "Скажи человеку как есть.")
+        if got:
+            where = f" на экране {got}"
+    except Exception:
+        pass
+    return (f"Поставила «{w['title'][:50]}» {position}{where}"
             + (f", размер {max(10, min(100, width))}%x"
                f"{max(10, min(100, height))}%" if width or height else "")
             + ".")
@@ -983,6 +1492,35 @@ def find_folder(query: str, drive: str = "", depth: int = 3) -> list:
     return out
 
 
+def folder_list(path: str = "") -> str:
+    """Что внутри текущей папки (или указанной). Глаза прогулки: человек
+    ведёт голосом и должен слышать, куда можно шагнуть (2026-07-29)."""
+    p = (path or "").strip()
+    base = Path(p) if p and Path(p).is_absolute() else None
+    if base is None:
+        cur = here()
+        if not cur:
+            return "Рабочая папка не задана."
+        base = Path(cur) / p if p else Path(cur)
+    if not base.is_dir():
+        return f"«{base}» — не папка или её нет."
+    try:
+        subs = [d.name for d in _subdirs(base)]
+        files = sorted(f.name for f in base.iterdir() if f.is_file())
+    except OSError as e:
+        return f"Не смогла заглянуть в {base}: {e}"
+    out = [f"Сейчас в {base}."]
+    if subs:
+        out.append("Папки (%d): %s" % (len(subs), ", ".join(subs[:20])
+                                       + ("…" if len(subs) > 20 else "")))
+    if files:
+        out.append("Файлы (%d): %s" % (len(files), ", ".join(files[:15])
+                                       + ("…" if len(files) > 15 else "")))
+    if not subs and not files:
+        out.append("Пусто.")
+    return " ".join(out)
+
+
 def remember_place(name: str, path: str) -> str:
     """Запомнить папку под человеческим именем — «игровая», «проекты».
     Дальше её не надо искать заново."""
@@ -991,6 +1529,61 @@ def remember_place(name: str, path: str) -> str:
 
 
 # ──────────────────────────────── папки ────────────────────────────────
+# ГДЕ ОНА СЕЙЧАС СТОИТ (2026-07-29, просьба владельца: «чтобы она могла
+# условно гулять от текущей папки туда, куда я её направляю»). Разговор про
+# файлы — это ходьба: «зайди в Ламоду» -> «а тут открой архив» -> «назад» ->
+# «наверх». Без памяти о текущем месте каждая фраза начиналась бы от корня,
+# и человек был бы обязан каждый раз диктовать полный путь.
+_cwd: dict = {"path": "", "ts": 0.0, "back": []}
+
+
+def here() -> str:
+    """Текущая папка прогулки (или рабочая, если ещё никуда не заходили)."""
+    p = _cwd["path"]
+    if p and Path(p).is_dir():
+        return p
+    try:
+        from server import file_hands
+        rs = file_hands.roots()
+        return str(rs[0]) if rs else ""
+    except Exception:
+        return ""
+
+
+def _go(path: Path):
+    """Запомнить, куда пришли (и откуда), чтобы работало «назад»."""
+    cur = _cwd["path"]
+    if cur and cur != str(path):
+        _cwd["back"].append(cur)
+        del _cwd["back"][:-20]
+    _cwd.update(path=str(path), ts=time.time())
+
+
+_NAV_UP = re.compile(r"^\s*(наверх|вверх|выше|родительск\w*|назад в верх|"
+                     r"на уровень выше|\.\.)\s*$", re.I)
+_NAV_BACK = re.compile(r"^\s*(назад|обратно|вернись|предыдущ\w*)\s*$", re.I)
+_NAV_HOME = re.compile(r"^\s*(домой|в рабочую|рабоч\w+ папк\w+|в начало|"
+                       r"корень)\s*$", re.I)
+# «спустись ниже» / «зайди глубже» — шаг ВНУТРЬ без названия (2026-07-29):
+# если подпапка одна, она и имелась в виду; если их несколько — не гадаем,
+# а перечисляем и спрашиваем
+_NAV_DOWN = re.compile(r"^\s*(спустись|спустимся|зайди|заходи|иди|перейди)?"
+                       r"\s*(ниже|вниз|глубже|внутрь|дальше|в неё|в нее)"
+                       r"\s*$", re.I)
+
+# служебные имена, которых человек в отчёте видеть не должен: корзина —
+# наша внутренняя кухня, а не содержимое его папки
+_HIDE_DIRS = {"_trash", "$recycle.bin", "system volume information"}
+
+
+def _subdirs(base: Path) -> list:
+    """Подпапки без служебных."""
+    try:
+        return sorted((d for d in base.iterdir()
+                       if d.is_dir() and d.name.lower() not in _HIDE_DIRS),
+                      key=lambda d: d.name.lower())
+    except OSError:
+        return []
 def open_folder(path: str = "") -> str:
     """Открыть папку в проводнике. Рабочую директорию (files.roots) —
     свободно; всё остальное только если владелец разрешил гулять по диску."""
@@ -1001,7 +1594,75 @@ def open_folder(path: str = "") -> str:
         if not rs:
             return "Рабочая папка не задана — укажи её в настройках."
         p = str(rs[0])
-    target = Path(p)
+    # ПРОГУЛКА ПО ПАПКАМ: команды направления считаются от ТЕКУЩЕГО места
+    cur = Path(here()) if here() else None
+    if _NAV_UP.match(p) and cur is not None:
+        target = cur.parent
+        _go(target)
+        p = str(target)
+    elif _NAV_BACK.match(p):
+        if _cwd["back"]:
+            target = Path(_cwd["back"].pop())
+            _cwd.update(path=str(target), ts=time.time())
+            p = str(target)
+        else:
+            return "Назад некуда — мы там, откуда начали."
+    elif _NAV_HOME.match(p):
+        rs = file_hands.roots()
+        if not rs:
+            return "Рабочая папка не задана — укажи её в настройках."
+        target = Path(rs[0])
+        _go(target)
+        p = str(target)
+    elif _NAV_DOWN.match(p) and cur is not None:
+        subs = _subdirs(cur)
+        if not subs:
+            return (f"Ниже некуда: в «{cur.name}» нет подпапок. "
+                    "Скажи «наверх» или назови другую папку.")
+        if len(subs) > 1:
+            return ("Внутри несколько папок: " +
+                    ", ".join(d.name for d in subs[:8]) +
+                    ". В какую зайти? Спроси человека и назови её.")
+        target = subs[0]                    # ровно одна — она и имелась в виду
+        p = str(target)
+    else:
+        target = Path(p)
+
+    # ОТНОСИТЕЛЬНЫЙ ПУТЬ = ОТ ТЕКУЩЕЙ ПАПКИ (2026-07-29, живой провал:
+    # создала F:\AI_load_work\Lamoda и тут же «Папки нет на диске: Lamoda» —
+    # открытие мерило путь от корня диска. Куда пришли — оттуда и шагаем).
+    # Не нашлось по пути — ищем по ИМЕНИ рядом и в рабочих корнях, терпя
+    # русское произношение («Ламода» = Lamoda через транслит).
+    if not target.is_absolute():
+        bases = []
+        if cur is not None:
+            bases.append(cur)
+        bases += [Path(r) for r in file_hands.roots()]
+        resolved = None
+        for b in bases:
+            cand = b / p
+            if cand.exists():
+                resolved = cand
+                break
+        if resolved is None:
+            # НЕЧЁТКО (2026-07-29, стенд на живом случае: человек говорит
+            # «Ламода», а папка называется Lomoda — её же создала модель со
+            # слуха. Точное сравнение промахивалось на одной букве).
+            want = Path(p).name.lower()
+            best, bs = None, 0
+            for b in bases:
+                for d in _subdirs(b):
+                    s = _score(d.name, want)
+                    if s > bs:
+                        best, bs = d, s
+            # порог мягче, чем у окон (34): «Lomoda» против «ламода» — это
+            # 33 балла, одна буква из шести. Цена ошибки тут мала (открылась
+            # не та папка — просто скажи «наверх»), а цена промаха велика:
+            # человек не может попасть в им же созданную папку
+            if best is not None and bs >= 30:
+                resolved = best
+        if resolved is not None:
+            target = resolved
     inside = any(target == r or r in target.parents
                  for r in file_hands.roots())
     # 2026-07-26. По умолчанию было запрещено — и получалась дичь: Сайка
@@ -1015,12 +1676,74 @@ def open_folder(path: str = "") -> str:
         return (f"«{p}» вне рабочей папки, а открывать посторонние тебе "
                 "запрещено настройкой «Открывать любые папки».")
     if not target.exists():
-        return f"Папки нет на диске: {p}"
+        # НЕ ПРОСТО «НЕТ» — ПОКАЖИ, ЧТО ЕСТЬ РЯДОМ (2026-07-29): человек
+        # ведёт её вслепую, и «папки нет» без списка соседей — тупик
+        near = ""
+        try:
+            # смотрим ТЕКУЩЕЕ место (here() уже учитывает прогулку), а не
+            # cur из начала вызова — он мог быть None на первом шаге
+            base = Path(here() or file_hands.roots()[0])
+            subs = [d.name for d in _subdirs(base)][:8]
+            up = base.parent
+            near = " Здесь (" + base.name + ") есть: " + \
+                   (", ".join(subs) if subs else "только файлы") + "."
+            if up != base:
+                near += f" Наверху — {up.name}."
+        except Exception:
+            pass
+        return f"Папки «{p}» тут нет.{near}"
+    if target.is_file():                    # «зайди в файл» = открыть его
+        target_dir = target.parent
+    else:
+        target_dir = target
+    # В ТО ЖЕ ОКНО, А НЕ В НОВОЕ (2026-07-29, владелец: «зашла в Ламоду, но
+    # нафиг в новой папке?»). os.startfile каждый раз открывает ЕЩЁ ОДНО
+    # окно проводника — за прогулку из пяти шагов их набирается пять.
+    # Человек ходит по одной папке, значит и окно должно быть одно: если
+    # окно проводника уже есть, переводим ЕГО через COM-интерфейс Shell
+    # (тот же, которым пользуется сам проводник), и только если не вышло —
+    # открываем новое.
+    moved = False
+    if _IS_WIN:
+        try:
+            import win32com.client            # ставится с pywinauto (pywin32)
+            shell = win32com.client.Dispatch("Shell.Application")
+            for w in shell.Windows():
+                try:
+                    if "explorer" not in str(w.FullName).lower():
+                        continue              # это вкладка IE, не проводник
+                    w.Navigate(str(target))
+                    try:
+                        _, _, user32 = _win32()
+                        user32.SetForegroundWindow(int(w.HWND))
+                    except Exception:
+                        pass
+                    moved = True
+                    break
+                except Exception:
+                    continue
+        except Exception as e:
+            log.debug("Shell.Application недоступен (%s) — открою новое окно", e)
+    if not moved:
+        try:
+            if _IS_WIN:
+                os.startfile(str(target))       # noqa: S606
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+        except Exception as e:
+            return f"Не смогла открыть: {e}"
+    _go(target_dir)                         # запомнили, где стоим
+    # что внутри — сразу, чтобы человек мог вести дальше не глядя на экран
+    inner = ""
     try:
-        if _IS_WIN:
-            os.startfile(str(target))       # noqa: S606
-        else:
-            subprocess.Popen(["xdg-open", str(target)])
-    except Exception as e:
-        return f"Не смогла открыть: {e}"
-    return f"Открыла {target}."
+        subs = [d.name for d in _subdirs(target_dir)][:8]
+        files = [f.name for f in target_dir.iterdir() if f.is_file()][:5]
+        if subs:
+            inner += " Внутри папки: " + ", ".join(subs) + "."
+        if files:
+            inner += " Файлы: " + ", ".join(files) + "."
+        if not subs and not files:
+            inner = " Она пустая."
+    except Exception:
+        pass
+    return f"Открыла {target}.{inner}"

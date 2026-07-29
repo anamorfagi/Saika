@@ -252,6 +252,33 @@ def _args(model_path: str, tier: int) -> list:
             n_ctx = other
     except Exception:
         pass
+    # ГЛАЗА МОДЕЛИ (2026-07-29). gemma-4 мультимодальная, но llama-server
+    # видит картинки ТОЛЬКО с файлом-проектором (mmproj-*.gguf). Без него
+    # любой запрос с изображением падает 500 «image input is not supported»
+    # — а зрение у Сайки включается тумблером, и тогда картинка уезжает в
+    # КАЖДЫЙ запрос. В логе владельца это выглядело как «ни одна LLM не
+    # ответила» на безобидное «открой проводник».
+    # Проектор обычно лежит рядом с весами: ищем сами, руками указывать
+    # ничего не надо. Не нашли — работаем текстом (менеджер отбросит
+    # картинку и ответит, а не умрёт).
+    mmproj = g.get("mmproj") or ""
+    if not mmproj:
+        try:
+            mdir = Path(model_path).parent
+            cands = sorted(mdir.glob("mmproj*.gguf")) + \
+                sorted(mdir.glob("*mmproj*.gguf")) + \
+                sorted(mdir.glob("*vision*.gguf"))
+            if cands:
+                mmproj = str(cands[0])
+                log.info("llamacpp: нашла проектор картинок %s — подключаю "
+                         "зрение модели", cands[0].name)
+        except Exception:
+            mmproj = ""
+    if mmproj and not Path(mmproj).exists():
+        log.warning("llamacpp: проектор %s не найден на диске — без зрения",
+                    mmproj)
+        mmproj = ""
+
     args = [str(binary()),
             "-m", model_path,
             "--host", g.get("host", "127.0.0.1"),
@@ -266,6 +293,7 @@ def _args(model_path: str, tier: int) -> list:
             # алиас: в /v1/models модель назовётся привычным именем, и
             # выбор модели в интерфейсе Сайки не поедет
             "--alias", g.get("model") or CFG.get("llm.model", "local"),
+            *(["--mmproj", mmproj] if mmproj else []),
             # шаблон из GGUF + поддержка tools/chat_template_kwargs —
             # без --jinja llama.cpp берёт свой упрощённый шаблон и теряет
             # и инструменты, и выключение размышлений

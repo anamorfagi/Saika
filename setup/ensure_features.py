@@ -74,8 +74,15 @@ FEATURES = {
         # громкости (без него остаётся «громче/тише» клавишами).
         "core_modules": [],
         "core_pip": [],
-        "extra_modules": ["keyboard", "pycaw"],
-        "extra_pip": ["keyboard", "pycaw"],
+        # pywinauto (2026-07-29) — дерево элементов окна (UI Automation):
+        # screen_read/screen_click видят кнопки и ссылки ПО ИМЕНАМ, как
+        # скринридер. Без неё печать и клавиши работают всё равно (ctypes),
+        # деградируют только «посмотри, что в окне» и «кликни по…».
+        # pywin32 (2026-07-29) — Shell.Application: переводит СУЩЕСТВУЮЩЕЕ
+        # окно проводника на новую папку вместо открытия ещё одного. Без
+        # неё прогулка по папкам плодит окна, но работает.
+        "extra_modules": ["keyboard", "pycaw", "pywinauto", "win32com"],
+        "extra_pip": ["keyboard", "pycaw", "pywinauto", "pywin32"],
     },
     "phone": {
         "title": "Доступ с телефона (QR)",

@@ -100,6 +100,18 @@ class Qwen3Engine:
                     f"({_avail_gb:.1f} ГБ, нужно ~8): закрой лишнее или "
                     f"увеличь файл подкачки Windows. Пока говорю запасным "
                     f"голосом.")
+            # МИНЫ SPEECHBRAIN — ДО ИМПОРТА (2026-07-29, живой лог:
+            # 22:13:21,517 qwen3 упал «LazyModule(k2_fsa) failed», а
+            # 22:13:21,608 отпечаток голоса обезвредил мины — на 91мс ПОЗЖЕ.
+            # Автопуск озвучки и прогрев голосов бегут параллельно, и кто
+            # первый — лотерея. Со второй попытки (22:17:52) движок вставал
+            # без единой жалобы, потому что мины уже сняты. Не полагаемся на
+            # чужой прогрев: снимаем сами, вызов повторный — дешёвый no-op.)
+            try:
+                from server.torch_gate import defuse_speechbrain
+                defuse_speechbrain()
+            except Exception as _e:
+                log.debug("обезвреживание speechbrain: %s", _e)
             import torch
             from qwen_tts import Qwen3TTSModel
 
@@ -147,10 +159,30 @@ class Qwen3Engine:
             if cfg.get("optimize", True):
                 try:
                     torch.set_float32_matmul_precision("high")
+                    # РЕЖИМ КОМПИЛЯЦИИ ПО СВОБОДНОЙ VRAM (2026-07-29,
+                    # владелец: «память съедает аж 15 ГБ в начале»).
+                    # reduce-overhead включает CUDA-графы, а графы ПИНЯТ
+                    # память под каждый размер входа — прогрев записал 9
+                    # разных графов, и это гигабайты пиков. Когда памяти
+                    # впритык — компилируем в default: чуть медленнее на
+                    # старте фразы, зато без прожорливых графов и без
+                    # «Железо на пределе: VRAM 95%» сразу после загрузки.
+                    _mode = str(cfg.get("compile_mode", "") or "")
+                    if not _mode:
+                        try:
+                            _free = torch.cuda.mem_get_info()[0] / 2 ** 30
+                            _mode = ("reduce-overhead" if _free >= 3.0
+                                     else "default")
+                            if _mode == "default":
+                                log.info("Qwen3-TTS: свободно всего %.1f ГБ "
+                                         "VRAM — компилирую без CUDA-графов "
+                                         "(без пиков памяти)", _free)
+                        except Exception:
+                            _mode = "reduce-overhead"
                     self.model.enable_streaming_optimizations(
                         decode_window_frames=cfg.get("decode_window_frames", 80),
                         use_compile=True, use_cuda_graphs=False,
-                        compile_mode="reduce-overhead",
+                        compile_mode=_mode,
                         use_fast_codebook=True,
                         compile_codebook_predictor=True, compile_talker=True)
                     # прогрев компиляции — под замком синтеза, чтобы
@@ -492,29 +524,59 @@ class TTSManager:
         if name not in self.engines:
             raise ValueError(name)
         CFG.set("tts.engine", name)
+        # ВЫБРАЛ ДВИЖОК — ЗНАЧИТ ХОЧЕШЬ СЛЫШАТЬ (2026-07-29). Жёсткая
+        # разгрузка пишет tts.enabled=False В КОНФИГ, то есть навсегда, а не
+        # на сеанс. Владелец жал её несколько раз за день, потом тыкал в
+        # движки — те честно грузились и висели «в памяти», а speak() на
+        # первой же строке выходил по выключенному флагу. Снаружи: оба
+        # движка зелёные, спектр не шелохнётся, «не озвучивается ни одна
+        # строка». Выбор движка — самое ясное «включи звук», какое человек
+        # может сделать; молчать после него нельзя.
+        if name != "off" and not CFG.get("tts.enabled", True):
+            CFG.set("tts.enabled", True)
+            log.info("Озвучка была выключена разгрузкой — включаю обратно: "
+                     "выбран движок «%s»", name)
+
+    def _priority(self):
+        """ПОРЯДОК ВЛАДЕЛЬЦА ГЛАВНЕЕ СЕКУНДОМЕРА (2026-07-29, живой гнев:
+        «по какой причине это включается вторым, когда я его в самый низ
+        опустил». Раньше запасной выбирался по замеренной скорости +
+        любимым, а порядок в меню был просто витриной — человек двигал
+        строку и справедливо ждал, что двинул ПРИОРИТЕТ. Теперь
+        tts.fallback_order — закон: что выше в списке, то и запасной.
+        Скорость решает только для движков, которых в списке нет.
+        Умолчание: Silero в самом хвосте («как старушка говорит» — быстрый,
+        но по качеству последний из живых, и лицензия у него запрещает
+        коммерцию; пусть спасает, лишь когда больше некому)."""
+        # Рейтинг = тот же, что видит человек полосками в меню: ручная
+        # оценка (он её и двигал!) поверх базового КАЧЕСТВА голоса; скорость
+        # синтеза — только при равных. Раньше решала одна скорость — и
+        # Silero («как старушка») лез вторым, как его ни опускай.
+        base = {"qwen3": 9, "piper": 7, "omni": 7, "xtts": 6, "f5ru": 6,
+                "edge": 5, "silero": 3}
+        manual, speed = {}, {}
+        try:
+            from server import ratings
+            manual = ratings.manual_scores() or {}
+            speed = ratings.tts_scores() or {}
+        except Exception:
+            pass
+
+        def eff(n):
+            return manual.get(n, base.get(n, 6))
+
+        backups = [n for n in self.engines
+                   if n != self.current_name and n != "off"]
+        backups.sort(key=lambda n: (-eff(n), -speed.get(n, 0)))
+        # «off» не запасной вариант: свалиться в тишину при поломке движка
+        # — это не фолбэк, а молчание без объяснений
+        return [self.current_name] + backups
 
     def _chain(self):
-        order = CFG.get("tts.fallback_order", list(self.engines))
         # движки из tts.disabled НЕ трогаем совсем (напр. qwen3, который
         # нативно роняет процесс на этом ПК) — иначе фоллбэк в него = краш
         disabled = set(CFG.get("tts.disabled", []))
-        current = self.current_name
-        # запасные: сначала ЛЮБИМЫЕ (tts.favorites — вкус владельца важнее
-        # секундомера), внутри — по замеренной скорости на этом ПК
-        # «off» не запасной вариант: свалиться в тишину при поломке движка
-        # — это не фолбэк, а молчание без объяснений
-        backups = [n for n in order if n != current and n != "off"]
-        try:
-            from server import ratings
-            scores = ratings.tts_scores()
-            backups.sort(key=lambda n: -scores.get(n, 0))
-            favs = [f for f in CFG.get("tts.favorites", []) if f in backups]
-            backups.sort(key=lambda n: favs.index(n) if n in favs
-                         else len(favs) + 1)
-        except Exception:
-            pass
-        chain = [current] + backups
-        return [n for n in chain
+        return [n for n in self._priority()
                 if self.health.get(n) != "broken" and n not in disabled]
 
     def speak(self, text):
@@ -635,6 +697,9 @@ class TTSManager:
                 loaded[name] = False
         return {"current": self.current_name, "health": self.health,
                 "engines": list(self.engines), "loaded": loaded,
+                # порядок запасных, как его видит фолбэк — интерфейс рисует
+                # список ИМЕННО в нём и даёт перетаскивать (2026-07-29)
+                "order": [n for n in self._chain() if n != "off"],
                 "errors": self.last_error, "diag": self.last_diag,
                 # meta (2026-07-26): название, лицензия, умеет ли клонировать.
                 # Едет вместе со статусом, чтобы интерфейсу не нужен был

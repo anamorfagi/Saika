@@ -192,118 +192,17 @@ class Encoder:
                     savedir=str(savedir), run_opts={"device": "cpu"})
             self._torch = torch
             self.backend, self.dim = "ecapa", 192
-            # ОБЕЗВРЕЖИВАНИЕ ЛЕНИВОЙ МИНЫ (2026-07-29, лог владельца: qwen3
-            # падал с «Lazy import of LazyModule(target=speechbrain.
-            # integrations.k2_fsa) failed»). speechbrain раскладывает по
-            # sys.modules ленивые заглушки: тронешь атрибут — она честно
-            # пытается импортировать настоящий модуль. k2_fsa тянет пакет
-            # k2, которого нет и не будет (это FST-библиотека для ASR-
-            # исследований). А трогает заглушку НЕ мы: Qwen3-TTS при
-            # загрузке сканирует окружение через inspect, задевает её — и
-            # умирает от чужой зависимости. Кладём в sys.modules пустышку:
-            # ленивый импорт находит её и успокаивается, speechbrain'у она
-            # не нужна (мы пользуемся только эмбеддингами).
-            # Сначала глушила только k2_fsa — и через один запуск упал
-            # СОСЕДНИЙ ленивый модуль (huggingface.wordemb). Их россыпь,
-            # лечить по одному — игра в кроты. Заменяем ВСЕ ленивые
-            # заглушки speechbrain в sys.modules на честные пустышки с
-            # __file__: сканеру больше нечего будить, а нам от speechbrain
-            # нужны только эмбеддинги — они уже загружены по-настоящему.
-            # ГРАБЛИ ВТОРОГО ЗАХОДА (2026-07-29): первая метла искала
-            # ленивые модули в sys.modules — а их там НЕТ, они живут
-            # АТРИБУТАМИ внутри пакетов speechbrain (lazy_export). Метла
-            # находила ноль, k2_fsa снова ронял qwen3. Теперь ходим по
-            # самим пакетам: каждый ленивый атрибут заменяем пустышкой
-            # (трогать сам объект безопасно — опасен только доступ к его
-            # атрибутам вроде __file__, который и делает inspect-сканер),
-            # и на всякий случай кладём пустышку в sys.modules под именем
-            # цели — чтобы и прямой import наткнулся на неё.
+            # Защита от ленивых мин speechbrain — общая для всех, кто трогает
+            # torch (см. server/torch_gate.py). Здесь она нужна потому, что
+            # именно мы притащили speechbrain в процесс.
             try:
-                import sys as _sys
-                import types as _types
-                _n = 0
-                for _pkg in [m for n, m in list(_sys.modules.items())
-                             if n.startswith("speechbrain")
-                             and isinstance(m, _types.ModuleType)]:
-                    for _k, _v in list(vars(_pkg).items()):
-                        if type(_v).__name__ != "LazyModule":
-                            continue
-                        _full = str(getattr(_v, "target", None) or
-                                    f"{_pkg.__name__}.{_k}")
-                        _stub = _types.ModuleType(_full)
-                        _stub.__file__ = "<lazy-disabled-by-saika>"
-                        try:
-                            setattr(_pkg, _k, _stub)
-                        except Exception:
-                            pass
-                        # ГРАБЛИ ТРЕТЬЕГО ЗАХОДА (2026-07-29): у speechbrain
-                        # есть ленивые ссылки и на ВНЕШНИЕ пакеты. Первая
-                        # версия совала пустышку в sys.modules под любым
-                        # целевым именем — и подменила НАСТОЯЩИЙ tokenizers:
-                        # qwen3 упал с «tokenizers.__spec__ is None», а
-                        # faster_whisper — с «no attribute Tokenizer».
-                        # Пустышка в sys.modules — только для имён внутри
-                        # speechbrain: внешние пакеты либо стоят и работают,
-                        # либо их нет — и тогда падал бы только сам lazy,
-                        # которого мы уже заменили атрибутом выше.
-                        if _full.startswith("speechbrain"):
-                            _sys.modules.setdefault(_full, _stub)
-                        _n += 1
-                # и два известных имени прямым текстом — они уже роняли
-                for _name in ("speechbrain.integrations.k2_fsa",
-                              "speechbrain.k2_integration",
-                              "speechbrain.integrations.huggingface.wordemb"):
-                    if _name not in _sys.modules:
-                        _m = _types.ModuleType(_name)
-                        _m.__file__ = "<lazy-disabled-by-saika>"
-                        _sys.modules[_name] = _m
-                        _n += 1
+                from server.torch_gate import defuse_speechbrain
+                _n = defuse_speechbrain()
                 log.info("Отпечаток голоса: обезврежено ленивых модулей "
-                         "speechbrain: %d (чтобы не роняли соседей)", _n)
-                # ГРАБЛИ ЧЕТВЁРТОГО ЗАХОДА (2026-07-29): ленивые модули
-                # ДОРОЖДАЮТСЯ после метлы — сканер трогает «редирект»
-                # (speechbrain.wordemb -> integrations.huggingface.wordemb),
-                # редирект импортирует новый пакет, а в нём свежие ленивые
-                # атрибуты, которых метла не видела. Мести по расписанию
-                # бесполезно. Лечим САМ КЛАСС: если ленивый импорт упал —
-                # отвечаем «атрибута нет» (AttributeError) вместо взрыва.
-                # Для hasattr(__file__) сканера это честное «нет файла», он
-                # идёт дальше; настоящий импорт k2 всё равно бы не работал.
-                try:
-                    _lazy_cls = None
-                    for _pkg in list(_sys.modules.values()):
-                        for _v in vars(_pkg).values() \
-                                if isinstance(_pkg, _types.ModuleType) else []:
-                            if type(_v).__name__ == "LazyModule":
-                                _lazy_cls = type(_v)
-                                break
-                        if _lazy_cls:
-                            break
-                    if _lazy_cls is None:
-                        from speechbrain.utils.importutils import \
-                            LazyModule as _lazy_cls
-                    if not getattr(_lazy_cls, "_saika_soft", False):
-                        _orig_ga = _lazy_cls.__getattr__
-
-                        def _soft_ga(self, name, __o=_orig_ga):
-                            try:
-                                return __o(self, name)
-                            except AttributeError:
-                                raise
-                            except BaseException as e:
-                                raise AttributeError(name) from e
-
-                        _lazy_cls.__getattr__ = _soft_ga
-                        _lazy_cls._saika_soft = True
-                        log.info("Отпечаток голоса: ленивый класс speechbrain "
-                                 "смягчён — падение импорта больше не "
-                                 "взрывает соседей")
-                except Exception as _e:
-                    log.info("Смягчение ленивого класса не удалось (%s) — "
-                             "остаётся метла", _e)
+                         "speechbrain: %d%s", _n % 1000000,
+                         " (+класс смягчён)" if _n >= 1000000 else "")
             except Exception as _e:
-                log.info("Отпечаток голоса: метла по ленивым модулям "
-                         "споткнулась (%s) — не страшно", _e)
+                log.info("Защита от ленивых модулей не сработала (%s)", _e)
             log.info("Отпечаток голоса: ECAPA-TDNN на CPU, 192 измерения")
         except Exception as e:
             self.last_error = str(e)[:200]
@@ -397,6 +296,16 @@ def speechiness(x, sr=SR):
     rhythm = 0.0
     try:
         env = np.sqrt(np.maximum(e, 1e-12))
+        # ГЛУБИНА МОДУЛЯЦИИ — ПРОПУСК К РИТМУ (2026-07-29, поймано стендом:
+        # у РОВНОГО гула огибающая почти постоянна, после снятия тренда от
+        # неё остаётся один шум — и его случайный пик попадал в слоговую
+        # полосу, давая мотору «ритм 1.0». Слоги — это не только частота, но
+        # и РАЗМАХ: между гласной и паузой громкость меняется в разы. Нет
+        # размаха — нет и слогов, о частоте говорить не о чем.
+        _m = float(np.mean(env)) + 1e-12
+        depth = float(np.std(env)) / _m
+        if depth < 0.10:
+            raise ValueError("ровный звук — слогов нет")
         if len(env) >= 16 and float(np.std(env)) > 1e-9:
             # СНИМАЕМ ТРЕНД, а не просто среднее: окно короткое (~120 кадров),
             # и медленный дрейф громкости даёт мощный горб у нуля, который
@@ -437,11 +346,23 @@ def speechiness(x, sr=SR):
         "rhythm": round(min(1.0, rhythm), 3),
         "f0": int(f0),
     }
-    # МИНИМУМ, А НЕ СРЕДНЕЕ: голос обязан пройти по ВСЕМ признакам.
-    # На среднем громкий щелчок с ровной длинной реверберацией легко набирал
-    # проходной балл за счёт двух признаков из четырёх.
-    score = min(parts["tone"], parts["shape"], parts["low"], parts["hold"],
-                parts["rhythm"])
+    # МИНИМУМ ПО СТРОЕНИЮ, А НЕ СРЕДНЕЕ: голос обязан пройти по ВСЕМ
+    # признакам строения. На среднем громкий щелчок с длинной реверберацией
+    # легко набирал проходной балл за счёт двух признаков из четырёх.
+    base = min(parts["tone"], parts["shape"], parts["low"], parts["hold"])
+    # РИТМ — ШТРАФ, А НЕ ВЕТО (2026-07-29, живой провал: голос из ролика на
+    # ютубе перестал определяться вовсе — под музыку огибающая громкости
+    # перестаёт быть слоговой, ритм падает, и min() топил ВЕСЬ балл, хотя
+    # по строению это чистая речь). Слоговой ритм остаётся главным отличием
+    # человека от мотора, но он ненадёжен на речи с фоном; поэтому он
+    # снижает балл, а не обнуляет его. Мотор при этом всё равно не проходит:
+    # у него низкий base, и штраф добивает его ниже порога.
+    # Кривая штрафа нарочно КРУТАЯ У НУЛЯ и пологая дальше: у ровного гула
+    # слогов нет вообще (ритм 0) — его балл падает втрое и порог он не
+    # берёт; у речи с музыкой ритм слабый, но НЕ нулевой (0.2-0.3), и такой
+    # балл почти не наказывается. Оба случая проверены стендом.
+    r = min(1.0, parts["rhythm"] / 0.35) ** 0.6
+    score = base * (0.30 + 0.70 * r)
     return float(score), parts
 
 

@@ -65,12 +65,53 @@ class FasterWhisperEngine(STTEngine):
     def transcribe(self, pcm16, sample_rate):
         self.load()
         audio = pcm16_to_float(pcm16)
+        # ГАЛЛЮЦИНАЦИИ НА ТИШИНУ — БОЛЕЗНЬ ИМЕННО WHISPER (2026-07-29).
+        # Владелец поймал её точно: на шорох движок пишет «Спасибо» и
+        # «Смотрите продолжение в следующей серии», а GigaAM на том же
+        # звуке молчит. Причина известная: Whisper учили в том числе на
+        # ютубовских субтитрах, и на входе без речи он выдаёт самые
+        # частые фразы из этого корпуса — концовки роликов.
+        #
+        # Лечится не форком, а порогами, которые по умолчанию выключены:
+        #   no_speech_threshold  — если модель сама считает кусок тишиной
+        #                          с вероятностью выше порога, сегмент
+        #                          выбрасывается целиком;
+        #   log_prob_threshold   — уверенность в словах. Галлюцинация
+        #                          всегда «неуверенная», в отличие от речи;
+        #   compression_ratio    — ловит зацикливание («да да да да»):
+        #                          такой текст подозрительно хорошо жмётся.
+        # Плюс temperature-ступеньки: не сошлось на нуле — пробуем горячее,
+        # и если ни одна не прошла пороги, движок честно вернёт пусто.
+        cfg = CFG.get("stt.engines.faster_whisper", {})
         kw = dict(language=CFG.get("stt.language", "ru"),
                   beam_size=1, vad_filter=True,
-                  condition_on_previous_text=False)
+                  condition_on_previous_text=False,
+                  no_speech_threshold=float(cfg.get("no_speech_threshold", 0.5)),
+                  log_prob_threshold=float(cfg.get("log_prob_threshold", -0.8)),
+                  compression_ratio_threshold=float(
+                      cfg.get("compression_ratio_threshold", 2.2)),
+                  temperature=[0.0, 0.2, 0.4])
         try:
-            segments, _ = self.model.transcribe(audio, **kw)
-            return " ".join(s.text.strip() for s in segments).strip()
+            try:
+                segments, _ = self.model.transcribe(audio, **kw)
+            except TypeError:
+                # старая сборка faster-whisper без части порогов — работаем
+                # как раньше, фразы-штампы всё равно отсеет _is_junk
+                for k in ("no_speech_threshold", "log_prob_threshold",
+                          "compression_ratio_threshold", "temperature"):
+                    kw.pop(k, None)
+                segments, _ = self.model.transcribe(audio, **kw)
+            out = []
+            for sg in segments:
+                # последний рубеж: сегмент, который сама модель считает
+                # тишиной, до текста доходить не должен
+                if getattr(sg, "no_speech_prob", 0.0) > 0.75:
+                    log.info("Whisper: выбросила «%s» — сам движок считает "
+                             "это тишиной (%.2f)", sg.text.strip()[:40],
+                             sg.no_speech_prob)
+                    continue
+                out.append(sg.text.strip())
+            return " ".join(t for t in out if t).strip()
         except Exception as e:
             # CUDA-ошибки (cublas64_12.dll и т.п.) вылезают при инференсе,
             # а не при загрузке — пересоздаём модель на CPU и повторяем
@@ -214,8 +255,14 @@ class VoskEngine(STTEngine):
     def load(self):
         if self.model:
             return
-        from vosk import Model, KaldiRecognizer
+        from vosk import Model, KaldiRecognizer, SetLogLevel
 
+        # та же тишина, что и в черновике: Kaldi печатает в stderr мимо
+        # логгера, и консоль забивается одинокими символами (2026-07-29)
+        try:
+            SetLogLevel(-1)
+        except Exception:
+            pass
         model_dir = resolve(CFG.get("stt.engines.vosk.model_dir"))
         if not model_dir.exists():
             raise FileNotFoundError(

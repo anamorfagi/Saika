@@ -114,10 +114,37 @@ def set_enabled(on: bool):
     return enabled()
 
 
+_WAKE = {"ts": 0.0}
+
+
+def _wake_ok() -> bool:
+    """Не чаще раза в 20 секунд: пробуждение пишет конфиг, а чанки идут
+    десять раз в секунду."""
+    now = time.time()
+    if now - _WAKE["ts"] < 20:
+        return False
+    _WAKE["ts"] = now
+    return True
+
+
 def feed(pcm16: np.ndarray):
     """Зовётся из вебсокета на каждый чанк. ОБЯЗАН быть мгновенным."""
     if not enabled() or S.thread is None:
-        return
+        # ЖИВОЙ МИКРОФОН = ХОЧУ УЗНАВАТЬ (2026-07-29, разбор живой обиды:
+        # «мы вшили мой голос, а он не отрабатывает»). Кнопка «выгрузить всё
+        # из памяти» пишет voiceprint.enabled=False В КОНФИГ, то есть
+        # НАВСЕГДА, а не на сеанс. Владелец нажал её днём — и с тех пор ни
+        # одна точка не появлялась на карте: голоса не заводились, печать
+        # не помогала, спектр оставался серым. Снаружи это выглядело как
+        # «сломалось узнавание», хотя оно было выключено.
+        # Правило то же, что мы уже приняли для озвучки: человек включил
+        # микрофон и говорит — значит хочет, чтобы его слышали и узнавали.
+        if S.thread is not None and not enabled() and _wake_ok():
+            set_enabled(True)
+            log.info("Узнавание голосов было выключено разгрузкой — "
+                     "включаю обратно: микрофон снова слушает")
+        else:
+            return
     try:
         S.q.put_nowait(pcm16)
     except queue.Full:
@@ -286,11 +313,17 @@ def seal_owner(name: str):
     return {**sr, "owner": name, **status()}
 
 
-def load_owner_seal():
-    """При старте: печать есть, ключ есть, а создателя в памяти нет —
-    распечатать и познакомить. Ровно сценарий «поставил на другой ПК»."""
+def load_owner_seal(force: bool = False):
+    """Печать есть, ключ есть, а создателя в памяти нет — распечатать и
+    познакомить. Ровно сценарий «поставил на другой ПК».
+
+    ЗОВЁТСЯ НЕ ТОЛЬКО ПРИ СТАРТЕ (2026-07-29, живая обида владельца: «мы
+    вроде вшили мой голос в систему, а он не отрабатывает»). Он почистил
+    список голосов среди сеанса — и создатель исчез до перезапуска, хотя
+    печать лежала на диске в целости. Печать на то и печать: пропал
+    эталон — она обязана его вернуть, а не ждать следующего старта."""
     try:
-        if S.reg.owner_name():
+        if S.reg.owner_name() and not force:
             return
         from server.voiceprint import owner_seal
         got = owner_seal.unseal()
@@ -421,6 +454,14 @@ def clear_map():
 def forget(name: str):
     ok = S.reg.forget(name)
     S.reg.save()
+    # СОЗДАТЕЛЬ ВОЗВРАЩАЕТСЯ ИЗ ПЕЧАТИ (2026-07-29): его эталон запечатан в
+    # проекте нарочно, чтобы пережить любую чистку. Удалили — распечатываем
+    # обратно тем же кодом, что и на новой машине.
+    try:
+        if not S.reg.owner_name():
+            load_owner_seal()
+    except Exception as e:
+        log.debug("печать после удаления не распечаталась: %s", e)
     return {"ok": ok, **status()}
 
 
@@ -484,7 +525,7 @@ def status():
                    "need": S.enroll_need},
         "heard_s": round(S.heard_s, 1),
         "noise_seen": S.noise_seen,
-        "speech_min": float(CFG.get("voiceprint.speech_min", 0.5)),
+        "speech_min": float(CFG.get("voiceprint.speech_min", 0.42)),
         "self_name": self_name(),
         "listen_self": listen_self(),
         "self_known": self_name() in S.reg.speakers,
@@ -726,7 +767,7 @@ def _process(win: np.ndarray, rms: float):
     if wrms < float(CFG.get("voiceprint.silence_rms", 0.0022)):
         return
     score, parts = speechiness(win)
-    if score < float(CFG.get("voiceprint.speech_min", 0.5)):
+    if score < float(CFG.get("voiceprint.speech_min", 0.42)):
         S.noise_seen += 1
         try:                       # журнал слуха: копим, если он пишет
             from server.earlog import EARLOG

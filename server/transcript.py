@@ -98,10 +98,29 @@ class Transcript:
                 with TORCH_GATE:
                     import torch
                     torch.set_num_threads(1)
-                    te, _, _, _ = torch.hub.load(
+                    res = torch.hub.load(
                         repo_or_dir="snakers4/silero-models", model="silero_te")
+                # ГРАБЛИ 2026-07-29: «too many values to unpack (expected 4)».
+                # Пакет обновился и стал возвращать пять значений вместо
+                # четырёх, причём НУЖНОЕ — последнее: это функция apply_te,
+                # а не сама модель. Жёсткая распаковка ломается на каждом
+                # обновлении silero; берём последнее вызываемое и сразу
+                # проверяем его живой строкой — если не отвечает, честно
+                # работаем без знаков препинания.
+                te = None
+                if isinstance(res, (tuple, list)):
+                    cands = [x for x in res if callable(x)]
+                    te = cands[-1] if cands else (res[0] if res else None)
+                else:
+                    te = res
+                if te is None:
+                    raise RuntimeError("silero_te вернул что-то незнакомое")
+                probe = te("привет как дела", lan="ru")
+                if not isinstance(probe, str) or not probe.strip():
+                    raise RuntimeError("silero_te молчит на проверочной фразе")
                 self._te = te
-                log.info("Стенограмма: silero_te поднят — знаки препинания есть")
+                log.info("Стенограмма: silero_te поднят — знаки препинания "
+                         "есть (проверка: %r)", probe[:40])
             except Exception as e:
                 log.info("Стенограмма: silero_te недоступен (%s) — пишу как "
                          "распознано", str(e)[:120])

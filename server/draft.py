@@ -48,7 +48,17 @@ class Draft:
             return self.rec
         self._tried = True
         try:
-            from vosk import Model, KaldiRecognizer
+            from vosk import Model, KaldiRecognizer, SetLogLevel
+            # ТИШИНА В КОНСОЛИ (2026-07-29, владелец: «логи странные» —
+            # в консоль сыпались одинокие «&» строками. Это болтовня Kaldi
+            # изнутри Vosk: он печатает диагностику МИМО питоновского
+            # логгера, прямо в stderr, и на длинном системном звуке она
+            # превращается в поток мусора, за которым не видно настоящих
+            # сообщений. -1 = молчать.
+            try:
+                SetLogLevel(-1)
+            except Exception:
+                pass
             d = resolve(CFG.get("stt.engines.vosk.model_dir"))
             if not d or not d.exists():
                 raise FileNotFoundError(f"нет модели Vosk: {d}")

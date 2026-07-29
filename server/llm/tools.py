@@ -8,6 +8,7 @@ C:\\AI\\HandsPC) со своим venv и отдаёт
 автоматически, код Сайки менять не надо.
 """
 import logging
+import re                      # 2026-07-29: маршрутизация команд по фразе
 import time
 
 import requests
@@ -42,7 +43,11 @@ _PC_SCHEMAS = [
                         "ВАЖНО: «открой X» = запустить (это создаст НОВОЕ "
                         "окно, даже если программа уже работает). Переключить "
                         "на уже открытое окно — это window_focus, зови его "
-                        "только если попросили «переключись/покажи окно»."),
+                        "только если попросили «переключись/покажи окно». "
+                        "Если я не уверена — верну вопрос «это оно?»: задай "
+                        "его человеку вслух и позови app_launch ещё раз, "
+                        "передав его ответ дословно («да», «второе», «нет») "
+                        "— я запомню выбор навсегда."),
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string",
                      "description": "название как его назвал человек"}},
@@ -89,14 +94,22 @@ _PC_SCHEMAS = [
             "full": {"type": "boolean"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "window_restore",
-        "description": "Вернуть окно из развёрнутого в обычный размер.",
+        "description": ("Вернуть окно из развёрнутого/свёрнутого в обычный "
+                        "вид. match=\"все\" (или «разверни всё», «открой все "
+                        "окна» от человека) — развернуть ВСЁ свёрнутое "
+                        "разом, обратное minimize_all."),
         "parameters": {"type": "object", "properties": {
             "match": {"type": "string"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "window_place",
         "description": ("Поставить окно в нужное место экрана и задать "
                         "размер. Для «размести по центру», «в правый нижний "
-                        "угол», «на пол-экрана слева»."),
+                        "угол», «на пол-экрана слева». «На втором экране» = "
+                        "monitor=2 (номера — как в настройках дисплея "
+                        "Windows). «Открой X на втором экране» = сначала "
+                        "app_launch/open_folder, потом window_place с "
+                        "monitor=2 — само на второй экран ничего не "
+                        "открывается."),
         "parameters": {"type": "object", "properties": {
             "match": {"type": "string",
                       "description": "кусок заголовка окна или имя программы"},
@@ -108,8 +121,11 @@ _PC_SCHEMAS = [
             "width": {"type": "integer",
                       "description": "ширина в % экрана (10-100), 0 = не менять"},
             "height": {"type": "integer",
-                       "description": "высота в % экрана, 0 = не менять"}},
-            "required": ["match"]}}},
+                       "description": "высота в % экрана, 0 = не менять"},
+            "monitor": {"type": "integer",
+                        "description": "номер экрана (1, 2…); -1 = на "
+                                       "другой экран; 0 = текущий"}},
+            "required": []}}},
     {"type": "function", "function": {
         "name": "eyes",
         "description": ("Включить или выключить СВОЁ зрение (глаза: кадры "
@@ -131,6 +147,17 @@ _PC_SCHEMAS = [
             "drive": {"type": "string",
                       "description": "буква диска, например C — если назвали"}},
             "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "app_remember",
+        "description": ("Запомнить программу по пути. Зови, когда человек "
+                        "даёт путь и название: «запомни: аркнайтс — это "
+                        "D:\\Games\\GRYPHLINK.exe». Дальше app_launch по "
+                        "этому названию откроет её мгновенно."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string",
+                     "description": "как человек называет программу"},
+            "path": {"type": "string", "description": "полный путь"}},
+            "required": ["name", "path"]}}},
     {"type": "function", "function": {
         "name": "remember_place",
         "description": ("Запомнить папку под понятным именем («игровая», "
@@ -168,13 +195,110 @@ _PC_SCHEMAS = [
             "required": ["action"]}}},
     {"type": "function", "function": {
         "name": "open_folder",
-        "description": ("Открыть папку в проводнике. Без пути — рабочую "
-                        "папку. За её пределы не пускают, если владелец не "
-                        "разрешил отдельно."),
+        "description": ("Открыть папку в проводнике и ВСТАТЬ в неё: дальше "
+                        "пути считаются от этого места. «зайди в Ламоду» = "
+                        "path=\"Ламода\" (имя соседней папки, не полный "
+                        "путь); «наверх»/«назад»/«домой» — переходы; полный "
+                        "путь (D:\\Games) тоже можно. В ответе перечислю, "
+                        "что внутри — веди человека дальше по этому списку."),
         "parameters": {"type": "object", "properties": {
-            "path": {"type": "string"}}, "required": []}}},
+            "path": {"type": "string",
+                     "description": "имя подпапки, «наверх», «назад», "
+                                    "«домой» или полный путь"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "folder_list",
+        "description": ("Что внутри текущей папки (где мы сейчас стоим) или "
+                        "указанной. Зови, когда человек спрашивает «что "
+                        "тут?» или ты не знаешь, куда шагнуть дальше."),
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string",
+                     "description": "необязательно; пусто = текущая"}},
+            "required": []}}},
 ]
 _PC_NAMES = {s["function"]["name"] for s in _PC_SCHEMAS}
+
+# ───────────── РУКИ ВНУТРИ ОКОН (2026-07-29, server/ui_hands.py) ─────────────
+# Просьба владельца, дословно: «я вызываю ютуб — она вводит запрос и
+# открывает; говорю — она тыкает; найди в чате Виталю и напиши ему, перед
+# отправкой спросив: текст готов, отправляем?». Строение по практикам больших
+# систем автоматизации: дерево доступности вместо пикселей (как Power
+# Automate), глубокие ссылки вместо кликов по строке поиска (как Siri),
+# каждое действие возвращает, что реально произошло, а НЕОБРАТИМОЕ (Enter
+# в чате) отделено от набора текста и требует подтверждения человека.
+_UIH_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "web_open",
+        "description": ("Открыть сайт в браузере, сразу со страницей "
+                        "результатов, если есть запрос. «включи на ютубе X» "
+                        "= web_open(site=\"ютуб\", query=\"X\") — ОДИН шаг, "
+                        "не открывай главную и не печатай в строку поиска. "
+                        "Знаю ютуб, гугл, яндекс, википедию, карты; любой "
+                        "другой сайт — по адресу (kinopoisk.ru)."),
+        "parameters": {"type": "object", "properties": {
+            "site": {"type": "string", "description": "сайт как назвал человек"},
+            "query": {"type": "string",
+                      "description": "что искать, необязательно"}},
+            "required": ["site"]}}},
+    {"type": "function", "function": {
+        "name": "screen_read",
+        "description": ("Прочитать АКТИВНОЕ окно: список его кнопок, ссылок "
+                        "и полей по именам. Зови ПЕРЕД screen_click — имена "
+                        "элементов берутся только отсюда, не из головы. "
+                        "После web_open подожди пару секунд и посмотри."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "screen_click",
+        "description": ("Кликнуть по элементу активного окна ПО ИМЕНИ из "
+                        "screen_read. «тыкни первый клип», «нажми "
+                        "подписаться». Если не уверена в элементе — верну "
+                        "варианты, уточни у человека, не гадай."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "имя элемента"},
+            "double": {"type": "boolean",
+                       "description": "двойной клик, по умолчанию нет"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "type_into",
+        "description": ("Вписать текст в КОНКРЕТНОЕ поле ввода активного "
+                        "окна: найду поле по имени (как в screen_read), "
+                        "кликну в него и напечатаю. «впиши в строку поиска "
+                        "X» = type_into(field=\"поиск\", text=\"X\"). "
+                        "НЕ отправляет — enter отдельно, после "
+                        "подтверждения человека."),
+        "parameters": {"type": "object", "properties": {
+            "field": {"type": "string",
+                      "description": "имя поля из screen_read (или пусто, "
+                                     "если поле в окне одно)"},
+            "text": {"type": "string"}},
+            "required": ["text"]}}},
+    {"type": "function", "function": {
+        "name": "keyboard_type",
+        "description": ("Напечатать текст туда, где сейчас курсор (поле "
+                        "поиска, чат, документ). НИКОГДА не отправляет: "
+                        "Enter — это отдельный key_press, и в чатах его "
+                        "можно жать ТОЛЬКО после вопроса человеку «текст "
+                        "готов, отправляем?» и его согласия."),
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string"}}, "required": ["text"]}}},
+    {"type": "function", "function": {
+        "name": "key_press",
+        "description": ("Нажать клавишу или сочетание в активном окне: "
+                        "enter, esc, tab, стрелки, f5, f11, ctrl+t, ctrl+k, "
+                        "«полный экран» (f11), «развернуть видео» (f — плеер "
+                        "ютуба). enter в чате = ОТПРАВКА, только после "
+                        "подтверждения человека."),
+        "parameters": {"type": "object", "properties": {
+            "combo": {"type": "string"}}, "required": ["combo"]}}},
+    {"type": "function", "function": {
+        "name": "screen_scroll",
+        "description": "Прокрутить активное окно: вниз или вверх.",
+        "parameters": {"type": "object", "properties": {
+            "direction": {"type": "string", "enum": ["вниз", "вверх"]},
+            "times": {"type": "integer", "description": "сколько щелчков, 1-15"}},
+            "required": []}}},
+]
+_UIH_NAMES = {s["function"]["name"] for s in _UIH_SCHEMAS}
 
 # ─────────────── СВОЙ СОБСТВЕННЫЙ ИНТЕРФЕЙС (2026-07-26) ───────────────
 # «Прошу её взять модель поумнее — она находит её в списке и переключает».
@@ -488,8 +612,12 @@ _MUTATING_INTENT = {
     # модель охотно «помогает» закрыть игру посреди разговора о погоде.
     "app_launch":   r"запус|откр|вклю|поигра|стартуй|launch|run|врубb?и",
     "window_close": r"закр|выйд|убер|заверш|close|сверн",
+    # + перенос между экранами (2026-07-29, живой отказ: «перенести хром на
+    # первый» не содержало ни одного слова из старого списка)
     "window_place": r"центр|угол|слева|справа|сверху|снизу|размест|постав|"
-                    r"растян|размер|маштаб|масштаб|полов|экран",
+                    r"растян|размер|маштаб|масштаб|полов|экран|перенес|"
+                    r"перекин|перемест|перестав|перетащ|монитор|перв|втор|"
+                    r"основн|главн",
     "eyes": r"глаз|зрен|смотр|посмотр|включи вид|видеть",
     "window_minimize": r"сверн|убер|спрячь|minimi|скрой|убрать с глаз",
     "minimize_all": r"сверн|убер|спрячь|очист|освободи|всё лишн|все лишн",
@@ -499,16 +627,40 @@ _MUTATING_INTENT = {
                     r"на передн|сверху|фокус",
     "window_maximize": r"разверн|полн.{0,4}экран|максим|во весь экран|"
                        r"на весь экран|maximi|fullscreen|f11|растян",
-    "window_restore": r"верни|обычн|уменьш|из полного|restore|сверн окно",
+    # + «разверни/открой всё» (2026-07-29): восстановление свёрнутых окон
+    # живёт здесь же, а этих слов в списке не было — предохранитель резал
+    "window_restore": r"верни|обычн|уменьш|из полного|restore|сверн окно|"
+                      r"разверн|откр|подним|покаж|вс[её]",
     "volume_set":   r"громк|тише|громче|звук|тихо|погромч|потише|mute|"
                     r"выключи звук|включи звук|убавь|прибавь",
     "tab_control":  r"вкладк|tab|браузер|страниц|перейди на|закрой вкладк",
-    "open_folder":  r"папк|директор|провод|откр|folder|explorer",
+    "open_folder":  r"папк|директор|провод|откр|folder|explorer|зайд|"
+                    r"наверх|назад|выше|ниже|глубж|внутр|перейд|домой",
+    "folder_list":  r"что тут|что там|что внутр|покаж|списк|содержим|"
+                    r"папк|файл",
     "find_folder":  r"найд|ищи|поищ|где|искать|find|папк|директор",
     "remember_place": r"запомн|это она|эта|номер|назов|сохрани|remember",
+    "app_remember":  r"запомн|путь|это прога|это программ|вот она|"
+                     r"находится|лежит|exe|\.exe",
     # Свой интерфейс: переключение модели меняет ход разговора, наугад — нет
     "model_switch": r"модел|умн|быстр|поменяй|перекл|смени|другую|"
                     r"мозг|переобуй|model",
+    # Руки внутри окон (2026-07-29). Смотреть (screen_read) и крутить можно
+    # свободно. Открыть сайт, кликнуть, напечатать — только когда человек
+    # об этом заговорил. key_press нарочно самый строгий: enter — отправка.
+    "web_open":     r"откр|вклю|найд|поищ|запус|покаж|ютуб|youtube|гугл|"
+                    r"яндекс|вики|сайт|видео|канал|клип|музык|поиск|карт",
+    "screen_click": r"нажм|кликн|тыкн|ткни|выбер|вклю|откр|клип|видео|"
+                    r"кнопк|ссылк|перв|втор|трет|плейлист|подпис|пункт",
+    "keyboard_type": r"напиш|введ|набер|напечат|вбей|вставь|текст|сообщ|"
+                     r"запрос|поиск|скажи ему|передай",
+    "type_into":     r"впиш|напиш|введ|набер|напечат|вбей|вставь|текст|"
+                     r"сообщ|запрос|поиск|строк|поле|передай",
+    # короткое «да» после её вопроса «отправляем?» пропускает общее правило
+    # согласия в _intent_ok — отдельного слова тут не нужно (и нельзя:
+    # хвост «…погода» тоже кончается на «да»)
+    "key_press":    r"нажм|энтер|enter|отправ|клавиш|полн.{0,4}экран|"
+                    r"разверн|обнов|ввод|эскейп|esc|стрелк|вниз|вверх|готов",
 }
 
 
@@ -529,10 +681,16 @@ def _intent_ok(name: str) -> bool:
     # содержит лишние слова и согласием не считается.
     if _re_guard.fullmatch(
             r"\s*(да+[\s,!.-]*)+|\s*(давай|ага|угу|конечно|ок|окей|"
-            r"хорошо|можно|валяй|делай|попробуй)[\s!.]*",
+            r"хорошо|можно|валяй|делай|попробуй|просто)[\s!.]*",
             txt.lower()):
         return True
-    return bool(_re_guard.search(pat, txt, _re_guard.I))
+    # НАМЕРЕНИЕ ЖИВЁТ РАЗГОВОРОМ (2026-07-29, живой отказ: «открой телеграм
+    # на втором экране» -> уточнения -> «просто открой десктопный вариант»
+    # — и window_place получил отказ, потому что в ПОСЛЕДНЕЙ фразе слова
+    # «экран» уже не было). Смотрим на хвост из трёх фраз: уточнение после
+    # просьбы — продолжение той же просьбы, а не новая тема.
+    tail = " ".join(LAST_USER.get("recent", []) or [txt])
+    return bool(_re_guard.search(pat, tail, _re_guard.I))
 
 
 def _shutdown_call() -> str:
@@ -650,6 +808,8 @@ def schemas() -> list:
     # сокрытие схем, а проверка доверия в call() (server/trust.py).
     if CFG.get("pc.enabled", True):
         local = local + list(_PC_SCHEMAS)
+        # руки внутри окон — та же граница доверия, что и окна/программы
+        local = local + list(_UIH_SCHEMAS)
     if CFG.get("pc.self_ui", True):
         local = local + list(_UI_SCHEMAS)
     # хоткеи по умолчанию ВЫКЛючены (2026-07-23): abliterated-модель дважды
@@ -661,14 +821,31 @@ def schemas() -> list:
     # мастерская — только сильным (сайты/SVG/скрипты в workshop/)
     if tier == "full" and CFG.get("tools.workshop", True):
         local = local + [_WORKSHOP_SCHEMA]
-    # файловые руки (рабочая папка files.roots) — только сильным моделям;
-    # если у HandsPC вдруг есть инструменты с теми же именами, он главнее
-    if tier == "full" and CFG.get("files.enabled", True):
+    # файловые руки (рабочая папка files.roots). Раньше — только сильным
+    # моделям, и это дало враньё страшнее любой ошибки (2026-07-29): gemma
+    # писала маркер fs_write, сервер молча пропускал НЕЗНАКОМОЕ имя, а она
+    # рапортовала «файл создан» — трижды подряд, человеку в глаза. Мелким
+    # моделям теперь выдаётся БЕЗОПАСНОЕ подмножество: создать/прочитать/
+    # список — всё заперто в рабочей папке. Удаление/перенос — по-прежнему
+    # только сильным.
+    if CFG.get("files.enabled", True):
         try:
             from server import file_hands
             hands_names = {s["function"]["name"] for s in hands}
-            local += [s for s in file_hands.SCHEMAS
-                      if s["function"]["name"] not in hands_names]
+            _fs = [s for s in file_hands.SCHEMAS
+                   if s["function"]["name"] not in hands_names]
+            if tier != "full":
+                # fs_delete здесь ОСОЗНАННО (2026-07-29): в file_hands он не
+                # стирает, а переносит в _trash внутри рабочей папки —
+                # восстановимо руками. Прятать его от мелкой модели значило
+                # получать «Удалено. Порядок восстановлен» при нетронутых
+                # папках: враньё дороже обратимого переноса. Плюс сверху
+                # работает доверие (server/trust.py) и предохранитель
+                # намерения. Безвозвратного удаления в проекте нет вообще.
+                _safe = {"fs_list", "fs_read", "fs_write", "fs_mkdir",
+                         "fs_open", "place_save", "fs_delete", "fs_rename"}
+                _fs = [s for s in _fs if s["function"]["name"] in _safe]
+            local += _fs
         except Exception as e:
             log.debug("file_hands недоступен: %s", e)
     return local + hands
@@ -911,7 +1088,14 @@ def _call(name: str, arguments) -> str:
         a = a or {}
         try:
             if name == "app_launch":
-                return _pc.launch(str(a.get("name", "")))
+                _q = str(a.get("name", "")).strip()
+                if not _q:
+                    # пустой маркер [app_launch] — берём фразу человека:
+                    # именно в ней и написано, что запускать (живой вечер
+                    # 2026-07-29: gemma стабильно роняла аргументы, и
+                    # «Не расслышала, что запускать» шло по кругу)
+                    _q = LAST_USER.get("text", "").strip()
+                return _pc.launch(_q)
             if name == "apps_list":
                 items = _pc.apps(str(a.get("query", "")), limit=60)
                 if not items:
@@ -929,12 +1113,37 @@ def _call(name: str, arguments) -> str:
                 return _pc.window_maximize(str(a.get("match", "")),
                                            bool(a.get("full")))
             if name == "window_restore":
-                return _pc.window_restore(str(a.get("match", "")))
+                _mt = str(a.get("match", "")).strip().lower()
+                # «разверни всё» (2026-07-29): и в аргументе, и в фразе
+                # человека — если речь про ВСЕ окна, это restore_all
+                _utxt = LAST_USER.get("text", "").lower()
+                if re.search(r"\bвс[её]х?\b", _mt) or (
+                        not _mt and re.search(
+                            r"(разверни|открой|верни).{0,12}\bвс[её]\b",
+                            _utxt)):
+                    return _pc.restore_all()
+                return _pc.window_restore(_mt)
             if name == "window_place":
+                # monitor может прийти словом («другой», «второй») — мелкие
+                # модели пишут как говорят, принимаем
+                _mraw = str(a.get("monitor") or "0").strip().lower()
+                _mon = None
+                for _k, _v in (("друг", -1), ("other", -1), ("перв", 1),
+                               ("втор", 2), ("трет", 3), ("основ", 1),
+                               ("главн", 1)):
+                    if _mraw.startswith(_k):
+                        _mon = _v
+                        break
+                if _mon is None:
+                    try:
+                        _mon = int(float(_mraw))
+                    except ValueError:
+                        _mon = 0
                 return _pc.window_place(str(a.get("match", "")),
                                         str(a.get("position", "center")),
                                         int(a.get("width") or 0),
-                                        int(a.get("height") or 0))
+                                        int(a.get("height") or 0),
+                                        _mon)
             if name == "eyes":
                 # СВОИ ГЛАЗА (2026-07-28): «включи глаза» голосом раньше
                 # упиралось в философствование — тумблер был только в UI.
@@ -955,10 +1164,32 @@ def _call(name: str, arguments) -> str:
                         "номерами и спроси, какой нужен):\n"
                         + "\n".join(f"{i + 1}. {h}"
                                     for i, h in enumerate(hits)))
+            if name == "app_remember":
+                from server import app_memory as _am
+                from pathlib import Path as _P
+                _nm = str(a.get("name", "")).strip()
+                _pt = str(a.get("path", "")).strip().strip('"')
+                if not _nm or not _pt:
+                    return "нужны и название, и путь"
+                if not _P(_pt).exists():
+                    return (f"такого пути нет на диске: {_pt} — проверь, "
+                            "человек мог опечататься")
+                _am.remember(_nm.lower(), _P(_pt).stem, _pt)
+                return (f"Запомнила: «{_nm}» — это {_pt}. Теперь открою по "
+                        "одному слову.")
             if name == "remember_place":
                 return _pc.remember_place(str(a.get("name", "")),
                                           str(a.get("path", "")))
             if name == "minimize_all":
+                # ЗАЩИТА ОТ ЗАЛПА (2026-07-29, живой случай: «сверни
+                # диспетчер задач» -> модель позвала minimize_all и смела
+                # ВЕСЬ стол). Если человек назвал КОНКРЕТНОЕ окно — это
+                # window_minimize, а не ковровое сворачивание.
+                _ut = LAST_USER.get("text", "").lower()
+                _mm = re.search(r"сверн\w*\s+(.+)", _ut)
+                if _mm and not re.search(r"\bвс[её]\b|окна\b|лишн",
+                                         _mm.group(1)):
+                    return _pc.window_minimize(_mm.group(1).strip(" .!?"))
                 return _pc.minimize_all(str(a.get("keep", "")))
             if name == "volume_set":
                 return _pc.volume(percent=a.get("percent"),
@@ -968,8 +1199,48 @@ def _call(name: str, arguments) -> str:
                                int(a.get("index") or 0))
             if name == "open_folder":
                 return _pc.open_folder(str(a.get("path", "")))
+            if name == "folder_list":
+                return _pc.folder_list(str(a.get("path", "")))
         except Exception as e:
             log.exception("pc tool %s", name)
+            return f"не получилось: {e}"
+    if name in _UIH_NAMES:
+        import json as _json
+        from server import ui_hands as _uh
+        a = arguments if isinstance(arguments, dict) else (
+            _json.loads(arguments) if arguments else {})
+        a = a or {}
+        try:
+            if name == "web_open":
+                _site = str(a.get("site", "")).strip()
+                _q = str(a.get("query", "")).strip()
+                if not _site:
+                    # аргументы потеряны — достаём из фразы человека (в ней
+                    # всё сказано: «открой ютуб и включи музычку»)
+                    _site, _gq = _uh.guess_from_phrase(
+                        LAST_USER.get("text", ""))
+                    _q = _q or _gq
+                    if not _site:
+                        return ("не поняла, какой сайт — назови его "
+                                "(ютуб, гугл, кинопоиск...)")
+                return _uh.web_open(_site, _q)
+            if name == "screen_read":
+                return _uh.see()
+            if name == "screen_click":
+                return _uh.click(str(a.get("name", "")),
+                                 bool(a.get("double")))
+            if name == "keyboard_type":
+                return _uh.type_text(str(a.get("text", "")))
+            if name == "type_into":
+                return _uh.type_into(str(a.get("field", "")),
+                                     str(a.get("text", "")))
+            if name == "key_press":
+                return _uh.press(str(a.get("combo", "")))
+            if name == "screen_scroll":
+                return _uh.scroll(str(a.get("direction", "вниз")),
+                                  int(a.get("times") or 3))
+        except Exception as e:
+            log.exception("ui_hands %s", name)
             return f"не получилось: {e}"
     if name in _UI_NAMES:
         import json as _json
@@ -1079,7 +1350,72 @@ _TOOL_HINTS = {
     "close_browser": ("закрой браузер",),
     "model_switch": ("модель", "поумнее", "побыстрее"),
     "remember_place": ("запомни папк", "запомни мест"),
+    # руки внутри окон (2026-07-29)
+    "web_open":     ("ютуб", "твич", "рутуб", "кинопоиск", "спотифай",
+                     "включи на", "найди на сайте", "открой в браузере",
+                     "озон", "авито", "маркет", "стим"),
+    "type_into":    ("впиши", "введи в", "напиши в", "набери в",
+                     "в строк", "в поле", "в поиск"),
+    "keyboard_type": ("напечатай", "напиши текст", "введи текст"),
+    "key_press":    ("нажми", "энтер", "отправь", "полный экран"),
+    "screen_read":  ("что на экране", "что в окне", "прочитай окно",
+                     "какие кнопки"),
+    "screen_click": ("кликни", "тыкни", "ткни", "нажми на", "выбери"),
+    "app_remember": ("запомни путь", "вот путь", "она находится", "лежит в",
+                     ".exe", "это прога", "запомни программу"),
 }
+
+# СВЯЗКИ (2026-07-29, живой провал: «введи в поисковую строку в телеграме
+# привет» — gemma РАССУЖДАЛА про экраны и переключения вместо двух вызовов).
+# Карточка одного инструмента не учит порядку действий — а мелкой модели
+# нужен именно готовый порядок. Фраза попала — подкладываем рецепт целиком.
+_RECIPES = (
+    ((("впиши", "введи", "напиши", "набери"),
+      ("телеграм", "телег", "дискорд", "чат", "браузер", "поиск", "строк")),
+     "### Рецепт «вписать текст в программу» (выполняй по шагам, без "
+     "рассуждений):\n"
+     "1. [window_focus:match=\"телеграм\"] — окно вперёд (экран НЕ важен, "
+     "фокус работает на любом);\n"
+     "2. [type_into:field=\"поиск\",text=\"привет\"] — найдёт поле, кликнет, "
+     "впишет;\n"
+     "3. отправка ТОЛЬКО после вопроса человеку «текст готов, отправляем?» "
+     "и его «да»: [key_press:combo=\"enter\"].\n"
+     "Не спрашивай, на каком экране программа. Не описывай план — делай."),
+    ((("включи", "найди", "открой", "запусти"),
+      ("ютуб", "твич", "рутуб", "кинопоиск", "спотифай", "музык")),
+     "### Рецепт «включить что-то на сайте» (по шагам):\n"
+     "1. [web_open:site=\"ютуб\",query=\"что ищем\"] — откроется сразу "
+     "страница результатов;\n"
+     "2. подожди пару секунд, [screen_read] — увидишь элементы;\n"
+     "3. [screen_click:name=\"имя из списка\"] — открыть нужное.\n"
+     "Не открывай главную и не печатай в строку поиска сайта — web_open "
+     "уже ищет сам."),
+    ((("запусти", "открой"), ("на втором экране", "на первом экране",
+                              "на второй экран", "на первый экран")),
+     "### Рецепт «открыть на нужном экране» (по шагам):\n"
+     "1. открой программу ([app_launch:name=\"...\"] или "
+     "[open_folder:path=\"...\"]);\n"
+     "2. [window_place:match=\"её окно\",monitor=2] — перенос на экран 2 "
+     "(номера — как в настройках дисплея Windows).\n"
+     "Само на второй экран ничего не открывается — нужен второй шаг."),
+    ((("перенеси", "перекинь", "перемести", "переставь", "перетащи",
+       "перенос"), ("экран", "монитор")),
+     "### Рецепт «перенести окно на экран» (ОДИН вызов, сразу):\n"
+     "[window_place:match=\"хром\",monitor=2] — на экран 2; "
+     "monitor=-1 — на противоположный («на другой экран»); monitor=1 — на "
+     "основной. match можно опустить — возьмётся активное окно.\n"
+     "ЗРЕНИЕ (eyes) для окон НЕ нужно: положение окон я и так знаю, "
+     "[window_list] покажет карту. Параметр monitor ОБЯЗАТЕЛЬНО передай — "
+     "без него окно останется на своём экране."),
+)
+
+
+def _recipes(t: str) -> list:
+    out = []
+    for (verbs, ctx), text in _RECIPES:
+        if any(v in t for v in verbs) and any(c in t for c in ctx):
+            out.append(text)
+    return out
 
 
 def _one_card(sc: dict) -> str:
@@ -1096,9 +1432,11 @@ def _one_card(sc: dict) -> str:
             ps.append(f"{k}{mark} ({(v.get('description') or v.get('type') or '')[:40]})")
         lines.append("  параметры: " + "; ".join(ps) + ("  (* — обязателен)" if req else ""))
         k0 = (sorted(req)[0] if req else list(params)[0])
-        lines.append(f'  вызов текстом: [{name}:{k0}="значение"]')
+        # без слова «вызов» перед скобкой: gemma однажды склеила его ВНУТРЬ
+        # маркера ([вызов:window_place]) и все действия улетали в никуда
+        lines.append(f'  напиши в ответе: [{name}:{k0}="значение"]')
     else:
-        lines.append(f"  вызов текстом: [{name}]")
+        lines.append(f"  напиши в ответе: [{name}]")
     return "\n".join(lines)
 
 
@@ -1110,7 +1448,8 @@ def usage_cards(user_text: str, limit: int = 3) -> str:
         return ""
     hits = [n for n, keys in _TOOL_HINTS.items()
             if any(k in t for k in keys)]
-    if not hits:
+    recipes = _recipes(t)
+    if not hits and not recipes:
         return ""
     cards, known = [], {}
     for sc in schemas():
@@ -1118,13 +1457,19 @@ def usage_cards(user_text: str, limit: int = 3) -> str:
     for n in hits[:limit]:
         if n in known:
             cards.append(_one_card(known[n]))
-    if not cards:
+    if not cards and not recipes:
         return ""
-    return ("### Как вызвать нужный инструмент (инструкция, факт):\n"
-            + "\n".join(cards) +
-            "\nЗови как настоящую функцию (tool_call), а если не умеешь — "
-            "напиши маркер в квадратных скобках прямо в ответе: сервер "
-            "исполнит его сам и покажет результат.")
+    out = ""
+    if recipes:
+        # рецепт главнее карточек: он уже содержит порядок и имена
+        out += "\n".join(recipes[:2]) + "\n"
+    if cards:
+        out += ("### Как вызвать нужный инструмент (инструкция, факт):\n"
+                + "\n".join(cards) +
+                "\nЗови как настоящую функцию (tool_call), а если не умеешь "
+                "— напиши маркер в квадратных скобках прямо в ответе: сервер "
+                "исполнит его сам и покажет результат.")
+    return out.strip()
 
 
 def write_guide() -> str:

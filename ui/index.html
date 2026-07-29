@@ -2091,9 +2091,12 @@ function fillSttEngines(){
   const pop=box.closest('.pop');
   const prevScroll=pop?pop.scrollTop:0;
   box.innerHTML='';
-  // сортируем по оценке ВВЕРХ: лучший движок слуха — внизу, у курсора
+  /* ЛУЧШЕЕ — СВЕРХУ (2026-07-29, владелец: «то что выше идёт первым; упал —
+     включился второй»). Порядок списка = порядок фолбэка, читается сверху
+     вниз. «off» — отказ, не приоритет: закрепляем первой строкой. */
   const engs=(st.engines||[]).slice()
-    .sort((a,b)=>effScore(a,sttScore(a,st))-effScore(b,sttScore(b,st)));
+    .sort((a,b)=>effScore(b,sttScore(b,st))-effScore(a,sttScore(a,st)));
+  {const oi=engs.indexOf('off'); if(oi>0){engs.splice(oi,1); engs.unshift('off');}}
   engs.forEach(nm=>{
     const el=document.createElement('div');
     el.className='item'+(nm===st.current?' sel':'');
@@ -2248,10 +2251,10 @@ async function fillModelPop(){
     list.appendChild(tg);
   }
   // все модели обоих бэкендов в один список, сортировка по оценке ВВЕРХ:
-  // худшие/незамеренные сверху, самая шустрая — внизу, у самого курсора
-  // (меню раскрывается вверх => минимум движения мышкой к лучшей)
+  // ЛУЧШАЯ — СВЕРХУ (2026-07-29, владелец: «то что выше идёт первым»):
+  // порядок списка совпадает с порядком автоподбора при падении
   const all=(r.models||[]).slice()
-    .sort((a,b)=>effScore(a.name,ratings[a.name]||0)-effScore(b.name,ratings[b.name]||0));
+    .sort((a,b)=>effScore(b.name,ratings[b.name]||0)-effScore(a.name,ratings[a.name]||0));
   if(!all.length){
     list.innerHTML='<div class="title">нет моделей — запусти Ollama или LM Studio</div>';
     return;
@@ -2335,6 +2338,12 @@ async function fillModelPop(){
       fillModelPop();
     };
     el.onclick=async()=>{
+      // подсветка СРАЗУ (2026-07-29, жалоба: «переключается с офигенной
+      // задержкой») — сам переезд давно фоновый, тупило только отражение
+      const lst=el.parentElement;
+      if(lst) lst.querySelectorAll('.item.sel')
+        .forEach(x=>x.classList.remove('sel'));
+      el.classList.add('sel');
       // у облачной модели свой адрес — шлём его, иначе при одинаковых
       // именах у разных провайдеров можно уехать не туда
       await api('/api/select',{kind:'model',value:m.name,backend:m.backend,
@@ -2466,7 +2475,9 @@ function ttsScore(nm, st){
   if(nm==='off') return 1;   // не движок, а отказ от него — держим сверху
   const h=(st.health||{})[nm], loaded=(st.loaded||{})[nm];
   if(h==='broken') return 2;
-  let base=({qwen3:9, silero:7, edge:5})[nm]; if(base==null) base=6;
+  /* базовое КАЧЕСТВО голоса, в одну линию с сервером (tts/manager._priority):
+     silero честно внизу — голос «как старушка» и лицензия против коммерции */
+  let base=({qwen3:9, piper:7, omni:7, silero:3, edge:5})[nm]; if(base==null) base=6;
   if(loaded===false) base=Math.max(3, base-1);  // не в памяти — чуть ниже
   return base;
 }
@@ -2484,9 +2495,11 @@ function fillTtsPop(){
   const pop=box.closest('.pop');
   const prevScroll=pop?pop.scrollTop:0;   // не дёргаем прокрутку при refresh
   box.innerHTML='';
-  // сортируем по оценке ВВЕРХ: лучшая озвучка внизу, у самого курсора
+  /* ЛУЧШЕЕ — СВЕРХУ (2026-07-29): порядок списка = порядок фолбэка, сверху
+     вниз: упал первый — включается второй. «off» закреплён первой строкой. */
   const engs=(st.engines||[]).slice()
-    .sort((a,b)=>effScore(a,ttsScore(a,st))-effScore(b,ttsScore(b,st)));
+    .sort((a,b)=>effScore(b,ttsScore(b,st))-effScore(a,ttsScore(a,st)));
+  {const oi=engs.indexOf('off'); if(oi>0){engs.splice(oi,1); engs.unshift('off');}}
   engs.forEach(nm=>{
     const el=document.createElement('div');
     el.className='item'+(nm===st.current?' sel':'');
@@ -2518,6 +2531,10 @@ function fillTtsPop(){
     // клик по строке — только переключить (мгновенно). Загрузка — по ⬇ или
     // лениво при первой озвучке, чтобы зависшая загрузка не блокировала выбор
     el.onclick=async()=>{
+      // подсветка СРАЗУ, до ответа сервера: задержка сети не должна
+      // выглядеть как «клик не сработал» (жалоба 2026-07-29)
+      box.querySelectorAll('.item.sel').forEach(x=>x.classList.remove('sel'));
+      el.classList.add('sel');
       await api('/api/select',{kind:'tts',value:nm});
       await refresh();
     };
@@ -3196,6 +3213,20 @@ window.addEventListener('paste', e=>{
 });
 function send(){
   const v=$('#input').value.trim();
+  // ТАЙНАЯ ФРАЗА (2026-07-29, замысел владельца). Управление голосом
+  // создателя не должно висеть кнопкой на виду: кто угодно, кто сядет за
+  // этот компьютер, увидит «назначить создателя» и нажмёт. Фраза-ключ
+  // включает и выключает показ короны, в сервер не уходит и в переписке не
+  // остаётся — набрал, нажал, и следа нет.
+  if(/^твой\s+голос,?\s+пупсик[.!]?$/i.test(v)){
+    window.__vpSecret = !window.__vpSecret;
+    $('#input').value = '';
+    try{ toast(window.__vpSecret
+      ? 'Ну наконец-то. Корона на карточках — жми, кому её отдать'
+      : 'Спрятала. Никто и не догадается', {kind: 'ok', ttl: 6000}); }catch(e){}
+    try{ if(window.saikaVpRepaint) window.saikaVpRepaint(); }catch(e){}
+    return;
+  }
   if((!v && !pendingImage && !pendingPdf) || !ws || ws.readyState!==1) return;
   const msg={type:'text', text:v};
   if(pendingImage) msg.image=pendingImage;
@@ -3475,10 +3506,25 @@ eqFrame();
     att.push({x: x, y: y, w: w, r: r, c: color || GREY});
   }
 
+  /* ДЫХАНИЕ ПОЛЯ (2026-07-29, владелец: «пылинки странно себя ведут»).
+     В тишине пыль замирала намертво — на тёмном фоне это читалось не как
+     среда, а как грязь на экране или битые пиксели. Настоящая пыль в
+     воздухе никогда не стоит: она едва заметно плывёт. Даём каждой
+     пылинке свой медленный дрейф — две синусоиды с несоизмеримыми
+     периодами, чтобы поле никогда не повторялось и не пульсировало разом. */
+  let t = 0;
+
   function step(){
+    t += 0.016;
     for(let i = 0; i < N; i++){
       const o = i * 6;
-      let ax = (P[o+4] - P[o]) * HOME, ay = (P[o+5] - P[o+1]) * HOME;
+      // индивидуальная фаза от индекса: соседние пылинки плывут вразнобой
+      const ph = i * 0.7391;
+      const hx = P[o+4] + Math.sin(t * 0.21 + ph) * 0.018
+                        + Math.sin(t * 0.13 + ph * 2.1) * 0.012;
+      const hy = P[o+5] + Math.cos(t * 0.17 + ph * 1.3) * 0.018
+                        + Math.cos(t * 0.11 + ph * 0.7) * 0.012;
+      let ax = (hx - P[o]) * HOME, ay = (hy - P[o+1]) * HOME;
       let best = 0, bc = null;
       for(const a of att){
         const dx = a.x - P[o], dy = a.y - P[o+1];
@@ -7723,7 +7769,10 @@ eqFrame();
   // tts — только её голос
   let specSrc = 'auto';
   try{ specSrc = localStorage.saika_vp_spec || 'auto'; }catch(e){}
-  const show = {cloud: true, terr: true, tail: true};
+  // пыль тоже выключаемая (2026-07-29): «лучше их убрать или сделать
+  // нормально» — сделал и то, и другое: дыхание + личный тумблер
+  const show = {cloud: true, terr: true, tail: true, dust: true};
+  try{ if(localStorage.saika_vp_dust === '0') show.dust = false; }catch(e){}
 
   /* ─────────────────────────── стили ─────────────────────────── */
   const css = document.createElement('style');
@@ -7763,21 +7812,41 @@ eqFrame();
   #vp-pane .vp-h .sub{font-weight:400;font-size:10.5px;color:var(--dim);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #vp-pane .vp-h .vp-btn{padding:3px 7px;font-size:11px}
-  /* КАРТА ВО ВЕСЬ РОСТ (2026-07-29). Было min-height:120px — и карта
-     ужималась в полоску, стоило спискам голосов подрасти: главное в панели
-     оказывалось самым мелким. Теперь у неё приоритет по высоте, а списки
-     ужимаются сами (у них свой overflow). */
-  #vp-map{flex:1 1 auto;min-height:min(52vh,520px);width:100%;display:block;
+  /* КАРТА ВО ВЕСЬ РОСТ (2026-07-29). Было min-height:120px — карта
+     ужималась в полоску, стоило спискам подрасти. Стало min-height:52vh —
+     и она съела ВСЁ: список знакомых голосов схлопнулся в ноль (у него
+     flex:0 1 auto, ужиматься было позволено). Правильно так: карта растёт
+     первой, но не в ущерб списку — у него теперь свой неснижаемый рост. */
+  /* карта в обёртке ради грипа: тянется ИМЕННО верхнее окно (2026-07-29,
+     владелец: «маштабирование верхнее нужно было») */
+  #vp-mapwrap{position:relative;flex:1 1 auto;display:flex;
+    flex-direction:column;min-height:0}
+  #vp-map{flex:1 1 auto;min-height:min(42vh,440px);width:100%;display:block;
     border-radius:16px;border:1px solid rgba(255,255,255,.08);
     background:radial-gradient(130% 120% at 50% 40%,rgba(77,208,225,.05),
       rgba(8,10,18,.60))}
+  #vp-mapgrip{position:absolute;left:0;right:0;bottom:-2px;height:10px;
+    cursor:ns-resize;z-index:2}
+  #vp-mapgrip::after{content:'';position:absolute;left:50%;bottom:3px;
+    width:34px;height:3px;margin-left:-17px;border-radius:3px;
+    background:rgba(255,255,255,.16)}
+  #vp-mapgrip:hover::after{background:rgba(77,208,225,.55)}
   #vp-spec,#vp-time{width:100%;display:block;border-radius:12px;flex:none;
     border:1px solid rgba(255,255,255,.07);background:rgba(8,10,18,.5)}
+  /* высота спектра тянется мышью за нижний край — значение живёт в
+     localStorage, см. ui-скрипт панели */
   #vp-spec{height:74px} #vp-time{height:62px}
+  #vp-specwrap{position:relative;flex:none}
+  #vp-specgrip{position:absolute;left:0;right:0;bottom:-3px;height:9px;
+    cursor:ns-resize;z-index:2}
+  #vp-specgrip::after{content:'';position:absolute;left:50%;bottom:3px;
+    width:34px;height:3px;margin-left:-17px;border-radius:3px;
+    background:rgba(255,255,255,.16)}
+  #vp-specgrip:hover::after{background:rgba(77,208,225,.55)}
   #vp-pane .vp-cap{flex:none;font-size:9.5px;text-transform:uppercase;
     letter-spacing:.12em;color:rgba(233,233,237,.34);margin:1px 2px -3px;
     flex-wrap:wrap;row-gap:3px}
-  #vp-cards{flex:0 1 auto;overflow-y:auto;max-height:26%;min-height:0;
+  #vp-cards{flex:1 1 auto;overflow-y:auto;min-height:118px;max-height:38%;
     display:flex;flex-direction:column;gap:5px}
   .vp-card{display:flex;align-items:center;gap:8px;padding:6px 8px;
     border-radius:12px;background:rgba(255,255,255,.045);
@@ -7832,8 +7901,12 @@ eqFrame();
       '<button class="vp-btn" id="vp-t-cloud" title="Облако прошлых фраз">◦</button>' +
       '<button class="vp-btn" id="vp-t-terr" title="Территории голосов">⬡</button>' +
       '<button class="vp-btn" id="vp-t-tail" title="Хвост живой точки">〜</button>' +
+      '<button class="vp-btn" id="vp-t-dust" title="Пыль: поле, которое ' +
+        'сгущается там, где звучит голос">·˙·</button>' +
     '</div>' +
-    '<canvas id="vp-map"></canvas>' +
+    '<div id="vp-mapwrap"><canvas id="vp-map"></canvas>' +
+    '<div id="vp-mapgrip" title="Потяни — изменится высота карты; двойной ' +
+    'клик — сброс"></div></div>' +
     '<div class="vp-cap" style="display:flex;align-items:center;gap:6px">' +
       '<span id="vp-spec-cap">спектр</span>' +
       '<button class="vp-btn" id="vp-spec-src" style="padding:1px 6px;' +
@@ -7841,10 +7914,15 @@ eqFrame();
       '<span style="flex:1"></span>' +
       '<button class="vp-btn" id="vp-self" style="padding:1px 6px;' +
         'font-size:9.5px;letter-spacing:0;text-transform:none"></button>' +
-    '</div><canvas id="vp-spec"></canvas>' +
+    '</div><div id="vp-specwrap"><canvas id="vp-spec"></canvas>' +
+      '<div id="vp-specgrip" title="Потяни — изменится высота спектра"></div>' +
+    '</div>' +
     '<div class="vp-cap">последняя минута</div><canvas id="vp-time"></canvas>' +
     '<div class="vp-dim" id="vp-hear" style="font-size:10px;margin:-2px 0 4px"></div>' +
-    '<div class="vp-cap">знакомые голоса</div><div id="vp-cards"></div>' +
+    '<div class="vp-cap" style="display:block">твой голос, пупсик' +
+      '<span style="text-transform:none;letter-spacing:0;font-size:9.5px;' +
+      'opacity:.6"> — и я тебя узнаю из всей толпы доходяг</span></div>' +
+    '<div id="vp-cards"></div>' +
     '<div class="vp-row"><input type="search" id="vp-name2" ' +
       'placeholder="имя нового голоса" maxlength="32" autocomplete="off" ' +
       'autocorrect="off" spellcheck="false" name="saika-lbl-2" ' +
@@ -7854,41 +7932,94 @@ eqFrame();
       'font:12px inherit;outline:none">' +
       '<button class="vp-btn acc" id="vp-rec2">Записать</button></div>' +
     '<div class="vp-bar" id="vp-prog2" style="display:none"><i></i></div>' +
-    // ЖУРНАЛ СЛУХА. Живая панель отвечает на «что сейчас», журнал — на «кто
-    // и что было за час». Кнопка одна, потому что решение тут одно: слушать
-    // или не слушать.
-    // РЕЖИМ ПРОСЛУШИВАНИЯ СИСТЕМЫ. Отдельная кнопка, а не выбор устройства:
-    // через getDisplayMedia браузер отдаёт звук вкладки или всей системы без
-    // виртуальных кабелей и драйверов. Микрофон при этом глушим — иначе
-    // сервер получил бы два потока вперемешку.
-    '<div class="vp-cap" style="margin-top:4px">прослушивание системы</div>' +
-    '<div class="vp-row"><button class="vp-btn" id="vp-sys" style="flex:1">' +
-      '🖥 Слушать систему</button></div>' +
-    '<div class="vp-dim" id="vp-sysst" style="font-size:10.5px;padding:0 2px">' +
+    // ТРИ РАЗДЕЛА СВЕРНУЛИСЬ В ТРИ КНОПКИ (2026-07-29, владелец: «слух из
+    // системы — просто встроенная маленькая фишка, кнопку включить-
+    // выключить; стенограмму убери, тут должен быть редактор голосов»).
+    // Каждый раздел занимал заголовок, широкую кнопку и строку пояснения —
+    // втрое больше места, чем стоит переключатель. Панель голоса — про
+    // голоса; всё остальное здесь гости, и гостям хватит иконки. Что
+    // делает каждая — в подсказке при наведении.
+    '<div class="vp-row" id="vp-tools" style="margin-top:2px">' +
+      '<button class="vp-btn" id="vp-sys" style="flex:1;font-size:11px" ' +
+        'title="Слушать звук компьютера вместо микрофона: включи кино и ' +
+        'посмотри, что она из него вытащит. Отвечать при этом не будет">' +
+        '🖥 система</button>' +
+      '<button class="vp-btn" id="vp-tr" style="flex:1;font-size:11px" ' +
+        'title="Стенограмма: дословная запись разговора с именами говорящих ' +
+        'и пометками настроения. Сохраняется файлом">✎ запись</button>' +
+      '<button class="vp-btn" id="vp-trsave" style="font-size:11px" ' +
+        'title="Сохранить стенограмму в файл и открыть">файл</button>' +
+      '<button class="vp-btn" id="vp-log" style="flex:1;font-size:11px" ' +
+        'title="Журнал слуха: час слушает комнату и показывает, кто говорил ' +
+        'и что звучало — со спектрами">◉ час</button>' +
+      '<button class="vp-btn" id="vp-logrep" style="font-size:11px" ' +
+        'title="Собрать отчёт по накопленному">отчёт</button>' +
     '</div>' +
-    '<div class="vp-cap" style="margin-top:4px">стенограмма</div>' +
-    '<div class="vp-row"><button class="vp-btn" id="vp-tr" style="flex:1">' +
-      '✎ Писать стенограмму</button>' +
-      '<button class="vp-btn" id="vp-trsave" title="Сохранить в файл и открыть">' +
-      'Файл</button></div>' +
-    '<div class="vp-dim" id="vp-trst" style="font-size:10.5px;padding:0 2px">' +
+    '<div class="vp-dim" id="vp-toolst" style="font-size:10px;padding:0 2px">' +
     '</div>' +
-    '<div class="vp-cap" style="margin-top:4px">журнал слуха</div>' +
-    '<div class="vp-row"><button class="vp-btn" id="vp-log" style="flex:1">' +
-      '● Слушать час</button>' +
-      '<button class="vp-btn" id="vp-logrep" title="Собрать отчёт по ' +
-      'накопленному">Отчёт</button></div>' +
-    '<div class="vp-dim" id="vp-logst" style="font-size:10.5px;padding:0 2px">' +
-    '</div>';
+    '<span id="vp-sysst" style="display:none"></span>' +
+    '<span id="vp-trst" style="display:none"></span>' +
+    '<span id="vp-logst" style="display:none"></span>';
+
+  /* ВЫСОТА СПЕКТРА ТЯНЕТСЯ МЫШЬЮ (2026-07-29). У разных людей разный
+     интерес: кому-то спектр — фон, кому-то главное окно. Запоминаем в
+     localStorage, чтобы не настраивать заново каждый день. */
+  (function(){
+    const sp = $id('vp-spec'), gr = $id('vp-specgrip');
+    if(!sp || !gr) return;
+    const KEY = 'saika.vp.specH';
+    const set = h => { h = Math.max(46, Math.min(420, h));
+      sp.style.height = h + 'px'; try{ localStorage[KEY] = h; }catch(e){} };
+    try{ if(localStorage[KEY]) set(parseInt(localStorage[KEY], 10)); }catch(e){}
+    gr.onmousedown = e => {
+      e.preventDefault(); e.stopPropagation();
+      const y0 = e.clientY, h0 = sp.getBoundingClientRect().height;
+      const mv = ev => set(h0 + (ev.clientY - y0));
+      const up = () => { removeEventListener('mousemove', mv);
+                         removeEventListener('mouseup', up); };
+      addEventListener('mousemove', mv); addEventListener('mouseup', up);
+    };
+    gr.ondblclick = e => { e.stopPropagation(); set(74); };
+  })();
+
+  /* ВЫСОТА КАРТЫ тянется за нижний край (2026-07-29, владелец: «я имел в
+     виду верхнее окно»). Карта — flex-растущая, поэтому фиксируем её
+     высоту инлайном; двойной клик возвращает автоматику. */
+  (function(){
+    const mp = $id('vp-map'), wr = $id('vp-mapwrap'), gr = $id('vp-mapgrip');
+    if(!mp || !gr || !wr) return;
+    const KEY = 'saika.vp.mapH';
+    const set = h => { h = Math.max(180, Math.min(
+        Math.round(innerHeight * 0.85), h));
+      wr.style.flex = '0 0 auto';
+      mp.style.minHeight = mp.style.height = h + 'px';
+      try{ localStorage[KEY] = h; }catch(e){} };
+    const reset = () => { wr.style.flex = ''; mp.style.minHeight = '';
+      mp.style.height = ''; try{ delete localStorage[KEY]; }catch(e){} };
+    try{ if(localStorage[KEY]) set(parseInt(localStorage[KEY], 10)); }catch(e){}
+    gr.onmousedown = e => {
+      e.preventDefault(); e.stopPropagation();
+      const y0 = e.clientY, h0 = mp.getBoundingClientRect().height;
+      const mv = ev => set(h0 + (ev.clientY - y0));
+      const up = () => { removeEventListener('mousemove', mv);
+                         removeEventListener('mouseup', up); };
+      addEventListener('mousemove', mv); addEventListener('mouseup', up);
+    };
+    gr.ondblclick = e => { e.stopPropagation(); reset(); };
+  })();
 
   function mark(){
-    [['vp-t-cloud', 'cloud'], ['vp-t-terr', 'terr'], ['vp-t-tail', 'tail']]
+    [['vp-t-cloud', 'cloud'], ['vp-t-terr', 'terr'], ['vp-t-tail', 'tail'],
+     ['vp-t-dust', 'dust']]
       .forEach(([id, k]) => { const b = $id(id);
         if(b) b.classList.toggle('acc', show[k]); });
   }
-  ['cloud', 'terr', 'tail'].forEach(k => {
+  ['cloud', 'terr', 'tail', 'dust'].forEach(k => {
     const b = $id('vp-t-' + k);
-    if(b) b.onclick = () => { show[k] = !show[k]; mark(); cloudDirty++; };
+    if(b) b.onclick = () => { show[k] = !show[k]; mark(); cloudDirty++;
+      if(k === 'dust'){
+        try{ localStorage.saika_vp_dust = show.dust ? '1' : '0'; }catch(e){}
+      } };
   });
   mark();
   {
@@ -8226,7 +8357,10 @@ eqFrame();
     if(h.dropped) bits.push('уронила ' + h.dropped);
     bits.push('фраз ' + (h.segments || 0) +
               (h.empty ? ' (пустых ' + h.empty + ')' : ''));
-    if(h.rms || h.thr) bits.push('уровень ' + Math.round(h.rms * 1000) +
+    /* ПИК, А НЕ МГНОВЕННЫЙ УРОВЕНЬ (2026-07-29): между фразами человек
+       молчит, и «уровень 1» — это норма, а не поломка. Смотрим на пик за
+       последние секунды: он отвечает на вопрос «голос сюда доходит?». */
+    if(h.rms || h.thr) bits.push('уровень ' + Math.round((h.peak || h.rms) * 1000) +
                                  ' / порог ' + Math.round(h.thr * 1000));
     if(h.q > 5) bits.push('в очереди ' + h.q);
     if(h.lag) bits.push('ждут распознавания ' + h.lag);
@@ -8238,8 +8372,33 @@ eqFrame();
     if(h.stt_ms) st.push('движок ' + Math.round(h.stt_ms));
     if(st.length) bits.push(st.join(' / ') + ' мс');
     el.textContent = 'слух: ' + bits.join(' · ');
-    // порог выше голоса — самая частая и самая незаметная причина тишины
-    el.style.color = (h.rms && h.thr && h.rms < h.thr) ? '#ffb74d' : '';
+    /* ПОЧЕМУ ГОЛОС НЕ УЗНАЁТСЯ (2026-07-29, вторая редакция). Первая
+       версия ругалась на мгновенный уровень и врала при каждой паузе.
+       Теперь разбираем по существу и по порядку: сначала «доходит ли
+       звук» (пик за окно), потом «считаю ли я это голосом» (вердикт
+       проверки речи с баллом). Второе и было настоящей причиной. */
+    const peak = h.peak || h.rms;
+    const quiet = peak && h.thr && peak < h.thr;
+    el.style.color = quiet ? '#ffb74d' : '';
+    if(quiet){
+      el.textContent += ' — даже на пике тише порога: фразы не нарезаются ' +
+        '(проверь микрофон в микшере Windows или понизь порог)';
+    }else if(h.noise_score != null && h.speech_min != null
+             && h.noise_score < h.speech_min && (h.segments || 0) > 0){
+      const p = h.noise_parts || {};
+      const weak = Object.keys(p).filter(k => k !== 'f0' && p[k] < 0.5)
+        .map(k => ({tone: 'нет тона', shape: 'форма спектра',
+                    low: 'мало низа', hold: 'слишком коротко',
+                    rhythm: 'нет слогового ритма'}[k] || k));
+      el.style.color = '#ffb74d';
+      el.textContent += ' — звук слышу, но не считаю голосом: балл ' +
+        h.noise_score.toFixed(2) + ' при пороге ' + h.speech_min +
+        (weak.length ? ' (' + weak.join(', ') + ')' : '') +
+        '. Отброшено окон: ' + (h.noise_seen || 0);
+    }else if(h.vp_on === false){
+      el.style.color = '#ffb74d';
+      el.textContent += ' — узнавание голосов ВЫКЛЮЧЕНО в настройках';
+    }
   }
 
   async function refreshStatus(){
@@ -8319,9 +8478,17 @@ eqFrame();
     paintCards();
   }
 
+  window.saikaVpRepaint = () => { try{ paintCards(); }catch(e){} };
+
   function paintCards(){
     const box2 = $id('vp-cards');
     if(!box2 || !ST) return;
+    /* ЗАМОК НА ВРЕМЯ ПЕРЕИМЕНОВАНИЯ (2026-07-29, владелец: «строка
+       проявляется на долю секунды и исчезает — до сих пор не могу
+       подписать»). Анимационный цикл перерисовывает карточки каждые
+       ~полсекунды и молча сносил поле ввода вместе с набранным. Пока
+       человек печатает имя — карточки НЕ перерисовываются вообще. */
+    if(window.__vpEditing) return;
     const names = Object.keys(ST.speakers || {});
     if(!names.length){
       box2.innerHTML = '<div class="vp-dim" style="font-size:11px">' +
@@ -8344,7 +8511,8 @@ eqFrame();
       return '<div class="vp-card' + (isLive ? ' live' : '') +
         '" draggable="true" data-nm="' + esc(n) + '" style="color:' +
         s.color + '"><span class="vp-dot"></span><div style="flex:1;min-width:0">' +
-        '<div class="nm" data-ren="' + esc(n) + '" title="Кликни — переименуй" ' +
+        '<div class="nm" data-ren="' + esc(n) + '" draggable="false" ' +
+          'title="Кликни — переименуй" ' +
           'style="color:var(--text);cursor:text">' + esc(n) +
         (s.pinned ? ' <span class="sm" title="имя закреплено вручную">📌</span>'
                   : s.auto ? ' <span class="sm" title="познакомилась сама">✨</span>'
@@ -8352,6 +8520,21 @@ eqFrame();
         '<div class="sm">' + ago(s.last) + ' · ' + (s.heard || 0) + ' раз · ' +
         pitch + '</div>' + g + '</div><div class="acts">' +
         '<button draggable="false" data-col="' + esc(n) + '" title="Сменить цвет">◑</button>' +
+        // КОРОНА — СКРЫТАЯ НАСТРОЙКА (2026-07-29, владелец: «такое не надо
+        // делать, это скрытая настройка»). Кнопка «назначить создателя» на
+        // каждой карточке — приглашение нажать её кому угодно, кто сядет за
+        // компьютер. Показываем её только после тайной фразы в чате; у
+        // того, кто УЖЕ создатель, корона висит просто меткой, без кнопки.
+        // КОРОНУ НЕ ПОКАЗЫВАЕМ (2026-07-29, владелец: «убери эту корону»).
+        // Метка «голос создателя» висела на карточке у всех на виду — а это
+        // ровно та скрытая настройка, которую он просил не выставлять
+        // напоказ. Статус владельца никуда не делся, он живёт в данных;
+        // кнопка назначения по-прежнему появляется только после тайной
+        // фразы в чате.
+        (s.owner ? ''
+         : (window.__vpSecret ? '<button draggable="false" data-own="' +
+           esc(n) + '" title="Твой голос, пупсик: пометить как голос ' +
+           'создателя и зашить в проект">👑</button>' : '')) +
         '<button draggable="false" data-add="' + esc(n) + '" title="Дописать эталон живой речью">＋</button>' +
         '<button draggable="false" data-del="' + esc(n) + '" title="Забыть голос">✕</button>' +
         '</div></div>';
@@ -8364,7 +8547,15 @@ eqFrame();
         // ГРАБЛИ 2026-07-28: карточка целиком draggable, и нажатие на ✕
         // Chrome трактовал как начало перетаскивания — клик не рождался
         // вовсе, голос «не удалялся». Кнопки из захвата исключены.
-        if(ev.target && ev.target.closest && ev.target.closest('.acts')){
+        // ГРАБЛИ 2026-07-29: то же самое, что было с крестиком, только с
+        // именем. Карточка draggable, и нажатие на имя браузер трактует как
+        // начало перетаскивания — click не рождается вовсе, переименование
+        // «не срабатывает». Проверка синтетическим кликом этого не ловит:
+        // .click() дёргает обработчик напрямую, мимо машинерии драга.
+        // Поэтому имя и кнопки из захвата исключены, а тянуть карточку
+        // можно за всё остальное — точку, строку статистики, пустое место.
+        if(ev.target && ev.target.closest &&
+           (ev.target.closest('.acts') || ev.target.closest('.nm'))){
           ev.preventDefault(); return;
         }
         ev.dataTransfer.setData('text/plain', card.dataset.nm);
@@ -8402,6 +8593,23 @@ eqFrame();
     // цвет создателя, сервер его и не отдаст (см. registry.set_color).
     const PAL = ['#4dd0e1', '#ffb74d', '#ba68c8', '#81c784',
                  '#f06292', '#9fa8da', '#4db6ac', '#ff8a65'];
+    box2.querySelectorAll('[data-own]').forEach(b =>
+      b.onclick = async ev => {
+        ev.stopPropagation();
+        const name = b.dataset.own;
+        if(!confirm('Считать «' + name + '» голосом создателя?\n\nОн станет ' +
+                    'золотым, имя закрепится, а отпечаток зашьётся в проект ' +
+                    'в зашифрованном виде — на другом компьютере она узнает ' +
+                    'тебя сразу.')) return;
+        try{
+          const r = await api('/api/voiceprint/seal', {name: name});
+          if(r.ok === false) toast(r.error || 'не вышло', {kind: 'err'});
+          else toast('Запомнила: «' + name + '» — создатель. Векторов в ' +
+                     'печати: ' + (r.vectors || 0), {kind: 'ok', ttl: 8000});
+          ST = r;
+        }catch(e){ toast('Не запечаталось: ' + e.message, {kind: 'err'}); }
+        loadPoints(); paintPanel();
+      });
     box2.querySelectorAll('[data-col]').forEach(b =>
       b.onclick = async ev => {
         ev.stopPropagation();
@@ -8430,8 +8638,10 @@ eqFrame();
     // разговоре, надо попасть в иконку, а рука в этот момент занята. Само
     // имя — мишень во всю ширину карточки, промахнуться нельзя.
     box2.querySelectorAll('[data-ren]').forEach(b =>
-      b.onclick = ev => {
-        ev.stopPropagation();
+      b.onmousedown = ev => {
+        // mousedown, а не click: он приходит ДО того, как браузер решит,
+        // что началось перетаскивание, и работает при любом дрожании руки
+        ev.preventDefault(); ev.stopPropagation();
         const nm = b.classList.contains('nm') ? b
                  : b.closest('.vp-card').querySelector('.nm');
         const inp = document.createElement('input');
@@ -8442,12 +8652,16 @@ eqFrame();
           'border:1px solid var(--border);border-radius:8px;padding:3px 6px;' +
           'font:12px inherit;outline:none';
         noAutofill(inp);
+        window.__vpEditing = true;      // замок: перерисовку — на паузу
         nm.replaceWith(inp); inp.focus(); inp.select();
         inp.onkeydown = ev => {
-          if(ev.key === 'Enter') rename(b.dataset.ren, inp.value);
-          if(ev.key === 'Escape') paintCards();
+          if(ev.key === 'Enter'){ window.__vpEditing = false;
+            rename(b.dataset.ren, inp.value); }
+          if(ev.key === 'Escape'){ window.__vpEditing = false; paintCards(); }
         };
-        inp.onblur = () => setTimeout(paintCards, 120);
+        inp.onblur = () => setTimeout(() => {
+          window.__vpEditing = false; paintCards();
+        }, 120);
       });
   }
 
@@ -8608,8 +8822,13 @@ eqFrame();
   function drawSpec(cv){
     if(!cv) return;
     const d = Math.min(2, window.devicePixelRatio || 1);
-    const w = Math.max(60, Math.round(cv.getBoundingClientRect().width * d));
-    const h = Math.max(30, Math.round(74 * d));
+    const r = cv.getBoundingClientRect();
+    const w = Math.max(60, Math.round(r.width * d));
+    /* ЧЕСТНЫЕ ПИКСЕЛИ (2026-07-29, владелец: «голоса стали тусклыми,
+       тексты размазываются»). Высота холста была прибита к 74px, а грип
+       растягивал CSS до 420 — браузер тянул картинку, всё мылилось и
+       бледнело. Холст обязан жить в пикселях своего CSS-размера. */
+    const h = Math.max(30, Math.round(r.height * d));
     if(cv.width !== w || cv.height !== h){
       cv.width = w; cv.height = h;
       specOff.width = w; specOff.height = h;
@@ -8620,8 +8839,21 @@ eqFrame();
     const herTurn = specSrc === 'tts' || (specSrc === 'auto' && speakingNow());
     const a = herTurn ? ensureSelfAnalyser() : ensureAnalyser();
     const bins = herTurn ? sFreq : freq;
+    /* ЦВЕТ ГОЛОСА ДЕРЖИТСЯ (2026-07-29, владелец: «у неё голос нормально
+       подсвечивает, а мой нет»). Узнавание приходит КУСКАМИ — раз в
+       фразу-две, — а свежесть тут требовалась 0.9с: между кусками спектр
+       человека серел, хотя система прекрасно знала, кто говорит. Теперь
+       цвет узнанного голоса живёт 4 секунды, а совсем без узнавания
+       рисуем светлым небесным, не тусклой серостью. */
+    /* ЦВЕТ = ТОЛЬКО ЖИВОЕ УЗНАВАНИЕ (2026-07-29, откат моей же выдумки).
+       Я держала «последний узнанный цвет» до следующего говорящего — и
+       ШУМ в тишине красился в цвет Сайки с её подписью. Это враньё
+       глазами: спектр утверждал, что говорит она. Не узнан — СЕРЫЙ, как
+       было раньше и как логичнее: серое значит «просто звук, не голос».
+       Окно 4с оставлено: узнавание приходит рывками, и внутри живой речи
+       цвет не должен мигать. */
     const tone = herTurn ? selfLive.color
-      : (live.on && performance.now() - live.seen < 900 ? live.color : GREY);
+      : (live.on && performance.now() - live.seen < 4000 ? live.color : GREY);
     const oc = specOff.getContext('2d');
     // бегущая строка: сдвигаем накопленное влево и дорисовываем свежий столбец
     oc.globalCompositeOperation = 'copy';
@@ -8843,7 +9075,7 @@ eqFrame();
     const ctx = cv.getContext('2d'), w = cv.width, h = cv.height;
     const s = Math.min(w, h) / 2 / 1.35, cx = w / 2, cy = h / 2;
     ctx.clearRect(0, 0, w, h);
-    if(big) dust(ctx, w, h, s, cx, cy);
+    if(big && show.dust) dust(ctx, w, h, s, cx, cy);
     const o = offOf(cv);
     buildCloud(o, w, h, s, cx, cy);
     ctx.drawImage(o.cv, 0, 0);

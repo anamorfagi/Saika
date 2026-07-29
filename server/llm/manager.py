@@ -786,6 +786,22 @@ def _attach_image_ollama(messages, image):
     return msgs
 
 
+def _strip_images(messages):
+    """Убрать вложенные картинки, оставив текст. Нужно, когда бэкенд
+    отказался их принимать: молчать из-за необязательного вложения — худшее
+    из решений."""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list):
+            txt = " ".join(p.get("text", "") for p in c
+                           if isinstance(p, dict) and p.get("type") == "text")
+            out.append({**m, "content": txt.strip()})
+        else:
+            out.append(m)
+    return out
+
+
 def _attach_image_openai(messages, image):
     """OpenAI-формат: content последнего user-сообщения становится списком
     [text, image_url(data-url)].
@@ -1210,6 +1226,8 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
     Фрагменты tool_call приходят по кусочкам в разных чанках (по index,
     function.arguments — строка, собирается конкатенацией), поэтому копим их
     и достраиваем целиком, когда стрим закончился."""
+    if image is not None and "_noimg" in _API_QUIRKS.get((base_url, model), ()):
+        image = None            # уже выяснили: этот бэкенд картинок не ест
     messages = _attach_image_openai(messages, image)
     # GigaChat известен заранее, остальных выучиваем по первому 422 (ниже)
     if _is_gigachat(base_url) or "mid_system" in _MSG_QUIRKS.get(
@@ -1348,6 +1366,33 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         # а найденное запоминаем в _API_QUIRKS: следующая фраза строит
         # запрос сразу правильно, без холостых заходов.
         recovered, last = False, e0
+        _txt0 = str(e0).lower()
+        # ФАЗА «МИНУС ОДИН» — БЭКЕНД НЕ УМЕЕТ КАРТИНКИ (2026-07-29).
+        # llama-server, запущенный без --mmproj, на любой запрос с
+        # изображением отвечает 500 «image input is not supported». Модель
+        # мультимодальная, но её глаза не подключены. Раньше это валило весь
+        # ход целиком: «Ни одна LLM не ответила», и Сайка молчала на
+        # «открой проводник» — хотя картинка там была не нужна вовсе, её
+        # просто приложило включённое зрение.
+        #
+        # Правильное поведение — ответить БЕЗ картинки, а не умереть с ней.
+        # Текст важнее вложения: человек спросил про проводник, а не про
+        # скриншот. Запоминаем неумение за (адрес, модель), чтобы следующие
+        # ходы шли сразу правильно и без холостого захода.
+        if image is not None and any(h in _txt0 for h in (
+                "image input is not supported", "mmproj",
+                "does not support image", "vision is not supported")):
+            trial = dict(payload, messages=_strip_images(payload["messages"]))
+            try:
+                r = _do_request(trial)
+                payload = trial
+                _API_QUIRKS.setdefault((base_url, model), set()).add("_noimg")
+                log.warning("API %s не принимает картинки (запущен без "
+                            "--mmproj?) — отвечаю по тексту, картинку "
+                            "отбрасываю. Дальше шлю сразу без неё", model)
+                recovered = True
+            except requests.exceptions.HTTPError as e1:
+                last = e1
         # ФАЗА 0 — провайдер ругается не на поле, а на СТРУКТУРУ диалога.
         # Убирать поля тут бессмысленно (именно так GigaChat молча уводил
         # разговор на локальный фолбэк): чиним форму и пробуем ещё раз.

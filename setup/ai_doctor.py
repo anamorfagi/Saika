@@ -164,6 +164,20 @@ def _pkg_ok(p: str) -> bool:
            for f in FORBIDDEN_PKG):
         _log(f"[защита] {p}: фундаментальный пакет — руками, не доктором")
         return False
+    # СТАНДАРТНАЯ БИБЛИОТЕКА НЕ СТАВИТСЯ С PyPI (2026-07-29, живой случай:
+    # модель увидела в логе «NameError: name 're' is not defined» и честно
+    # попыталась `pip install re`. Это не лечение, а шум: правильный ответ —
+    # дописать `import re` в исходник. Хуже того, на PyPI бывают пакеты-
+    # тёзки стандартных модулей — установка такого ломает интерпретатор).
+    try:
+        import sys as _s
+        if base in getattr(_s, "stdlib_module_names", ()):
+            _log(f"[защита] «{base}» — модуль стандартной библиотеки Python. "
+                 "Его не ставят через pip: если он «не найден», значит в "
+                 "коде забыт import — это правка исходника, а не установка.")
+            return False
+    except Exception:
+        pass
     return True
 
 

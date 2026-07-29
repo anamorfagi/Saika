@@ -184,6 +184,14 @@ HEAR_DROP = {"n": 0}     # сколько чанков уронили, пото�
 # считаем всё и показываем числа: одна строка вместо часа догадок.
 HEAR_STAT = {"chunks": 0, "dropped": 0, "segments": 0, "empty": 0,
              "quiet": 0, "rms": 0.0, "thr": 0.0, "q": 0,
+             # ПИК ЗА ОКНО, а не мгновенный уровень (2026-07-29, живой
+             # разбор: панель показывала «уровень 1 / порог 12» и кричала
+             # «тише порога», хотя распознавание в ту же секунду отлично
+             # писало текст. Мгновенное значение берётся с последнего чанка
+             # — а человек между фразами МОЛЧИТ, и это норма. Смотреть надо
+             # на пик за несколько секунд: он честно отвечает на вопрос
+             # «доходит ли сюда голос вообще».
+             "peak": 0.0, "peak_ts": 0.0,
              "den_ms": 0.0, "cut_ms": 0.0, "stt_ms": 0.0, "lag": 0}
 LAST_IMAGE = {"data": None, "ts": 0.0}  # последняя картинка (для OCR слепыми)
 # уникальный id этого запуска процесса: вкладка запоминает его при коннекте
@@ -566,15 +574,22 @@ PENDING_ACTIONS: list = []
 
 def _marker_args(name: str, raw: str, schemas: list) -> dict:
     """'query="ноль", drive="E"' -> {"query": "ноль", "drive": "E"};
-    голое значение ('.') уходит первым параметром схемы."""
-    raw = (raw or "").strip()
+    голое значение ('.') уходит первым параметром схемы.
+
+    ДИАЛЕКТЫ (2026-07-29, живой промах: gemma написала {name:Google Chrome}
+    — фигурные скобки и двоеточие вместо кавычек и «=». Разбор выдал кашу
+    «{name:Google Chrome» ПРЯМО В ЗАПРОС, и поиск программы искал программу
+    с фигурной скобкой в имени). Мелкая модель пишет как привыкла в JSON —
+    принимаем и это: скобки срезаем, «:» равносилен «=»."""
+    raw = (raw or "").strip().strip("{}").strip()
     if not raw:
         return {}
     pairs = re.findall(
-        r"([a-zа-яё_]\w*)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^,\s\])}]+))",
+        r"([a-zа-яё_]\w*)\s*[=:]\s*(?:\"([^\"]*)\"|'([^']*)'"
+        r"|((?:(?!\s+[a-zа-яё_]\w*\s*[=:])[^,\])}])+))",
         raw, re.I)
     if pairs:
-        return {k: (a or b or c) for k, a, b, c in pairs}
+        return {k: (a or b or c).strip() for k, a, b, c in pairs}
     val = raw.strip('"\'')
     for sc in schemas:
         f = sc.get("function", {})
@@ -586,12 +601,27 @@ def _marker_args(name: str, raw: str, schemas: list) -> dict:
     return {"query": val}
 
 
-def _run_tool_marks(text: str) -> list:
+def _run_tool_marks(text: str, skip: set | None = None) -> list:
     """Найти в готовом ответе текстовые вызовы, исполнить, вернуть
     [(имя, результат)]. Не больше двух за ответ — остальное пусть просит
-    следующим ходом, это защита от простыни команд."""
+    следующим ходом, это защита от простыни команд. skip — инструменты,
+    уже вызванные в этом же ходе по-настоящему (их маркеры — дубли)."""
     if "[" not in (text or "") and "(" not in (text or ""):
         return []
+    # ПРОЩАЕМ ДИАЛЕКТ (2026-07-29, живой вечер: gemma писала
+    # [вызов:window_place] — слово «вызов» она взяла из наших же карточек
+    # («вызов текстом: [...]») и склеила внутрь скобок. Сервер ждал латинское
+    # имя сразу после скобки, маркеры честно улетали в никуда, а она
+    # рапортовала «готово». Человек ждал впустую четыре раза подряд.
+    # Синтаксис, который модель выбирает сама, дешевле принять, чем
+    # переучивать: срезаем служебные префиксы перед именем инструмента.
+    text = re.sub(r'([\[({])\s*(?:вызов|вызвать|tool|call|инструмент)'
+                  r'\s*[:=]?\s*', r'\1', text, flags=re.I)
+    # диалект «[tool_code] web_open ... [/tool_code]» (gemma, живой вечер):
+    # имя инструмента СНАРУЖИ скобок — заворачиваем в нормальный маркер
+    text = re.sub(r'\[(?:tool_code|code|функция)\]\s*([a-z][a-z0-9_]{2,})'
+                  r'\s*(.*?)\s*\[/(?:tool_code|code|функция)\]',
+                  r'[\1:\2]', text, flags=re.I | re.S)
     from server.llm import tools as _tls
     try:
         schemas = _tls.schemas()
@@ -602,7 +632,24 @@ def _run_tool_marks(text: str) -> list:
     for m in _TOOL_MARK_RE.finditer(text):
         name = m.group(1)
         if name not in known:
+            # ПОХОЖЕ НА ИНСТРУМЕНТ, НО ЕГО НЕТ (2026-07-29, живой чат:
+            # gemma звала fs_mkdir, которого мелкой модели не выдали, —
+            # маркер молча пропускался, и она трижды рапортовала «папка
+            # создана» человеку в глаза. Молчание сервера = её враньё.
+            # Теперь несуществующий/недоступный инструмент получает честный
+            # ответ, который она увидит фактом в следующий ход).
+            if re.match(r"^(fs_|window_|app_|screen_|web_|key_|keyboard_|"
+                        r"tab_|volume_|model_|anim_|open_|find_|minimize_|"
+                        r"remember_)", name):
+                done.append((name, "такого инструмента у тебя сейчас НЕТ — "
+                                   "действие НЕ выполнено. Не говори, что "
+                                   "сделала. Скажи человеку честно, что "
+                                   "инструмент недоступен."))
+                if len(done) >= 2:
+                    break
             continue                       # [прим:...] и прочее — не команда
+        if skip and name in skip:
+            continue                       # уже вызван по-настоящему — дубль
         try:
             args = _marker_args(name, m.group(2), schemas)
             res = _tls.call(name, args)
@@ -701,7 +748,13 @@ def _gpu_procs_windows():
             m = re.search(r"pid_(\d+)", inst)
             if not m:
                 continue
-            agg[int(m.group(1))] = agg.get(int(m.group(1)), 0) + int(val)
+            v = int(val)
+            # мусор счётчиков (2026-07-29, живой пример: «iriunwebcam —
+            # 5696.9 ГБ»): битые сэмплы больше всей VRAM на порядок.
+            # Отбрасываем всё крупнее 64 ГБ — таких карт у людей нет.
+            if v > 64 * 2 ** 30:
+                continue
+            agg[int(m.group(1))] = agg.get(int(m.group(1)), 0) + v
         me = os.getpid()
         procs = []
         try:
@@ -1147,7 +1200,25 @@ def hear_stat():
     """Только счётчики слуха. Отдельным лёгким роутом, а не внутри
     /api/status: тот опрашивает бэкенды мозгов и во время подъёма
     llama-server отвечает не мгновенно, а эту строку панель дёргает часто."""
-    return dict(HEAR_STAT)
+    out = dict(HEAR_STAT)
+    # ПОЧЕМУ НЕ УЗНАЁТ ГОЛОС (2026-07-29). Числа слуха отвечали на вопрос
+    # «слышу ли», но не на вопрос «почему не узнаю»: между ними стоит
+    # проверка «это вообще голос?», и её вердикт нигде не был виден.
+    # Теперь панель показывает последний отказ с баллом и разбором.
+    try:
+        from server import voiceprint as _vp
+        st = _vp.S
+        out["noise_seen"] = int(getattr(st, "noise_seen", 0))
+        ln = getattr(st, "last_noise", None)
+        if ln:
+            out["noise_score"] = ln.get("score")
+            out["noise_parts"] = ln.get("parts")
+        out["speech_min"] = float(CFG.get("voiceprint.speech_min", 0.42))
+        out["vp_on"] = bool(_vp.enabled())
+        out["vp_heard_s"] = round(float(getattr(st, "heard_s", 0.0)), 1)
+    except Exception as e:
+        log.debug("статистика отпечатка не собралась: %s", e)
+    return out
 
 
 @app.post("/api/voiceprint/color")
@@ -1163,6 +1234,17 @@ def voiceprint_seal(payload: dict):
     и запечатать в проект — зашифрованный файл едет с репозиторием, ключ
     остаётся в secrets.json."""
     return voiceprint.seal_owner(payload.get("name", ""))
+
+
+@app.post("/api/voiceprint/unseal")
+def voiceprint_unseal():
+    """Распечатать голос создателя из проекта — принудительно, поверх
+    текущего состояния (2026-07-29). Нужна, когда список голосов почистили
+    и создатель пропал: печать для того и делалась, чтобы вернуть его."""
+    voiceprint.load_owner_seal(force=True)
+    st = voiceprint.status()
+    who = [n for n, v in (st.get("speakers") or {}).items() if v.get("owner")]
+    return {"ok": bool(who), "owner": who[0] if who else "", **st}
 
 
 @app.post("/api/voiceprint/enroll_file")
@@ -1268,7 +1350,14 @@ async def panic_unload():
         # подгружает модели обратно, и разгрузка выглядит неработающей
         try:
             stt.set_engine("none")
-            CFG.set("tts.enabled", False)
+            # ГЛУШИМ НА СЕАНС, А НЕ В КОНФИГ (2026-07-29). Было
+            # CFG.set("tts.enabled", False) — запись на диск, переживающая
+            # перезапуск: один раз нажал «выгрузить всё», и озвучка мертва
+            # навсегда, причём беззвучно (движки грузятся, speak молчит).
+            # Смысл разгрузки — освободить память сейчас, а не запретить
+            # звук на будущее. Движок в "off" делает ровно нужное: ничего
+            # не подгружается само, а первый же выбор движка всё вернёт.
+            CFG.set("tts.engine", "off")
             freed.append("слух и озвучка выключены до ручного выбора")
         except Exception:
             pass
@@ -1280,8 +1369,11 @@ async def panic_unload():
         ACTIVE_LLM.update(backend="", model="")
         HARD_UNLOADED["on"] = True
         try:
+            # выключаем НА СЕЙЧАС, но узнавание само вернётся, как только
+            # человек снова заговорит в живой микрофон (см. voiceprint.feed).
+            # Иначе эта кнопка тихо ломала карту голосов на весь день.
             voiceprint.set_enabled(False)
-            freed.append("узнавание голоса")
+            freed.append("узнавание голоса (вернётся, когда заговоришь)")
         except Exception:
             pass
         broadcast_event({"type": "unloaded"})
@@ -1366,7 +1458,27 @@ async def select(payload: dict):
             # мысли — главный пожиратель секунд перед ответом
             CFG.set("llm.think", bool(value))
         elif kind == "tts":
+            # СРАЗУ И ПАМЯТЬ (2026-07-29, просьба владельца: «нажимаю на
+            # движок — логично у него загрузку, а тот что стоял —
+            # выгрузить»). Раньше клик только переключал выбор, модель
+            # грузилась лениво на первой фразе, а старая продолжала висеть
+            # в VRAM. Теперь: выбор мгновенный, а фоном старый выгружается
+            # (сначала — освобождает память) и новый греется.
+            prev = CFG.get("tts.engine", "")
             tts.set_engine(value)
+
+            def _swap_tts(_prev=prev, _new=value):
+                try:
+                    if _prev and _prev not in (_new, "off"):
+                        tts.unload_engine(_prev)
+                except Exception as e:
+                    log.debug("выгрузка %s: %s", _prev, e)
+                try:
+                    if _new != "off":
+                        tts.load_engine(_new)
+                except Exception as e:
+                    log.warning("прогрев %s после клика: %s", _new, e)
+            threading.Thread(target=_swap_tts, daemon=True).start()
         elif kind == "tts_enabled":
             CFG.set("tts.enabled", bool(value))
         elif kind == "attention_always":
@@ -3391,10 +3503,11 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             used_llm["backend"], used_llm["model"] = backend, model
             ACTIVE_LLM["backend"], ACTIVE_LLM["model"] = backend, model
 
-        _tool_used = {"any": False}
+        _tool_used = {"any": False, "names": set()}
 
         def on_tool(name, args):
             _tool_used["any"] = True
+            _tool_used["names"].add(str(name))
             try:
                 from server import psyche as _psy
                 LAST_SKILL["name"] = _psy.skill_of(name)
@@ -3890,7 +4003,11 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # показываем человеку сразу; ей результат уедет фактом в следующий ход
     if reply and not stop_event.is_set():
         try:
-            for _an, _ar in _run_tool_marks(reply):
+            # НЕ ДУБЛИРУЕМ (2026-07-29): gemma делает настоящий tool_call и
+            # СЛЕДОМ пишет пустой маркер того же инструмента — раньше маркер
+            # улетал в пустоту, теперь он живой и запускал бы всё вторично
+            _skip = _tool_used.get("names", set())
+            for _an, _ar in _run_tool_marks(reply, skip=_skip):
                 out.put({"type": "tool", "name": "⚡ " + _an,
                          "args": _ar[:80]})
                 PENDING_ACTIONS.append((_an, _ar))
@@ -3905,10 +4022,18 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         if stop_event.is_set() and n_tokens > 0:
             reply += " …(прервана — собеседник добавил уточнение)"
         memory.add_event(person_id, "assistant", reply)
+    # ДЕЛО СДЕЛАНО — МОЛЧАНИЕ НЕ СТРАШНО (2026-07-29, живой чат: ответ
+    # целиком состоял из вызова инструмента, после вырезания маркеров
+    # осталась пустота — и человек читал пугающее «🤐 не смогла ответить»
+    # ПОД строкой с успешно закрытым окном. Инструмент отработал — этого
+    # достаточно, страшилка не нужна).
+    if not reply and not stop_event.is_set() \
+            and (_tool_used.get("names") or PENDING_ACTIONS):
+        reply = ""          # результат уже показан строкой ⚡ — не дублируем
     # МОЛЧАНИЕ — НЕ ОТВЕТ: если наружу не ушло ни слова и нас не перебивали,
     # объясняем в чате, почему (раньше причина тонула в логе, а в UI
     # выглядело так, будто Сайка просто проигнорировала фразу)
-    if not reply and not stop_event.is_set():
+    elif not reply and not stop_event.is_set():
         try:
             why = _diagnose_silence(
                 used_llm.get("backend") or CFG.get("llm.backend", ""),
@@ -4291,9 +4416,16 @@ async def ws_endpoint(ws: WebSocket):
                 HEAR_STAT["chunks"] += 1
                 HEAR_STAT["q"] = hear_q.qsize()
                 try:
-                    HEAR_STAT["rms"] = round(float(np.sqrt(np.mean(
+                    _r = round(float(np.sqrt(np.mean(
                         (p.astype(np.float32) / 32768.0) ** 2))), 5)
+                    HEAR_STAT["rms"] = _r
                     HEAR_STAT["thr"] = round(stt.vad._eff_threshold(), 5)
+                    # пик держим 6 секунд: столько живёт обычная пауза между
+                    # фразами, и за это окно голос точно успевает прозвучать
+                    _now = time.time()
+                    if _r > HEAR_STAT["peak"] or _now - HEAR_STAT["peak_ts"] > 6:
+                        HEAR_STAT["peak"] = _r
+                        HEAR_STAT["peak_ts"] = _now
                     if HEAR_STAT["rms"] < HEAR_STAT["thr"] * 0.6:
                         HEAR_STAT["quiet"] += 1
                 except Exception:
@@ -4571,6 +4703,14 @@ async def ws_endpoint(ws: WebSocket):
         try:  # предохранитель shutdown_self: помним последнюю фразу юзера
             from server.llm import tools as _tls
             _tls.LAST_USER["text"] = user_text
+            # + короткая память намерения (2026-07-29): «открой телеграм на
+            # втором экране» -> «первый» -> «просто открой» — к третьей
+            # фразе предохранитель уже не видел ни «экрана», ни «открой» и
+            # резал живое действие. Намерение живёт разговором, а не одной
+            # репликой — храним хвост из трёх фраз.
+            _rec = _tls.LAST_USER.setdefault("recent", [])
+            _rec.append(user_text)
+            del _rec[:-3]
         except Exception:
             pass
         worker = threading.Thread(
