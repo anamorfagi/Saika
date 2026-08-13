@@ -15,15 +15,14 @@
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "mistral",
-      "base_url": "https://api.mistral.ai/v1",
-      "model": "mistral-medium-3-5"
+      "provider": "cloudflare",
+      "base_url": "https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1",
+      "model": "@cf/qwen/qwen3-30b-a3b-fp8"
     },
     "tools_broken": [
       "gemma-4-e4b-it",
       "google/gemma-4-12b-qat",
-      "llama3.2:latest",
-      "zai-org/glm-4.6v-flash"
+      "llama3.2:latest"
     ],
     "sampling": {
       "enabled": false,
@@ -46,6 +45,36 @@
       "seed": -1
     },
     "cloud_saved": [
+      {
+        "provider": "cloudflare",
+        "base_url": "https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1",
+        "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      },
+      {
+        "provider": "cloudflare",
+        "base_url": "https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1",
+        "model": "@cf/qwen/qwen3-30b-a3b-fp8"
+      },
+      {
+        "provider": "github",
+        "base_url": "https://models.github.ai/inference",
+        "model": "openai/gpt-4.1"
+      },
+      {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai/v1",
+        "model": "mistral-small-2603"
+      },
+      {
+        "provider": "gigachat",
+        "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
+        "model": "GigaChat"
+      },
+      {
+        "provider": "gigachat",
+        "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
+        "model": "GigaChat-2"
+      },
       {
         "provider": "github",
         "base_url": "https://models.github.ai/inference",
@@ -74,7 +103,12 @@
       "enabled": true
     },
     "off": false,
-    "n_ctx": "32768"
+    "n_ctx": "32768",
+    "search_unreliable": [
+      "google/gemma-4-e4b"
+    ],
+    "escalate_on_fail": true,
+    "cloudflare_account": "dc53e2c4a12c1fbde30d66faee5f5706"
   },
   "tools": {
     "enabled": true,
@@ -95,7 +129,7 @@
     ],
     "window_s": 30,
     "fuzzy_max_edits": 1,
-    "always": true,
+    "always": false,
     "stop_words": [
       "стоп",
       "стой",
@@ -159,8 +193,8 @@
     "disabled": [],
     "output_device": "CABLE Input",
     "output_device_dup": "WH-1000XM4",
-    "voice_ref": "C:\\Saika\\voice\\ref.wav",
-    "voice_ref_wav": "C:\\Saika\\voice\\ref.wav",
+    "voice_ref": "voice/ref.wav",
+    "voice_ref_wav": "voice/ref.wav",
     "voice_ref_text": "Я проснулась раньше будильника, когда комната всё ещё была укутана синим рассветом. Несколько секунд я просто слушала своё дыхание и ощущала тихую тяжесть грядущего дня. Раньше утра пугали меня, слишком много ожиданий, слишком много незавершённых мыслей. Теперь они кажутся чистыми страницами. Я сварила кофе, наблюдая, как поднимается пар, словно что-то живое, и улыбнулась этому маленькому ритуалу. Снаружи город медленно просыпался, притворяясь спокойным. Я надела куртку и вышла в холодный воздух, позволяя ему прояснить голову. Я не знаю точно, куда иду, и, к моему удивлению, это больше не тревожит. Я поняла, что движение вперёд не всегда требует идеального плана. Иногда достаточно доверять собственным шагам, даже если они не уверены.",
     "fallback_order": [
       "qwen3",
@@ -214,7 +248,9 @@
       "timeout_s": 120
     },
     "emotion": true,
-    "emotion_instruct": ""
+    "emotion_instruct": "",
+    "speed": null,
+    "tone": null
   },
   "memory": {
     "db_path": "data/saika_memory.db",
@@ -358,10 +394,10 @@
     }
   },
   "vision": {
-    "enabled": false,
+    "enabled": true,
     "tools": true,
     "monitor": 0,
-    "camera_index": -1,
+    "camera_index": 0,
     "camera_w": 1280,
     "camera_h": 720,
     "camera_probe": 4,
@@ -397,14 +433,16 @@
     "order": [
       "lore",
       "memory",
-      "devboard",
       "search",
+      "devboard",
       "image",
       "vision",
       "tone",
       "tools",
       "browser",
       "other",
+      "models",
+      "psyche",
       "notes"
     ]
   },
@@ -418,5 +456,12 @@
   "voiceprint": {
     "enabled": true,
     "listen_self": false
+  },
+  "doctor": {
+    "backend": "",
+    "model": ""
+  },
+  "trust": {
+    "level": 7
   }
 }

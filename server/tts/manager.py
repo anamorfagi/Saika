@@ -50,7 +50,12 @@ def _emotion_instruction():
     manual = str(CFG.get("tts.emotion_instruct", "") or "").strip()
     if manual:
         return manual
-    return _EMO_TEXT.get(_EMOTION["cls"] or "", "")
+    now = _EMO_TEXT.get(_EMOTION["cls"] or "", "")
+    # ПОСТОЯННЫЙ ТОН КОСТЮМА (2026-08-13). Эмоция — про эту реплику, тон —
+    # про персонажа целиком, и одно другому не мешает: сперва «как говорит
+    # этот герой вообще», потом «а сейчас он раздражён».
+    tone = str(CFG.get("tts.tone", "") or "").strip()
+    return " ".join(p for p in (tone, now) if p)
 
 
 class Qwen3Engine:
@@ -594,10 +599,19 @@ class TTSManager:
                 yielded = False
                 t0 = time.time()
                 audio_s = 0.0
+                # ФОРМА ГОЛОСА (2026-08-13): темп и высота применяются
+                # ЗДЕСЬ, над готовым PCM — один код на все семь движков.
+                # Иначе «говори помедленнее» звучало бы по-разному у Qwen3,
+                # Edge и Piper, а у Piper с Silero не работало бы вовсе.
+                from server.tts import shape as _shape
+                _sp, _semi = _shape.settings()
                 for item in engine.speak(text):
                     yielded = True
-                    try:  # секунды синтезированного аудио (float32 → /4)
+                    try:
                         pcm, sr = item
+                        pcm = _shape.apply(pcm, sr, _sp, _semi)
+                        item = (pcm, sr)
+                        # секунды синтезированного аудио (float32 → /4)
                         audio_s += (len(pcm) // 4) / float(sr)
                     except Exception:
                         pass

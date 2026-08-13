@@ -598,6 +598,25 @@ def _norm_call_dialect(text: str) -> str:
     return _CALL_PREFIX_RE.sub(r'\1', text or "")
 
 
+# СЦЕНИЧЕСКИЕ РЕМАРКИ (2026-08-13, живой вечер: «[Я не могу заставить тебя
+# увидеть что-то, что не видишь ты сама]», «[Я не могу воспроизвести аудио,
+# поэтому это не проблема, а просто уточнение моей технической границы]» —
+# и всё это ПРОИЗНОСИЛОСЬ вслух). Это не маркер инструмента, а мысли вслух
+# в квадратных скобках: модель поясняет сама себе, зачем делает то, что
+# делает. Человеку они не нужны ни в чате, ни тем более в озвучке.
+_STAGE_RE = re.compile(
+    r'\[\s*(?:Я|Мне|Мной|Моя|Мой|Моё|Это|Здесь|Тут|Note|I)\b[^\]]{15,400}\]',
+    re.I)
+
+
+def _strip_stage(text: str) -> str:
+    out = _STAGE_RE.sub("", text or "")
+    # после выреза остаётся осиротевшая точка: «показываю. . Вижу» —
+    # в озвучке это лишняя пауза на ровном месте
+    out = re.sub(r'([.!?…])\s*[.,;]+', r'\1', out)
+    return re.sub(r'\s{2,}', ' ', out).strip()
+
+
 def _strip_broken_call(text: str) -> str:
     """Убрать оборванную скобку вызова, за которой пошёл обычный текст."""
     return _BROKEN_CALL_RE.sub("", text or "")
@@ -745,8 +764,8 @@ def _strip_tool_marks(text: str) -> str:
         # [прим: ...] и кириллица остаются текстом
         return " "
     return re.sub(r'[ 	]{2,}', ' ',
-                  _TOOL_MARK_RE.sub(_sub, _strip_broken_call(
-                      _norm_call_dialect(text)))).strip()
+                  _TOOL_MARK_RE.sub(_sub, _strip_stage(_strip_broken_call(
+                      _norm_call_dialect(text))))).strip()
 
 
 def _diagnose_silence(backend: str, model: str, generated_tokens: int) -> str:
@@ -1360,6 +1379,12 @@ def voiceprint_enroll_path(payload: dict):
         str(p), bool(payload.get("owner")))
 
 
+@app.post("/api/voiceprint/undo")
+def voiceprint_undo():
+    """Ctrl+Z для склейки голосов: вернуть как было."""
+    return voiceprint.undo_merge()
+
+
 @app.post("/api/voiceprint/merge")
 def voiceprint_merge(payload: dict):
     """Слить два голоса в один: владелец перетащил плашку на плашку и тем
@@ -1384,12 +1409,107 @@ def voiceprint_refit():
     return voiceprint.status()
 
 
+# ЗЕРКАЛО (2026-08-13). Кадр аватара живёт в браузере, сервер до канваса
+# не дотягивается — поэтому просим интерфейс и ждём ответа на этом событии.
+SELFIE = {"url": "", "err": "", "ev": threading.Event()}
+
+
+@app.post("/api/avatar/selfie")
+def avatar_selfie(payload: dict):
+    SELFIE["url"] = str(payload.get("url") or "")
+    SELFIE["err"] = str(payload.get("error") or "")
+    SELFIE["ev"].set()
+    return {"ok": True}
+
+
+def take_selfie(timeout: float = 6.0):
+    """Попросить интерфейс снять аватар. Возвращает data-url или None."""
+    SELFIE["ev"].clear()
+    SELFIE["url"] = SELFIE["err"] = ""
+    broadcast_event({"type": "selfie_request"})
+    if not SELFIE["ev"].wait(timeout):
+        log.info("зеркало: интерфейс не ответил за %sс", timeout)
+        return None
+    if SELFIE["err"]:
+        log.info("зеркало: %s", SELFIE["err"])
+        return None
+    return SELFIE["url"] or None
+
+
 @app.get("/api/usage")
 def usage_report(days: int = 7):
     """Сколько токенов сожжено и на что. Отдельно облако (деньги) и
     локальные (бесплатно, но показывает, где жуётся контекст)."""
     from server import usage as _u
     return _u.report(days)
+
+
+@app.get("/api/cards")
+def cards_list():
+    """Костюмы персонажей: что есть и что надето."""
+    from server import cards as _c
+    return {"cards": _c.list_cards(), "active": _c.active()}
+
+
+@app.post("/api/cards/wear")
+def cards_wear(payload: dict):
+    from server import cards as _c
+    cid = str((payload or {}).get("id", ""))
+    return {"ok": True, "note": _c.off() if not cid else _c.wear(cid)}
+
+
+@app.post("/api/cards/make")
+def cards_make(payload: dict):
+    """Сочинить карточку сильнейшим мозгом (может занять секунды)."""
+    from server import cards as _c
+    return {"note": _c.make(str((payload or {}).get("who", "")))}
+
+
+@app.get("/api/voice/shape")
+def voice_shape_get():
+    """Темп и высота голоса — работают поверх ЛЮБОГО движка."""
+    from server.tts import shape as _sh
+    sp, semi = _sh.settings()
+    return {"speed": sp, "pitch": semi}
+
+
+@app.post("/api/voice/shape")
+def voice_shape_set(payload: dict):
+    p = payload or {}
+    if "speed" in p:
+        CFG.set("tts.speed", max(0.5, min(2.0, float(p["speed"]))))
+    if "pitch" in p:
+        CFG.set("tts.pitch", max(-8.0, min(8.0, float(p["pitch"]))))
+    if "tone" in p:
+        CFG.set("tts.tone", str(p["tone"] or ""))
+    from server.tts import shape as _sh
+    sp, semi = _sh.settings()
+    return {"speed": sp, "pitch": semi, "tone": CFG.get("tts.tone", "")}
+
+
+@app.get("/api/brains/providers")
+def brains_providers():
+    """Все известные провайдеры: кто подключён, кого можно подключить за
+    минуту и где взять ключ. Пометки про VPN и карту — чтобы человек не
+    узнавал о гео-блокировке на середине регистрации."""
+    from server.llm import autoconnect as _ac
+    return {"providers": _ac.status(), "suggest": _ac.missing()}
+
+
+@app.post("/api/brains/connect")
+def brains_connect():
+    """Пересобрать парк по ключам, что есть прямо сейчас (после того как
+    человек вписал новый ключ — не дожидаясь перезапуска)."""
+    from server.llm import autoconnect as _ac
+    return _ac.connect_all()
+
+
+@app.get("/api/brains")
+def brains_ladder():
+    """Лестница мозгов: кто сильнее текущей модели и куда Сайка поднимется,
+    если не справится. Тут же видно, кто временно «болен» (лимит/401)."""
+    from server.llm import brains as _b
+    return _b.describe()
 
 
 @app.get("/api/doctor/model")
@@ -1422,6 +1542,14 @@ def doctor_model_set(payload: dict):
     return {"ok": True, "backend": b, "model": m}
 
 
+def do_panic_unload() -> str:
+    """Та же выгрузка, но обычной функцией — чтобы её могла позвать и
+    Сайка инструментом, а не только кнопка в интерфейсе (2026-08-13)."""
+    _panic_body()
+    return ("Выгрузила всё тяжёлое: слух, голос, локальные модели, кэш "
+            "видеокарты. Сама работаю; нужное подгрузится заново.")
+
+
 @app.post("/api/panic_unload")
 async def panic_unload():
     """«ЖЁСТКАЯ РАЗГРУЗКА» (2026-07-25, просьба владельца): выгрузить ВСЁ
@@ -1430,77 +1558,79 @@ async def panic_unload():
     Сама Сайка (сервер, веб-UI, память, диалог) остаётся работать — после
     разгрузки нужное подгружается по порядку руками или лениво при первой
     фразе. Спасение, когда ОЗУ/VRAM забиты и непонятно кем."""
-    def _do():
-        freed, failed = [], []
-        for n in list(stt.instances):
-            try:
-                stt.unload_engine(n)
-                freed.append("слух:" + n)
-            except Exception as e:
-                failed.append(f"слух:{n} ({e})")
-        for n in list(tts.engines):
-            try:
-                tts.unload_engine(n)
-                freed.append("голос:" + n)
-            except Exception as e:
-                failed.append(f"голос:{n} ({e})")
+    return await asyncio.get_event_loop().run_in_executor(
+        None, _panic_body) or {"ok": True}
+
+
+def _panic_body():
+    freed, failed = [], []
+    for n in list(stt.instances):
         try:
-            # пустая «оставляемая» пара не совпадёт ни с чем -> выгрузит все
-            for b, m in llm.unload_others("", ""):
-                failed.append(f"LLM:{b}/{m}")
-            freed.append("LLM: все локальные")
+            stt.unload_engine(n)
+            freed.append("слух:" + n)
         except Exception as e:
-            failed.append(f"LLM ({e})")
+            failed.append(f"слух:{n} ({e})")
+    for n in list(tts.engines):
         try:
-            import gc
-            gc.collect()
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                freed.append("CUDA-кэш")
-        except Exception:
-            pass
-        # состояние «ничего не выбрано»: иначе первая же фраза/озвучка лениво
-        # подгружает модели обратно, и разгрузка выглядит неработающей
-        try:
-            stt.set_engine("none")
-            # ГЛУШИМ НА СЕАНС, А НЕ В КОНФИГ (2026-07-29). Было
-            # CFG.set("tts.enabled", False) — запись на диск, переживающая
-            # перезапуск: один раз нажал «выгрузить всё», и озвучка мертва
-            # навсегда, причём беззвучно (движки грузятся, speak молчит).
-            # Смысл разгрузки — освободить память сейчас, а не запретить
-            # звук на будущее. Движок в "off" делает ровно нужное: ничего
-            # не подгружается само, а первый же выбор движка всё вернёт.
-            CFG.set("tts.engine", "off")
-            freed.append("слух и озвучка выключены до ручного выбора")
-        except Exception:
-            pass
-        # ВСЁ В НЕАКТИВНОЕ (2026-07-28, просьба владельца): это по сути
-        # кнопка выключения всех моделей, и интерфейс обязан это показать —
-        # индикаторы гаснут, а не горят зелёным «всё хорошо». Забываем, кто
-        # отвечал последним, и гасим отпечаток голоса: его рабочий поток
-        # держал бы энкодер в памяти после разгрузки.
-        ACTIVE_LLM.update(backend="", model="")
-        HARD_UNLOADED["on"] = True
-        try:
-            # выключаем НА СЕЙЧАС, но узнавание само вернётся, как только
-            # человек снова заговорит в живой микрофон (см. voiceprint.feed).
-            # Иначе эта кнопка тихо ломала карту голосов на весь день.
-            voiceprint.set_enabled(False)
-            freed.append("узнавание голоса (вернётся, когда заговоришь)")
-        except Exception:
-            pass
-        broadcast_event({"type": "unloaded"})
-        msg = "🧹 Жёсткая разгрузка: выгрузила " + ", ".join(freed or ["ничего"])
-        if failed:
-            msg += ". НЕ поддались: " + ", ".join(failed) + \
-                   " — их добивай через диспетчер задач"
-        msg += ". Сама я работаю; подгружай нужное по порядку — кликом " \
-               "по движку или кнопкой ⬇."
-        log.info("panic_unload: freed=%s failed=%s", freed, failed)
-        broadcast_event({"type": "baymax", "mood": "meh", "text": msg})
-    await asyncio.get_event_loop().run_in_executor(None, _do)
-    return {"ok": True}
+            tts.unload_engine(n)
+            freed.append("голос:" + n)
+        except Exception as e:
+            failed.append(f"голос:{n} ({e})")
+    try:
+        # пустая «оставляемая» пара не совпадёт ни с чем -> выгрузит все
+        for b, m in llm.unload_others("", ""):
+            failed.append(f"LLM:{b}/{m}")
+        freed.append("LLM: все локальные")
+    except Exception as e:
+        failed.append(f"LLM ({e})")
+    try:
+        import gc
+        gc.collect()
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            freed.append("CUDA-кэш")
+    except Exception:
+        pass
+    # состояние «ничего не выбрано»: иначе первая же фраза/озвучка лениво
+    # подгружает модели обратно, и разгрузка выглядит неработающей
+    try:
+        stt.set_engine("none")
+        # ГЛУШИМ НА СЕАНС, А НЕ В КОНФИГ (2026-07-29). Было
+        # CFG.set("tts.enabled", False) — запись на диск, переживающая
+        # перезапуск: один раз нажал «выгрузить всё», и озвучка мертва
+        # навсегда, причём беззвучно (движки грузятся, speak молчит).
+        # Смысл разгрузки — освободить память сейчас, а не запретить
+        # звук на будущее. Движок в "off" делает ровно нужное: ничего
+        # не подгружается само, а первый же выбор движка всё вернёт.
+        CFG.set("tts.engine", "off")
+        freed.append("слух и озвучка выключены до ручного выбора")
+    except Exception:
+        pass
+    # ВСЁ В НЕАКТИВНОЕ (2026-07-28, просьба владельца): это по сути
+    # кнопка выключения всех моделей, и интерфейс обязан это показать —
+    # индикаторы гаснут, а не горят зелёным «всё хорошо». Забываем, кто
+    # отвечал последним, и гасим отпечаток голоса: его рабочий поток
+    # держал бы энкодер в памяти после разгрузки.
+    ACTIVE_LLM.update(backend="", model="")
+    HARD_UNLOADED["on"] = True
+    try:
+        # выключаем НА СЕЙЧАС, но узнавание само вернётся, как только
+        # человек снова заговорит в живой микрофон (см. voiceprint.feed).
+        # Иначе эта кнопка тихо ломала карту голосов на весь день.
+        voiceprint.set_enabled(False)
+        freed.append("узнавание голоса (вернётся, когда заговоришь)")
+    except Exception:
+        pass
+    broadcast_event({"type": "unloaded"})
+    msg = "🧹 Жёсткая разгрузка: выгрузила " + ", ".join(freed or ["ничего"])
+    if failed:
+        msg += ". НЕ поддались: " + ", ".join(failed) + \
+               " — их добивай через диспетчер задач"
+    msg += ". Сама я работаю; подгружай нужное по порядку — кликом " \
+           "по движку или кнопкой ⬇."
+    log.info("panic_unload: freed=%s failed=%s", freed, failed)
+    broadcast_event({"type": "baymax", "mood": "meh", "text": msg})
 
 
 @app.post("/api/tts/model")
@@ -2846,6 +2976,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         FAIL_STREAK["ts"] = time.time()
     _escalated = False
     _prefer_local = None
+    _prefer_brain = None      # (backend, model) — ступень лестницы мозгов
     # два повода поднять мозги: жалоба человека И собственный механический
     # провал. Второй важнее — он объективен и не требует, чтобы человек
     # дважды сказал «не работает».
@@ -2855,31 +2986,64 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             and CFG.get("llm.escalate_on_fail", True)):
         _why = ("не справляется механически: " + MODEL_FAIL["why"]
                 if _mech else "две неудачи подряд")
-        _c = CFG.get("llm.cloud", {}) or {}
-        if _c.get("enabled") and _c.get("model"):
-            _route, _route_why = "cloud", _why + " — зову облако"
-            _escalated = True
-        else:
-            # ОБЛАКА НЕТ — БЕРЁМ ЛУЧШУЮ ЛОКАЛЬНУЮ (2026-08-13). Раньше без
-            # облака эскалация просто не происходила, и мелкая модель
-            # оставалась барахтаться. А в парке обычно есть кто-то крупнее.
-            try:
-                from server import ratings as _rt
-                _cur = CFG.get("llm.model", "")
-                _sc = _rt.llm_scores() or {}
-                _best = max((m for m in _sc if m != _cur),
-                            key=lambda m: _sc.get(m, 0), default=None)
-                if _best and _sc.get(_best, 0) > _sc.get(_cur, 0):
-                    _prefer_local = _best
-                    _route_why = _why + f" — беру {_best}"
-                    _escalated = True
-                    log.info("Эскалация без облака: %s -> %s", _cur, _best)
-            except Exception as e:
-                log.debug("эскалация на локальную не вышла: %s", e)
+        # ЛЕСТНИЦА МОЗГОВ (2026-08-13, просьба владельца: «если не
+        # получилось — просто использует мозг с более высоким рейтингом»).
+        # Раньше здесь была ОДНА ступень: активный облачный слот, а если он
+        # пуст — лучшая локальная ПО СКОРОСТИ (llm_scores меряет tps, то
+        # есть самую быструю, обычно самую тупую). Теперь подъём идёт по
+        # настоящей лестнице (server/llm/brains.py): облака с живым ключом
+        # и парк, отсортированные по мозгам, и КАЖДЫЙ следующий провал
+        # поднимает ещё на ступень, а не топчется на той же.
+        try:
+            from server.llm import brains as _brains
+            if time.time() - ESCALATION["ts"] > 900:
+                ESCALATION["tried"] = set()      # старое не мешает новому
+            _step = _brains.next_brain(ESCALATION["tried"])
+            if _step:
+                ESCALATION["tried"].add((_step["backend"], _step["model"]))
+                ESCALATION["ts"] = time.time()
+                _prefer_brain = (_step["backend"], _step["model"])
+                _route = "cloud" if _step["backend"] == "cloud" else _route
+                _route_why = (_why + f" — поднимаюсь на {_step['model']} "
+                              f"(мозги {_step['rank']}/10)")
+                _escalated = True
+                log.info("Эскалация: %s -> %s/%s (ранг %s)",
+                         CFG.get("llm.model", ""), _step["backend"],
+                         _step["model"], _step["rank"])
+        except Exception as e:
+            log.debug("лестница мозгов не сработала: %s", e)
         if _escalated:
             MODEL_FAIL["n"] = 0
             FAIL_STREAK["n"] = 0
             log.info("Эскалация: %s", _route_why)
+    # РУКИ — ТОЛЬКО ТОМУ, КТО ИМИ РАБОТАЕТ (2026-08-13). Живой лог: пять
+    # реплик подряд «уточни, пожалуйста» на «открой Геншин», хотя ярлык в
+    # каталоге есть и нечёткий поиск даёт 70 баллов. Дело не в поиске и не
+    # в предохранителе — за рулём сидела 4-миллиардная модель, которая
+    # команду в вызов инструмента не превращает. Болтать пусть болтает кто
+    # угодно (это быстро и бесплатно), но КОМАНДУ отдаём мозгу, который
+    # дотягивает до планки. Дорого это не выходит: регламент рук
+    # (workflow.scenario) отличает задачу от разговора, и на «привет»
+    # облако не дёргается вообще.
+    if not _escalated and not _prefer_brain:
+        try:
+            from server import workflow as _wf0
+            from server.llm import brains as _br0
+            if _wf0.scenario(user_text):
+                _cb, _cm = _br0.current()
+                _min = int(CFG.get("llm.hands_min_rank", 7))
+                if _br0.rank_of(_cm, _cb) < _min:
+                    _h = _br0.for_hands(_min)
+                    if _h:
+                        _prefer_brain = (_h["backend"], _h["model"])
+                        _route = ("cloud" if _h["backend"] == "cloud"
+                                  else _route)
+                        _route_why = (f"задача руками — беру {_h['model']} "
+                                      f"(мозги {_h['rank']}/10)")
+                        log.info("Руки: %s -> %s/%s", _cm, _h["backend"],
+                                 _h["model"])
+        except Exception as e:
+            log.debug("выбор мозга под руки пропущен: %s", e)
     _fast = bool(CFG.get("llm.fast_mode", False))
     # ЛЁГКАЯ РЕПЛИКА: короткая болтовня без намёка на задачу/инструменты.
     # Ей не нужен поиск по долгой памяти — это 125-500мс Chroma/SQLite на
@@ -2994,6 +3158,66 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             "состояние инструментами (window_list / apps_list / open_folder), "
             "разберись, что именно не сработало, и добейся результата или "
             "честно объясни, что мешает и какой есть обходной путь.")
+    # КТО ПЕРЕД ТОБОЙ (2026-08-13, просьба владельца: «перестала ко мне
+    # обращаться в женском роде»). Модель по умолчанию сыпала «ты сказала»,
+    # «ты дала», «ты просила» — gemma в русском тянет женские окончания,
+    # если пол собеседника не назван прямо. В персоне это есть общими
+    # словами, но общее мелкая модель не удерживает: нужен КОРОТКИЙ факт
+    # рядом с репликой, каждый ход.
+    try:
+        _g = str(CFG.get("owner.gender", "m")).lower()
+        _nm = str(CFG.get("owner.name", "") or "").strip()
+        if _g.startswith("m"):
+            dyn_parts.append(
+                "### Собеседник (факт): МУЖЧИНА"
+                + (f", зовут {_nm}" if _nm else "") + ". Обращайся к нему в "
+                "МУЖСКОМ роде: «ты сказал», «ты просил», «ты дал», «сам». "
+                "Женские окончания в его адрес — грубая ошибка, он на них "
+                "прямо жаловался.")
+        elif _g.startswith("f") or _g.startswith("ж"):
+            dyn_parts.append(
+                "### Собеседник (факт): ЖЕНЩИНА"
+                + (f", зовут {_nm}" if _nm else "") + ". Обращайся в женском "
+                "роде.")
+    except Exception:
+        pass
+    # ГДЕ Я СЕЙЧАС (2026-08-13, слова владельца: «не в предохранителе дело,
+    # а в понимании, что она делает и где» / «она должна понимать и видеть,
+    # какое приложение юзает»). До этого блока она действовала вслепую:
+    # слала Ctrl+Tab «в браузер», не зная, что впереди десктопное
+    # приложение, и переключила человеку чат в чужой программе. Дело было
+    # не в отсутствии запрета, а в отсутствии глаз.
+    try:
+        from server import situation as _sit
+        _where = _sit.block()
+        if _where:
+            dyn_parts.append(_where)
+    except Exception as e:
+        log.debug("обстановка пропущена: %s", e)
+    # КОСТЮМ (2026-08-13). Идёт ПЕРЕД регламентом рук: сначала «кто я
+    # сейчас», потом «как действую». Пусто, когда костюма нет, — обычный
+    # разговор промптом о ролевой игре не засоряется.
+    try:
+        from server import cards as _cards
+        _suit = _cards.block()
+        if _suit:
+            dyn_parts.append(_suit)
+    except Exception as e:
+        log.debug("костюм пропущен: %s", e)
+    # РЕГЛАМЕНТ РУК (2026-08-13, разбор WORKFLOW.md). Обстановка отвечает
+    # на «где я», а этот блок — на «в каком порядке действовать». Человек
+    # проходит цикл цель→место→попасть→посмотреть→сделать→подтвердить→
+    # проверить не задумываясь, потому что смотреть на экран ему бесплатно.
+    # Модель без явного порядка пропускает «посмотреть» и «проверить» и
+    # выдаёт намерение за результат. Кладём ТОЛЬКО под задачу руками и
+    # ТОЛЬКО нужный сценарий: полный свод утопил бы мелкую модель.
+    try:
+        from server import workflow as _wf
+        _plan = _wf.block(user_text)
+        if _plan:
+            dyn_parts.append(_plan)
+    except Exception as e:
+        log.debug("регламент рук пропущен: %s", e)
     # ЧТО СЛЫШНО ВОКРУГ (2026-08-13, просьба владельца: «давать Сайке
     # понимание за счёт меток от её слуха — но не как прямой запрос, а как
     # то, что она могла бы использовать в контексте диалога»). Поэтому это
@@ -3712,6 +3936,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             _c = CFG.get("llm.cloud", {}) or {}
             if _c.get("model"):
                 _prefer = ("cloud", _c["model"])
+        # ступень лестницы важнее общего маршрута: она названа поимённо
+        if _prefer_brain:
+            _prefer = _prefer_brain
         for token in llm.chat_stream(messages, prefer=_prefer,
                                      on_fallback=on_fallback,
                                      on_tool=on_tool, image=image,
@@ -3887,6 +4114,45 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 except Exception as e:
                     log.info("Досчитать псевдо-%s не вышло: %s",
                             _tool_name, e)
+            if acted is None:
+                # ЛЮБОЙ ИНСТРУМЕНТ, А НЕ ПЯТЬ ИЗБРАННЫХ (2026-08-13).
+                # Раньше здесь стоял белый список, и «закрой блендер» через
+                # такую модель просто исчезало: вызов вырезан, действие не
+                # сделано, человеку сказано «Секунду, разберусь». Теперь
+                # исполняем всё, что система знает — через штатный
+                # tools.call, то есть с доверием и предохранителем намерения.
+                try:
+                    from server.llm import tools as _handspc
+                    _known = {sc["function"]["name"]
+                              for sc in _handspc.schemas()}
+                    for _n, _a in _text_tool_calls(_raw):
+                        if _n not in _known:
+                            continue
+                        _handspc.LAST_USER["text"] = user_text
+                        out.put({"type": "tool", "name": _n, "args": _a})
+                        _res = str(_handspc.call(_n, _a) or "")
+                        log.info("Текстовый вызов исполнен: %s(%s) -> %s",
+                                 _n, _a, _res[:120])
+                        acted = f"{_n} исполнен по-настоящему"
+                        # словами о результате — её же голосом, коротко
+                        try:
+                            _said = llm.chat_once([
+                                {"role": "system", "content":
+                                 "Ты голосовой ассистент. Одной короткой "
+                                 "фразой скажи человеку, что получилось — "
+                                 "своими словами, без markdown. Если в "
+                                 "результате отказ или ошибка, скажи об "
+                                 "этом честно и назови причину."},
+                                {"role": "user", "content":
+                                 f"Ты вызвала {_n}. Результат:\n{_res[:1200]}"}
+                            ], max_len=400).strip()
+                            if _said:
+                                clean = _said
+                        except Exception:
+                            clean = _res[:400] or clean
+                        break        # один вызов за ход, дальше — новый ход
+                except Exception as e:
+                    log.warning("текстовый вызов не исполнился: %s", e)
             sentence_buf = ""
             if not clean:
                 clean = "Закрыла браузер." if acted else "Секунду, разберусь."
@@ -4104,6 +4370,20 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                                        stats["tps"])
             except Exception:
                 pass
+            # ЗАДЕРЖКА В ЛЕСТНИЦУ МОЗГОВ (2026-08-13): «3-ка бывает на 30
+            # секунд отвечает». Копим время до первого токена по каждому
+            # мозгу — медленный спустится на ступень сам, без правки кода.
+            try:
+                from server.llm import brains as _br
+                _ms = stats.get("latency_ms")
+                if _ms:
+                    _br.note_latency(used_llm.get("backend")
+                                     or CFG.get("llm.backend", ""),
+                                     used_llm.get("model")
+                                     or CFG.get("llm.model", ""),
+                                     float(_ms) / 1000.0)
+            except Exception:
+                pass
 
     # ТРИ ПОПЫТКИ (2026-07-26). Считаем подходы к одной цели: провалился ли
     # инструмент ИМЕННО в этом ходу — видно по отметке времени, не таща
@@ -4146,6 +4426,18 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             # и СРАЗУ поднимаем мозги, а не только пишем в досье: досье
             # влияет на следующий автопуск, а человеку плохо сейчас
             note_model_fail("отрапортовала о действии, не вызвав инструмент")
+            # ...И ГОВОРИМ ЕЙ ОБ ЭТОМ СЛЕДУЮЩИМ ХОДОМ (2026-08-13, живой
+            # вечер: «Открываю плейлист, дай мне секунду» — ноль вызовов,
+            # человек ждёт, ничего не происходит, и она об этом не знает.
+            # Досье и рейтинг — это статистика для будущего; ей нужен факт
+            # СЕЙЧАС, тем же каналом, что и результаты настоящих действий.)
+            PENDING_ACTIONS.append((
+                "твоё прошлое обещание",
+                "ты НАПИСАЛА, что делаешь это, но инструмент не вызвала — "
+                "значит НЕ СДЕЛАЛА, и человек сидит и ждёт впустую. "
+                "Сделай сейчас: сначала вызов, потом одна короткая фраза. "
+                "Не объясняй, почему в прошлый раз не вышло, — просто "
+                "сделай."))
         elif _tool_used["any"]:
             _dos.record_ok(_who)
         # прямая жалоба владельца — самый весомый сигнал, весит как десять
@@ -4267,7 +4559,61 @@ FAIL_STREAK = {"n": 0, "ts": 0.0}
 # вызвав инструмента; уронила в текст «[tool_call»; промолчала. В досье
 # это и так писалось («снизила надёжность»), но на выбор модели ПРЯМО
 # СЕЙЧАС не влияло — оно учитывалось только при следующем автопуске.
+def _text_tool_calls(raw: str) -> list:
+    """Вызовы инструментов, НАПЕЧАТАННЫЕ текстом, -> [(имя, аргументы)].
+
+    2026-08-13, живой случай с Cloudflare/llama-3.3-70b: модель честно
+    просит инструмент — `{"type":"function","name":"window_close",
+    "parameters":{"match":"Blender"}}` — но приходит это обычным текстом,
+    потому что OpenAI-совместимая обёртка провайдера не кладёт вызовы в
+    поле tool_calls. Система такое ЛОВИЛА и вырезала, но исполняла лишь
+    пять избранных инструментов из белого списка; всё остальное молча
+    пропадало, а человек видел «Секунду, разберусь» и ничего больше.
+
+    Модель не виновата и не глупая — виновата транспортная щель. Разбираем
+    JSON по балансу скобок (regex на вложенных объектах врёт) и отдаём
+    как обычный вызов: дальше он идёт через штатный tools.call со всеми
+    предохранителями, как если бы пришёл нормальным путём."""
+    out = []
+    if not raw:
+        return out
+    for m in re.finditer(r'\{', raw):
+        depth, end = 0, None
+        for i in range(m.start(), len(raw)):
+            if raw[i] == '{':
+                depth += 1
+            elif raw[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if not end:
+            continue
+        try:
+            obj = json.loads(raw[m.start():end])
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        name = obj.get("name") or (obj.get("function") or {}).get("name")
+        if not isinstance(name, str):
+            continue
+        args = (obj.get("parameters") or obj.get("arguments")
+                or (obj.get("function") or {}).get("arguments") or {})
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        if isinstance(args, dict):
+            out.append((name, args))
+    return out
+
+
 MODEL_FAIL = {"n": 0, "ts": 0.0, "why": ""}
+# какие мозги уже пробовали в текущей серии провалов: следующая
+# эскалация должна подниматься ВЫШЕ, а не звать того же неудачника
+ESCALATION = {"tried": set(), "ts": 0.0}
 
 
 def note_model_fail(why: str):
@@ -5088,6 +5434,37 @@ async def ws_endpoint(ws: WebSocket):
             log.info("Пропустила своё же эхо (совпало с репликой): %r",
                      r["text"][:60])
             return
+        # ОТВЕЧАЮ ТОЛЬКО ВЛАДЕЛЬЦУ (2026-08-13, просьба владельца: «если
+        # Сайка слышит другие голоса — не реагировать на них ответами, пока
+        # я не дам разрешение»).
+        #
+        # Разница с режимом «наблюдаю» принципиальная: там она молчит на
+        # ВСЁ, здесь — слышит и записывает всех, но отвечает одному. Чужую
+        # реплику по-прежнему видно в чате и в стенограмме: она не глухая,
+        # она воспитанная.
+        #
+        # Два предохранителя, чтобы это не превратилось в кляп:
+        #  - владелец в реестре не помечен — фильтр не работает вообще;
+        #  - голос НЕ УЗНАН (метки нет или уверенность низкая) — отвечаем.
+        #    Молчать из-за собственной неуверенности хуже, чем ответить
+        #    лишний раз: человек тогда просто не понимает, сломалась она
+        #    или обиделась.
+        if CFG.get("owner.only_owner", True) and not r.get("speaker_owner"):
+            _sp_name = r.get("speaker") or ""
+            _sp_conf = float(r.get("speaker_conf") or 0)
+            _has_owner = False
+            try:
+                _has_owner = any(
+                    v.get("owner") for v in
+                    (voiceprint.S.reg.speakers or {}).values())
+            except Exception:
+                pass
+            if (_has_owner and _sp_name
+                    and _sp_conf >= float(CFG.get("owner.min_conf", 0.55))):
+                log.info("Чужой голос «%s» (%.0f%%) — записала, не отвечаю",
+                         _sp_name, _sp_conf * 100)
+                out.put({"type": "stt", **r, "ignored_guest": True})
+                return
         # «стоп/хватит/молчи» — глушим генерацию и озвучку, в LLM не отправляем
         if _is_stop(r["text"]):
             _user_activity()
@@ -5316,6 +5693,35 @@ def _autostart_components():
     рейтинг скорости (data/ratings.json), затем выбор из конфига.
     Работает фоном, старту сервера не мешает."""
     time.sleep(2)  # даём uvicorn подняться, потом греем тяжёлое
+
+    # ПОДКЛЮЧИТЬ ВСЁ, ПОД ЧТО ЕСТЬ КЛЮЧ (2026-08-13, владелец: «все
+    # подключай, всё познаётся в сравнении — главный принцип этой
+    # системы»). Ключ в secrets.json больше не лежит мёртвым грузом в
+    # ожидании, пока человек нажмёт «Сохранить и включить»: есть ключ —
+    # есть мозг в общем списке. Без батников и галочек, ровно тот смысл,
+    # ради которого установка и затевалась.
+    try:
+        from server.llm import autoconnect as _ac
+        _r = _ac.connect_all()
+        if _r["added"]:
+            log.info("Подключила сама: %s", ", ".join(_r["added"]))
+    except Exception as e:
+        log.debug("автоподключение провайдеров не вышло: %s", e)
+
+    # БРАУЗЕР ЧЕЛОВЕКА — САМИ (2026-08-13, замечание владельца: «нафиг ты
+    # мне опять подсовываешь батник»). Всё, что можно сделать без него,
+    # делаем без него: Chrome не запущен — поднимаем сразу с отладочным
+    # портом, и он уже управляемый, человек ничего не заметил. Запущен без
+    # порта — молча перезапускать чужие вкладки нельзя, это его решение:
+    # Сайка скажет словами и дождётся согласия.
+    try:
+        from server import browser_hands as _bh
+        _note = _bh.autoattach()
+        if _note:
+            broadcast_event({"type": "baymax", "mood": "meh",
+                             "text": "🌐 " + _note})
+    except Exception as _e:
+        log.debug("автоподключение к Chrome: %s", _e)
 
     def _try_chain(kind, names, loader):
         for name in names:

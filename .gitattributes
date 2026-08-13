@@ -1,0 +1,49 @@
+# КОНЦЫ СТРОК (2026-07-27). Симптом был такой: git pull на втором ПК падал с
+# «Your local changes to DEVBOARD.md, config.json, devboard.json would be
+# overwritten». Причём diff показывал ВСЕ строки изменёнными — 1853 удалено,
+# 1853 добавлено при нуле реальных правок.
+#
+# Причина: Python на Windows пишет файлы с CRLF, а в репозитории они лежат с
+# LF. core.autocrlf не задан, .gitattributes не было — и каждая машина,
+# которая просто ЗАПУСТИЛА Сайку, помечала devboard.json и DEVBOARD.md как
+# полностью переписанные. Эти три файла программа переписывает сама
+# постоянно, поэтому конфликт был гарантирован на каждом pull.
+#
+# Лечится тем, что правила переводов живут в самом репозитории и работают
+# одинаково на всех машинах, а не в личных настройках каждого git.
+
+# всё текстовое хранится в репозитории с LF, в рабочей папке — как удобно ОС
+* text=auto eol=lf
+
+# ИСКЛЮЧЕНИЕ: батники. cmd.exe спотыкается о LF-переводы в метках и goto —
+# эти файлы обязаны оставаться с CRLF на диске.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# бинарное — не трогать вообще, иначе git испортит содержимое
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.zip binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.pyd binary
+*.onnx binary
+*.gguf binary
+*.safetensors binary
+*.pt binary
+*.pth binary
+*.bin binary
+*.vrm binary
+*.vrma binary
+*.glb binary
+*.gltf binary
+*.woff2 binary
+*.pdf binary

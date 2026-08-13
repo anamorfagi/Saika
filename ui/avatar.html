@@ -84,7 +84,29 @@ const qs = new URLSearchParams(location.search);
 const hint = document.getElementById('hint');
 
 /* ---------- сцена ---------- */
-const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+// preserveDrawingBuffer нужен, чтобы кадр можно было ПРОЧИТАТЬ после
+// отрисовки (2026-08-13, зеркало для Сайки). Без него toDataURL отдаёт
+// пустоту: WebGL по умолчанию сбрасывает буфер сразу после показа.
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true,
+                                          preserveDrawingBuffer:true});
+
+// ЗЕРКАЛО (2026-08-13, живой отказ: «посмотри на себя, опиши, как ты
+// выглядишь» — она рассказывала про «зрелую женщину» и глаза, которые
+// «меняются от рендеринга», глядя на аниме-девочку с зелёными глазами.
+// Смотреть на себя ей было НЕЧЕМ: зрение снимает весь экран, где она себя
+// не узнаёт. Теперь родительская страница может попросить кадр аватара.)
+window.addEventListener('message', (e) => {
+  if (!e.data || e.data.type !== 'saika-selfie') return;
+  try {
+    renderer.render(scene, camera);       // свежий кадр, а не прошлый
+    const url = renderer.domElement.toDataURL('image/jpeg', 0.85);
+    (e.source || window.parent).postMessage(
+      {type: 'saika-selfie-result', url: url}, '*');
+  } catch (err) {
+    (e.source || window.parent).postMessage(
+      {type: 'saika-selfie-result', error: String(err)}, '*');
+  }
+});
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const bg = qs.get('bg');

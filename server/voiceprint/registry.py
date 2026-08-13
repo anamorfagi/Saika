@@ -232,6 +232,28 @@ class Registry:
         self.dirty = True
         return {"ok": True, "name": name}
 
+    def snapshot(self) -> dict:
+        """Снимок состояния для отмены (2026-08-13, просьба владельца:
+        «сохрани механику отмены Ctrl+Z»). Слияние необратимо по своей
+        природе — векторы двух голосов становятся общими. Значит откат
+        возможен только через копию ДО: держим её в памяти, недолго и
+        дёшево (сотни векторов по 192 числа — единицы мегабайт)."""
+        import copy
+        return {
+            "speakers": {k: {**v, "embs": v["embs"].copy()}
+                         for k, v in self.speakers.items()},
+            "stat": copy.deepcopy(self.stat),
+        }
+
+    def restore(self, snap: dict) -> bool:
+        if not snap or not snap.get("speakers"):
+            return False
+        self.speakers = {k: {**v, "embs": v["embs"].copy()}
+                         for k, v in snap["speakers"].items()}
+        self.stat = dict(snap.get("stat") or {})
+        self.dirty = True
+        return True
+
     def merge(self, src: str, dst: str):
         """Слить два голоса в один (2026-07-28, идея владельца).
 

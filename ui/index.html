@@ -1680,8 +1680,36 @@ function handleJson(m){
   // них было нечем — номеров не существовало. Теперь номера видно глазами,
   // и достаточно сказать «открой второй».
   else if(m.type==='links'){ addLinks(m); }
+  // ЗЕРКАЛО (2026-08-13): сервер просит кадр аватара — спрашиваем у
+  // iframe и отсылаем обратно. Через посредника, потому что канвас живёт
+  // внутри avatar.html, а сервер до него не дотягивается никак.
+  else if(m.type==='selfie_request'){ takeSelfie(); }
   else if(m.type==='problem'){ showProblem(m); }
 }
+let _selfieWait=null;
+function takeSelfie(){
+  const fr=$('#av-frame');
+  if(!fr||!fr.contentWindow){
+    fetch('/api/avatar/selfie',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({error:'аватар не открыт'})});
+    return;
+  }
+  clearTimeout(_selfieWait);
+  _selfieWait=setTimeout(()=>{
+    fetch('/api/avatar/selfie',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({error:'аватар не ответил'})});
+  },4000);
+  fr.contentWindow.postMessage({type:'saika-selfie'},'*');
+}
+addEventListener('message',(e)=>{
+  if(!e.data||e.data.type!=='saika-selfie-result') return;
+  clearTimeout(_selfieWait);
+  fetch('/api/avatar/selfie',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url:e.data.url||'',error:e.data.error||''})});
+});
 function addLinks(m){
   const items=(m&&m.items)||[];
   if(!items.length) return;
@@ -8012,6 +8040,19 @@ eqFrame();
   .vp-card .sm{font-size:10px;color:var(--dim);line-height:1.3}
   .vp-card .acts{margin-left:auto;display:flex;gap:4px;flex:none}
   .vp-card{cursor:grab}
+  /* СКЛЕЙКА ГОЛОСОВ БЕЗ ДИАЛОГА (2026-08-13, требование владельца:
+     «перетащил один голос на другой — он моргнул один раз, ещё пара секунд,
+     моргнул второй раз по контуру и склеился; лишних кнопок нет и случайных
+     склеек тоже нет»). Подтверждение — сам жест: бросил и не трогал две
+     секунды. Отдёрнул мышь, кликнул, нажал Esc — отмена. */
+  @keyframes vpBlink{0%,100%{filter:none}
+    45%{filter:brightness(2.1) saturate(1.4)}}
+  @keyframes vpRing{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0)}}
+  .vp-card.merging{animation:vpBlink .38s ease-in-out;position:relative}
+  .vp-card.merging::after{content:'';position:absolute;inset:-2px;
+    border:2px solid currentColor;border-radius:11px;pointer-events:none;
+    animation:vpRing var(--vpwait,2s) linear forwards}
+  .vp-card.merged{animation:vpBlink .38s ease-in-out}
   .vp-card.drop{outline:2px dashed currentColor;outline-offset:2px;
     background:rgba(255,255,255,.06)}
   .vp-row input::-webkit-search-cancel-button,
@@ -8358,14 +8399,79 @@ eqFrame();
   });
   document.addEventListener('dragend', () => { drag2.nm = ''; });
 
+  // взведённая склейка: пока она висит, панель НЕ перерисовываем — иначе
+  // таймер сносит плашку вместе с анимацией, и всё «мерцает и лагает»
+  const armed = {t: null, card: null, src: '', dst: ''};
+
+  function cancelMerge(why){
+    if(!armed.t) return;
+    clearTimeout(armed.t); armed.t = null;
+    if(armed.card){ armed.card.classList.remove('merging'); }
+    armed.card = null; armed.src = armed.dst = '';
+    if(why) toast(why, {kind: 'info', ttl: 2500});
+  }
+
+  function armMerge(card, src, dst){
+    cancelMerge('');
+    // 3 секунды: за две человек не успевал понять, что происходит —
+    // склейка «слишком быстро происходила» (2026-08-13)
+    const wait = 3000;
+    armed.card = card; armed.src = src; armed.dst = dst;
+    card.style.setProperty('--vpwait', wait + 'ms');
+    // вспышка уже была при подлёте — здесь только кольцо обратного отсчёта
+    card.classList.remove('merging');
+    void card.offsetWidth;              // перезапустить анимацию кольца
+    card.classList.add('merging');
+    armed.t = setTimeout(async () => {
+      armed.t = null;
+      card.classList.remove('merging');
+      void card.offsetWidth;
+      card.classList.add('merged');     // второе моргание — «склеил»
+      setTimeout(() => card.classList.remove('merged'), 400);
+      const a = armed.src, b = armed.dst;
+      armed.card = null; armed.src = armed.dst = '';
+      await mergeVoices(a, b);
+    }, wait);
+  }
+
+  // отмена: клик мимо, Esc, уход мыши с плашки
+  async function undoMerge(){
+    try{
+      const r = await api('/api/voiceprint/undo', {});
+      if(r.ok === false){ toast(r.error || 'отменять нечего',
+                                {kind: 'info', ttl: 3000}); return; }
+      ST = r;
+      toast('Вернула как было: ' + (r.undone || ''), {kind: 'ok', ttl: 5000});
+      loadPoints(); paintPanel();
+    }catch(e){ toast('Отменить не вышло: ' + e.message, {kind: 'err'}); }
+  }
+
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape'){ cancelMerge('Склейку отменила.'); return; }
+    // CTRL+Z (2026-08-13, просьба владельца «сохрани механику отмены»).
+    // Пока идёт отсчёт — просто не даём склеиться. Уже склеилось —
+    // ОТКАТЫВАЕМ по-настоящему: сервер держит снимок две минуты.
+    if((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'я')){
+      if(armed.t){ e.preventDefault(); cancelMerge('Склейку отменила.'); return; }
+      const pane = document.getElementById('vp-pane');
+      if(pane && pane.offsetParent !== null){ e.preventDefault(); undoMerge(); }
+    }
+  });
+  document.addEventListener('pointerdown', e => {
+    if(!armed.t) return;
+    if(armed.card && armed.card.contains(e.target)) return;
+    cancelMerge('Склейку отменила.');
+  });
+
   async function mergeVoices(src, dst){
     if(!src || !dst || src === dst) return;
     try{
       const r = await api('/api/voiceprint/merge', {src: src, dst: dst});
       if(r.ok === false) toast(r.error || 'не вышло', {kind: 'err'});
       else toast('Слила: «' + src + '» — это тот же голос, что «' + dst +
-                 '». Теперь эталон шире, и в обоих состояниях узнает сама',
-                 {kind: 'ok', ttl: 8000});
+                 '». Эталон шире, узнает в обоих состояниях. ' +
+                 'Передумал — Ctrl+Z, две минуты держу снимок',
+                 {kind: 'ok', ttl: 9000});
       ST = r;
     }catch(e){ toast('Не слилось: ' + e.message, {kind: 'err'}); }
     loadPoints(); paintPanel();
@@ -8653,6 +8759,11 @@ eqFrame();
   }
 
   function paintPanel(){
+    // ПАУЗА НА ВРЕМЯ ЖЕСТА (2026-08-13): панель перерисовывается по
+    // таймеру, и раньше это сносило и подсветку цели, и взведённую
+    // склейку — снаружи выглядело как мерцание и лаги. Пока человек
+    // тащит плашку или ждёт вторую вспышку, список не трогаем.
+    if(armed.t || drag2.nm) return;
     if(!ST) return;
     const en = ST.enroll || {};
     [['vp-rec', 'vp-prog'], ['vp-rec2', 'vp-prog2']].forEach(([rid, pid]) => {
@@ -8780,22 +8891,35 @@ eqFrame();
         if(!src || src === card.dataset.nm) return;
         ev.preventDefault();
         ev.dataTransfer.dropEffect = 'move';
+        if(!card.classList.contains('drop')){
+          // ПЕРВОЕ МОРГАНИЕ — ПРИ ПОДНЕСЕНИИ (2026-08-13, уточнение
+          // владельца). Смысл вспышки — показать, НА КАКОЙ голос ложится
+          // перетаскиваемый, пока рука ещё держит. После броска это уже
+          // не подтверждение, а уведомление постфактум.
+          card.classList.remove('merging');
+          void card.offsetWidth;
+          card.classList.add('merging');
+          setTimeout(() => {
+            if(!armed.t) card.classList.remove('merging');
+          }, 420);
+        }
         card.classList.add('drop');
       };
-      card.ondragleave = () => card.classList.remove('drop');
+      card.ondragleave = () => {
+        card.classList.remove('drop');
+        if(!armed.t) card.classList.remove('merging');
+      };
       card.ondrop = ev => {
         ev.preventDefault();
         card.classList.remove('drop');
         const src = ev.dataTransfer.getData('text/plain') || drag2.nm;
         const dst = card.dataset.nm;
         if(!src || !dst || src === dst) return;
-        // спрашиваем ОДИН раз и по-человечески: слияние необратимо, а
-        // разложить обратно уже нечем — векторы после склейки общие
-        if(confirm('Считать, что «' + src + '» и «' + dst + '» — один и тот '
-                   + 'же человек?\n\nОни сольются в «' + dst + '», эталон '
-                   + 'станет шире, и дальше она будет узнавать этот голос в '
-                   + 'обоих состояниях. Разделить обратно будет нельзя.'))
-          mergeVoices(src, dst);
+        // ПОЧЕМУ НЕ confirm (2026-08-13): в этом интерфейсе confirm подменён
+        // тостом, который ПОВТОРЯЕТ ПОСЛЕДНИЙ КЛИК. Для кнопки это работает,
+        // а бросок мышью повторить нельзя — поэтому склейка то срывалась,
+        // то срабатывала не на той плашке. Здесь подтверждение — сам жест.
+        armMerge(card, src, dst);
       };
     });
     // ПАЛИТРА (2026-07-29). Золото в списке отсутствует намеренно: это

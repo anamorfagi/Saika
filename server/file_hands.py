@@ -23,13 +23,30 @@ log = logging.getLogger("saika.files")
 TRASH_NAME = "_trash"
 
 
+def _default_root() -> str:
+    """Папка самой Сайки. УМОЛЧАНИЕ ПО МЕСТУ, А НЕ ПО ПАМЯТИ (2026-08-13,
+    живой отказ: человек четыре раза сказал «просто открой проводник» и
+    четыре раза получил «папки F:\\AI_load_work тут нет». В конфиге
+    files.roots отсутствовал, а в коде стояло умолчание «F:/AI_load_work» —
+    чей-то путь с переносимого диска, которого на этой машине нет и не
+    было. Рабочая папка указывала в никуда, и всё файловое молча ломалось.)"""
+    return str(Path(__file__).resolve().parent.parent)
+
+
 def roots() -> list[Path]:
     out = []
-    for r in CFG.get("files.roots", ["F:/AI_load_work"]):
+    for r in CFG.get("files.roots", None) or [_default_root()]:
         try:
-            out.append(Path(r).resolve())
+            rp = Path(r).resolve()
         except Exception:
             continue
+        out.append(rp)
+    # все настроенные корни мертвы (сменилась буква диска, папка переехала) —
+    # не оставляем её без рук: своя папка есть всегда
+    if out and not any(r.exists() for r in out):
+        log.warning("Ни один рабочий корень не существует (%s) — беру %s",
+                    ", ".join(str(r) for r in out), _default_root())
+        out.append(Path(_default_root()).resolve())
     return out
 
 

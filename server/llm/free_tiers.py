@@ -52,19 +52,64 @@ CATALOG = [
         "id": "groq",
         "name": "Groq",
         "base_url": "https://api.groq.com/openai/v1",
-        "models": ["qwen/qwen3.6-27b", "openai/gpt-oss-120b",
-                   "llama-3.3-70b-versatile"],
+        "models": ["qwen/qwen3.6-27b", "minimaxai/minimax-m2.7",
+                   "openai/gpt-oss-120b", "openai/gpt-oss-20b",
+                   "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
         "free": "30 запросов/мин, 1000/день (у llama-3.1-8b-instant — "
-                "14 400/день)",
+                "14 400/день; qwen3.6-27b — 131К контекста, "
+                "minimax-m2.7 — 196К)",
         "ru": "vpn",
         "card": False,
         "lang": "qwen3.6-27b говорит по-русски прилично",
         "note": "Самая низкая задержка на рынке — для ГОЛОСОВОГО режима это "
                 "важнее качества текста. Бонусом Whisper-STT в том же "
-                "бесплатном тире (2000 запросов/день), то есть весь "
-                "голосовой конвейер на одном ключе.",
+                "бесплатном тире (whisper-large-v3 и turbo, 2000 "
+                "запросов/день), то есть весь голосовой конвейер на одном "
+                "ключе. Отдельно про характер: здесь крутятся ОТКРЫТЫЕ веса "
+                "(Qwen, Llama, GPT-OSS, MiniMax) без надстроенной поверх "
+                "цензуры провайдера — для ролевых карточек и живой речи "
+                "это заметно свободнее закрытых моделей. Границы всё равно "
+                "остаются: у самих весов есть выравнивание, и оно никуда "
+                "не девается.",
         "key_url": "https://console.groq.com/keys",
         "source": "https://console.groq.com/docs/rate-limits",
+    },
+    {
+        # ВЕСЬ СТЕК НА ОДНОМ ВЕНДОРЕ (2026-08-13, идея владельца: «прикольно
+        # будет содрать стек чисто на Квене, у них вроде все блоки есть»).
+        # И правда все: qwen3 — мозги, qwen3-vl — зрение, qwen3.5-omni —
+        # речь в обе стороны, Qwen3-TTS у нас УЖЕ основной голосовой движок,
+        # плюс ASR и эмбеддинги. Сравнить «однородный стек» против
+        # «сборной солянки» — ровно тот эксперимент, ради которого платформа
+        # и строится.
+        "id": "qwen",
+        "name": "Qwen (Alibaba Model Studio)",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "models": ["qwen3-max", "qwen3-plus", "qwq-plus", "qwen3-vl-plus",
+                   "qwen3-coder-plus"],
+        "free": "бесплатная квота на модель, лимиты зависят от региона; "
+                "⚠️ карту требуют ДО выдачи бесплатного уровня",
+        "ru": "vpn",
+        "card": True,
+        "lang": "русский приличный; qwen3-vl умеет смотреть на картинки",
+        "note": "Единственный, у кого есть ВСЕ блоки одним ключом: мозги "
+                "(qwen3-max/plus), зрение (qwen3-vl-plus), код "
+                "(qwen3-coder-plus), рассуждение (qwq-plus). Голос Сайки "
+                "и так Qwen3-TTS — то есть стек можно собрать целиком на "
+                "одном вендоре. НО (проверено владельцем на живой "
+                "регистрации 2026-08-13, вторичные источники врали): "
+                "Alibaba Cloud выдаёт бесплатный уровень ТОЛЬКО ТРЕТЬИМ "
+                "шагом, после привязки карты — Visa/MC/JCB/Amex/PayPal/"
+                "RuPay/UPI. Российская карта там не пройдёт. Хочешь Qwen "
+                "без карты — бери его у чужих хостеров: Cloudflare "
+                "(@cf/qwen/qwen3-30b-a3b-fp8, без VPN и без карты) или "
+                "Groq (qwen/qwen3.6-27b, нужен VPN, карты нет). "
+                "Международный адрес dashscope-intl; для Китая — "
+                "dashscope.aliyuncs.com.",
+        "key_url": "https://modelstudio.console.alibabacloud.com/",
+        "key_hint": "Model Studio → API-KEY → создать ключ (sk-…)",
+        "source": "https://www.alibabacloud.com/help/en/model-studio/"
+                  "compatibility-of-openai-with-dashscope",
     },
     {
         "id": "mistral",
@@ -156,25 +201,35 @@ CATALOG = [
     {
         "id": "cloudflare",
         "name": "Cloudflare Workers AI",
-        "base_url": "",          # нужен account_id, подставляется в UI
-        "models": ["@cf/zhipu/glm-4.7-flash",
-                   "@cf/qwen/qwen3-30b-a3b-fp8",
+        # адрес личный — в нём сидит account_id. Держим шаблон, а не пустоту:
+        # autoconnect подставит llm.cloudflare_account сам (2026-08-13),
+        # раньше человеку пришлось бы дописывать адрес руками.
+        "base_url": "https://api.cloudflare.com/client/v4/accounts/"
+                    "ВАШ_ID/ai/v1",
+        # @cf/zhipu/glm-4.7-flash отсюда УБРАН (2026-08-13): Cloudflare
+        # отвечает 400 «No such model» — модели с таким именем у них нет.
+        # Оба оставшихся проверены живым разговором.
+        "models": ["@cf/qwen/qwen3-30b-a3b-fp8",
                    "@cf/meta/llama-3.3-70b-instruct-fp8-fast"],
         "free": "10 000 Neurons/день — примерно 150 ответов",
         "ru": "ok",
         "card": False,
         "lang": "glm-4.7-flash заявляет 100+ языков",
-        "note": "base_url содержит твой account_id: "
-                "https://api.cloudflare.com/client/v4/accounts/ВАШ_ID/ai/v1 — "
-                "подставь его сам. 150 ответов в день мало для постоянного "
-                "разговора, но как резерв работает.",
+        "note": "Единственный из бесплатных, кто открывается из РФ без VPN "
+                "и без карты. Адрес личный (в нём account_id из адресной "
+                "строки кабинета) — система подставляет его сама, если он "
+                "записан в llm.cloudflare_account. Токену хватает права "
+                "«Workers AI: Read», фильтр по IP включать НЕ надо: "
+                "домашний адрес меняется, и токен молча умрёт. 150 ответов "
+                "в день мало для постоянного разговора, но как резерв и "
+                "как способ пощупать Qwen без карты — работает.",
         "key_url": "https://dash.cloudflare.com/profile/api-tokens",
         "source": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
     },
 ]
 
 # Что показать первым: без VPN, без карты, и лимит достаточен для разговора.
-RECOMMENDED = ["gigachat", "groq", "mistral", "github"]
+RECOMMENDED = ["gigachat", "groq", "mistral", "github", "cloudflare", "qwen"]
 
 
 def catalog() -> list:

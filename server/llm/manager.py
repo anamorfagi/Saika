@@ -72,7 +72,85 @@ def _cloud() -> dict:
            or c.get("api_key", ""))
     return {"enabled": bool(c.get("enabled")),
             "base_url": (c.get("base_url") or "https://openrouter.ai/api/v1").rstrip("/"),
-            "model": c.get("model", ""), "key": key}
+            "model": c.get("model", ""), "key": key, "provider": prov}
+
+
+def _host(url: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(url or "").netloc or "").lower()
+    except Exception:
+        return ""
+
+
+def provider_for_url(url: str) -> str:
+    """Чей это адрес по каталогу бесплатных тиров. Пусто — незнакомый.
+
+    Нужно потому, что интерфейс сохраняет провайдера «custom», когда в
+    каталоге у записи не было готового base_url: человек вписал адрес
+    руками — и ключ уехал в слот «своё». Живой случай 2026-08-13 с
+    Cloudflare: разговаривать можно, а автоподключение остальных моделей
+    того же вендора мимо, потому что по имени «custom» каталог ничего не
+    находит. Узнаём вендора по хосту — он не врёт."""
+    h = _host(url)
+    if not h:
+        return ""
+    try:
+        from server.llm import free_tiers
+        for e in free_tiers.CATALOG:
+            if _host(e.get("base_url", "")) == h:
+                return e.get("id", "")
+    except Exception:
+        pass
+    return ""
+
+
+def cloud_key_for(provider: str) -> str:
+    """Ключ конкретного провайдера — без переключения активного слота.
+    Нужен лестнице мозгов (server/llm/brains.py): она должна знать, до кого
+    из настроенных облаков реально можно дозвониться, ДО попытки."""
+    s = _secrets().get("llm", {}) or {}
+    ck = s.get("cloud_keys", {}) or {}
+    if provider and ck.get(provider):
+        return ck[provider]
+    c = CFG.get("llm.cloud", {}) or {}
+    if provider and provider == c.get("provider", ""):
+        return s.get("cloud_api_key", "") or c.get("api_key", "")
+    # КЛЮЧ МОГ ЛЕЧЬ ПОД ЧУЖИМ ИМЕНЕМ (см. provider_for_url): ищем по хосту.
+    # Иначе ключ есть, работает, а система про него не знает — худший вид
+    # поломки, потому что снаружи всё выглядит исправным.
+    if provider:
+        for e in cloud_saved():
+            slot = e.get("provider", "")
+            if not slot or not ck.get(slot):
+                continue
+            if provider_for_url(e.get("base_url", "")) == provider:
+                return ck[slot]
+    return ""
+
+
+def cloud_for(model: str) -> dict:
+    """Адрес и ключ ДЛЯ КОНКРЕТНОЙ облачной модели (2026-08-13).
+
+    Раньше _stream_cloud всегда брал _cloud() — единственный активный слот.
+    Поэтому «позвать модель посильнее» работало только если она случайно
+    оказывалась активной: попытка сходить к другому провайдеру уходила по
+    чужому base_url с чужим ключом и падала на 401/404. Теперь адрес и ключ
+    ищутся ПО ИМЕНИ МОДЕЛИ среди всех настроенных — лестница может звать
+    любого, не трогая настройки владельца."""
+    want = (model or "").strip()
+    c = _cloud()
+    if want and want != c.get("model", ""):
+        for e in cloud_saved():
+            if e.get("model") != want:
+                continue
+            prov = e.get("provider", "")
+            key = cloud_key_for(prov)
+            if key:
+                return {"enabled": True, "provider": prov,
+                        "base_url": (e.get("base_url") or "").rstrip("/"),
+                        "model": want, "key": key}
+    return c
 
 
 # ─────────────── СПИСОК НАСТРОЕННЫХ ОБЛАЧНЫХ МОДЕЛЕЙ ───────────────
@@ -957,7 +1035,7 @@ def _stream_ollama(messages, model, temperature, tools=None, image=None):
             continue
         chunk = json.loads(line)
         msg = chunk.get("message", {})
-        token = msg.get("content", "")
+        token = str(msg.get("content") or "")
         if token:
             yield {"type": "token", "text": token}
         for tc in msg.get("tool_calls") or []:
@@ -1077,7 +1155,7 @@ def _gigachat_token(auth_key: str) -> str:
 def _stream_cloud(messages, model, temperature, tools=None, image=None):
     """Онлайн-модель по API-ключу (Groq/Mistral/GitHub/GigaChat/… —
     OpenAI-совместимо)."""
-    c = _cloud()
+    c = cloud_for(model)
     if not c["key"]:
         raise LLMError("не задан API-ключ облачной модели — впиши его в "
                        "интерфейсе (меню модели → Онлайн) или в secrets.json")
@@ -1565,7 +1643,7 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             delta = chunk["choices"][0]["delta"]
         except Exception:
             continue
-        token = delta.get("content") or ""
+        token = str(delta.get("content") or "")
         if token:
             if not _T.get("logged"):
                 _T["logged"] = True
@@ -1614,6 +1692,41 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
 _FNS = {"ollama": _stream_ollama, "lmstudio": _stream_lmstudio,
         "locallm": _stream_locallm, "llamacpp": _stream_llamacpp,
         "cloud": _stream_cloud}
+
+
+def _flatten_content(messages):
+    """Мультимодальный content (список частей) -> обычная строка.
+
+    2026-08-13, живой обвал: у Сайки были включены глаза, и кадр экрана
+    уходил КАЖДОМУ мозгу подряд. Cloudflare отвечал 400 «Type mismatch of
+    '/messages/0/content', 'array' not in 'string'», GigaChat — тем же по
+    смыслу, и падала вся цепочка фолбэка разом: в интерфейсе «Ни одна LLM
+    не ответила», хотя ключи живые и модели на месте. Слепой модели
+    картинку слать незачем — снимаем её и оставляем текст."""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list):
+            txt = " ".join(p.get("text", "") for p in c
+                           if isinstance(p, dict) and p.get("type") == "text")
+            m = dict(m, content=txt.strip() or "(смотрю на экран)")
+        out.append(m)
+    return out
+
+
+def _can_see(backend: str, model: str) -> bool:
+    """Пустят ли этой модели картинку. Неизвестность трактуем как «нет»:
+    лишний кадр в лучшем случае стоит денег и секунд, а в худшем — роняет
+    весь запрос (см. _flatten_content). Локальным оставляем прежнюю
+    вольность — там опыт накапливается пробой и ничего не стоит."""
+    try:
+        from server import capabilities as caps
+        v = caps.vision(model)
+        if v is not None:
+            return bool(v)
+    except Exception:
+        pass
+    return backend != "cloud"
 
 
 def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
@@ -1686,9 +1799,26 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     for bm in locals_:
         if bm not in candidates:
             candidates.append(bm)
-    # максимум выбранная + 2 запасные: перебирать весь зоопарк моделей —
+    # ЗАПАСНОЙ МОЗГ ПОСИЛЬНЕЕ (2026-08-13, просьба владельца: «если не
+    # получилось — просто использует мозг с более высоким рейтингом»).
+    # Раньше запаской шли ТОЛЬКО локальные модели: упало облако — Сайка
+    # сползала на мелкую домашнюю и мучилась там. Теперь следом за текущей
+    # идут настроенные облака с живым ключом, по убыванию мозгов, и только
+    # потом парк. Ключи бесплатных тиров (GigaChat/Mistral/GitHub/Kimi)
+    # уже лежат в secrets.json — они просто не участвовали в подъёме.
+    if CFG.get("llm.escalate_on_fail", True):
+        try:
+            from server.llm import brains
+            strong = [(c["backend"], c["model"]) for c in brains.ladder()
+                      if c["backend"] == "cloud"]
+            head = candidates[:1]
+            tail = [bm for bm in candidates[1:] if bm not in strong]
+            candidates = head + [bm for bm in strong if bm not in head] + tail
+        except Exception as e:
+            log.debug("лестница мозгов недоступна: %s", e)
+    # максимум выбранная + 3 запасные: перебирать весь зоопарк моделей —
     # это минуты загрузок и непредсказуемое поведение
-    candidates = candidates[:3]
+    candidates = candidates[:4]
 
     yielded_any = False
     for idx, (backend, model) in enumerate(candidates):
@@ -1701,6 +1831,11 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
             raise LLMError(f"{backend}/{model} прервалась на середине ответа: {last_err}")
         try:
             fn = _fns.get(backend, _stream_lmstudio)
+            # КАРТИНКА — ТОЛЬКО ЗРЯЧИМ (2026-08-13). Иначе включённые глаза
+            # роняли ВСЮ цепочку: каждый следующий запасной мозг получал тот
+            # же неудобоваримый запрос и падал так же.
+            _img = image if _can_see(backend, model) else None
+            _msgs0 = messages if _img else _flatten_content(messages)
             tools = handspc.schemas() if use_tools else []
             _T["t_tools"] = time.monotonic()
             # модели с нечитаемым форматом tool_calls (ловятся автоматически
@@ -1722,7 +1857,7 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 except TypeError:
                     on_fallback(backend, model)   # старые колбэки без reason
 
-            msgs = list(messages)
+            msgs = list(_msgs0)
             seen_calls = set()      # от зацикливания на одном и том же вызове
             tools_t0 = time.monotonic()
             tools_budget = CFG.get("tools.max_tool_seconds", 150)
@@ -1750,7 +1885,7 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                         "нашла. Без драмы и длинных извинений.)"}]
                 calls, text_parts = [], []
                 # картинку прикладываем только в первом раунде (это ход юзера)
-                img = image if _round == 0 else None
+                img = _img if _round == 0 else None
                 mark_busy(backend, model)   # начали реальный запрос — паспорт подождёт
                 for ev in fn(msgs, model, temperature, tools, img):
                     if ev["type"] == "token":
@@ -1862,6 +1997,27 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
         except Exception as e:
             last_err = e
             log.warning("LLM %s/%s failed: %s", backend, model, e)
+            # НЕСУЩЕСТВУЮЩАЯ МОДЕЛЬ — НАВСЕГДА, А НЕ НА 10 МИНУТ
+            # (2026-08-13: каталог обещал @cf/zhipu/glm-4.7-flash, а
+            # Cloudflare на неё отвечает «No such model». Через десять
+            # минут карантина она возвращалась и роняла разговор снова.)
+            _msg = str(e)
+            if backend == "cloud" and ("No such model" in _msg
+                                       or "model_not_found" in _msg
+                                       or "does not exist" in _msg):
+                try:
+                    forget_cloud(model)
+                    log.warning("Модель %s у провайдера не существует — "
+                                "убрала из парка совсем", model)
+                except Exception as e2:
+                    log.debug("не вышло убрать %s: %s", model, e2)
+            # мозг не отозвался — уводим его из лестницы на 10 минут, чтобы
+            # следующая эскалация не билась в ту же закрытую дверь
+            try:
+                from server.llm import brains
+                brains.note_fail(backend, model, _msg[:120])
+            except Exception:
+                pass
     raise LLMError(f"Ни одна LLM не ответила: {last_err}")
 
 

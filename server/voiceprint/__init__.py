@@ -395,9 +395,45 @@ def enroll_file(name: str, path, owner: bool = False):
     return out
 
 
+# ОТМЕНА ПОСЛЕДНЕЙ СКЛЕЙКИ (2026-08-13). Живёт в памяти и недолго: это
+# «ой, не туда», а не история правок. Пережить перезапуск не должно —
+# через час человек уже не помнит, что и с чем сливал.
+_UNDO = {"snap": None, "ts": 0.0, "src": "", "dst": ""}
+UNDO_WINDOW_S = 120
+
+
+def can_undo() -> dict:
+    import time as _t
+    ok = bool(_UNDO["snap"]) and _t.time() - _UNDO["ts"] < UNDO_WINDOW_S
+    return {"can": ok, "src": _UNDO["src"], "dst": _UNDO["dst"]}
+
+
+def undo_merge():
+    """Вернуть голоса как было до последней склейки."""
+    import time as _t
+    if not _UNDO["snap"] or _t.time() - _UNDO["ts"] > UNDO_WINDOW_S:
+        return {"ok": False, "error": "отменять нечего — прошло слишком много "
+                                      "времени или склейки не было",
+                **status()}
+    if not S.reg.restore(_UNDO["snap"]):
+        return {"ok": False, "error": "снимок не подошёл", **status()}
+    src, dst = _UNDO["src"], _UNDO["dst"]
+    _UNDO["snap"] = None
+    S.reg.save()
+    refit()
+    log.info("Отпечаток голоса: склейка «%s» -> «%s» ОТМЕНЕНА", src, dst)
+    _emit({"type": "voiceprint_refit"})
+    return {"ok": True, "undone": f"{src} -> {dst}", **status()}
+
+
 def merge(src: str, dst: str):
     """Слить голос src в dst и сразу переобучить проекцию: облако должно
     перекраситься на глазах, а не после перезапуска."""
+    import time as _t
+    try:
+        _UNDO.update(snap=S.reg.snapshot(), ts=_t.time(), src=src, dst=dst)
+    except Exception as e:
+        log.debug("снимок для отмены не снялся: %s", e)
     r = S.reg.merge(src, dst)
     if r.get("ok"):
         S.reg.save()

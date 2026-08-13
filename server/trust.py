@@ -52,10 +52,20 @@ RISK = {
     # строки они получали риск по умолчанию и упирались в порог: живой
     # отказ «web_list нельзя без подтверждения — доверия сейчас 4», на
     # простейшую просьбу «напиши в поиск ютуб».
+    # своё окно браузера — её собственность, закрывать его не опаснее,
+    # чем закрыть свой блокнот (2026-08-13: close_browser упирался в порог
+    # и человек дважды повторял просьбу впустую)
+    "close_browser": 1, "web_open": 1, "web_research": 1,
     "web_list": 1, "open_result": 1, "browser_scroll": 1,
-    "site_search": 1, "close_ad": 1,
+    "site_search": 1, "close_ad": 1, "click_on": 2, "media_control": 1, "attach_chrome": 3, "app_action": 2,
     # свои глаза (2026-08-05): чтение своего лога и своего кода
     "fs_log": 1, "fs_lasterr": 1, "fs_grep": 1, "fs_slice": 1,
+    "memory_recall": 1, "memory_recap": 1, "memory_about": 1,
+    "memory_stats": 1,
+    # свои настройки: смотреть — 1, менять своё состояние — 2
+    "usage_report": 1, "hearing_now": 1, "where_am_i": 1,
+    "engines_list": 1, "set_engine": 2, "unload_memory": 2,
+    "guests_may_talk": 2, "remember_my_voice": 2,
     # поправить — обратимо одной фразой
     #
     # 2026-07-26, по живым логам: запуск программы и открытие папки стояли
@@ -65,6 +75,7 @@ RISK = {
     # открытый проводник закрывается крестиком. Настоящая цена ошибки тут
     # нулевая, и держать их наравне с записью файлов было неправдой.
     "volume_set": 2, "window_minimize": 2, "window_focus": 2,
+    "card_list": 1, "card_off": 1, "card_wear": 2, "card_make": 2,
     "window_maximize": 2, "minimize_all": 2, "tab_control": 2,
     "avatar_action": 2, "change_outfit": 2, "devboard_add": 2,
     "model_switch": 2, "app_launch": 2, "place_save": 2,

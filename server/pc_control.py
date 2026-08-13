@@ -180,7 +180,74 @@ def _norm(s: str) -> str:
     return "".join(out)
 
 
+# ТРАНСЛИТ (2026-08-13, живой провал: «Запусти блендер» -> она нашла
+# «Blender», «Blend for Visual Studio» и «Mount & Blade II», и вместо
+# запуска СПРОСИЛА, какой именно. Причина не в логике выбора: сравнивалось
+# «блендер» с «blender» — кириллица с латиницей, похожесть нулевая, ни одно
+# правило не сработало. То же с «хром», «стим», «фотошоп», «дискорд» — то
+# есть с половиной названий, которые человек произносит по-русски.)
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+# как русское ухо слышит латиницу: «си» это c, «кей» это k. Второй проход
+# нужен, потому что один звук пишут по-разному: хром/chrome, кром/chrome.
+_SOUND_FIX = (("ks", "x"), ("kh", "h"), ("ck", "k"), ("ph", "f"),
+              ("ee", "i"), ("oo", "u"), ("yu", "u"), ("ya", "ia"))
+
+
+def translit(t: str) -> str:
+    out = "".join(_TRANSLIT.get(ch, ch) for ch in (t or "").lower())
+    for a, b in _SOUND_FIX:
+        out = out.replace(a, b)
+    return out
+
+
+# СОГЛАСНЫЙ СКЕЛЕТ. Одного транслита мало: «стим» -> stim, а программа
+# Steam; «дискорд» -> diskord против Discord; «хром» -> hrom против Chrome.
+# Всё это ОДИН звук, записанный по-разному. Гласные в названиях почти не
+# несут различия, а согласные несут — поэтому сравниваем скелет из
+# согласных, предварительно сведя разнописания к одному виду.
+_SKEL_FIX = (("ch", "h"), ("sh", "s"), ("zh", "z"), ("ph", "f"),
+             ("ck", "k"), ("c", "k"), ("q", "k"), ("x", "ks"),
+             ("y", "i"), ("w", "v"), ("j", "i"))
+
+
+def _skeleton(t: str) -> str:
+    v = translit(t)
+    for a, b in _SKEL_FIX:
+        v = v.replace(a, b)
+    v = re.sub(r"[^a-z]", "", v)
+    v = re.sub(r"[aeiou]", "", v)
+    return re.sub(r"(.)\1+", r"\1", v)      # «ss» и «s» — одно и то же
+
+
 def _score(name: str, q: str) -> int:
+    """Похожесть с учётом того, что человек говорит по-русски, а ярлык
+    подписан по-английски. Три уровня: как есть -> транслит -> скелет."""
+    best = _score_raw(name, q)
+    tn, tq = translit(name), translit(q)
+    if tn != name.lower() or tq != q.lower():
+        # транслит — догадка, поэтому чуть дешевле точного совпадения
+        best = max(best, _score_raw(tn, tq) - 3)
+    if best >= 45:
+        return best
+    sn, sq = _skeleton(name), _skeleton(q)
+    if len(sq) >= 3 and sn and sq:
+        # скелет всей строки или ПЕРВОГО СЛОВА: «Adobe Photoshop 2024» —
+        # человек говорит «фотошоп», а не полное имя ярлыка
+        parts = [sn] + [_skeleton(w) for w in re.findall(r"\w+", name)]
+        if sq in parts:
+            best = max(best, 62)
+        elif any(p.startswith(sq) and len(p) - len(sq) <= 3 for p in parts):
+            best = max(best, 52)
+    return best
+
+
+def _score_raw(name: str, q: str) -> int:
     """Насколько ярлык похож на то, что попросили. Голосом просят коротко
     («блендер», «стим»), а в «Пуске» лежат «Blender 4.2» и «Steam Client».
 
@@ -377,6 +444,8 @@ def _wide_hits(q: str) -> list:
 
 
 def launch(query: str) -> str:
+    # запоминаем, ЧЕМ занимались: следом человек скажет «подними ЕГО»
+    remember_app(query)
     """Запустить программу по человеческому названию.
 
     ПОРЯДОК (2026-07-29, дословная просьба владельца: «она должна запустить
@@ -471,6 +540,19 @@ def launch(query: str) -> str:
         second = scored[1][1] if len(scored) > 1 else 0
         # уверенно = попали по названию (не по буквенной похожести) и рядом
         # нет второго такого же кандидата
+        # ОДНО И ТО ЖЕ РАЗНЫМИ ПОДПИСЯМИ (2026-08-13): «Steam» и «Steam
+        # Client», «Blender» и «Blender 4.2» — это не выбор, а один ярлык в
+        # двух видах. Правило «второй должен отстать на 20» тут работало
+        # против человека: кандидаты набирали поровну, и она переспрашивала
+        # там, где спрашивать нечего. Если у лидеров ОДИН скелет — берём
+        # самое короткое имя: оно почти всегда и есть основная программа.
+        same = [a for a, sc in scored
+                if sc >= 45 and _skeleton(a["name"]) == _skeleton(best["name"])]
+        if len(same) > 1:
+            best = min(same, key=lambda a: len(a["name"]))
+            msg = _start(best)
+            return (msg + " (нашла несколько подписей одной программы — "
+                    "взяла основную)")
         if bs >= 45 and bs - second >= 20:
             msg = _start(best)
             others = [h["name"] for h, _s in scored[1:4]]
@@ -762,10 +844,28 @@ _ANAPHORA = re.compile(
     r"программ\w*|верни|снова|опять|\s)+$", re.I)
 
 
+# командные обёртки, которые модель иногда приносит вместе с именем окна
+_CMD_HEAD = re.compile(
+    r"\b(?:сайка|открой|открыть|запусти|покажи|переключись|переключи|"
+    r"поставь|перенеси|сделай|разверни|сверни|закрой|найди|поищи|"
+    r"пожалуйста|мне|на|в|во|к|с|со|для|из|автора|канал|сайт|окно|"
+    r"программу|приложение)\b", re.I)
+
+
 def _match(query: str):
     """Найти окно по куску заголовка или имени процесса (+русские алиасы).
     «Это же окно», «его», «обратно» — окно, с которым работали последней."""
     q = (query or "").strip().lower()
+    # ЦЕЛАЯ ФРАЗА ВМЕСТО ИМЕНИ (2026-08-13, живой промах: модель прислала
+    # match="Открой на YouTube автора Snail Kick." и получила «не нашла
+    # окно "Открой на YouTube…"» — ответ, который человеку ничего не
+    # объясняет). Срезаем командные глаголы и предлоги: если после этого
+    # остаётся вменяемое имя — ищем по нему, если нет — честно говорим,
+    # что имени в просьбе не было.
+    if len(q.split()) > 2:
+        cut = _CMD_HEAD.sub("", q).strip(" ,.!?-")
+        if cut and len(cut.split()) <= 4:
+            q = cut
     if not q:
         return None
     ws = windows()
@@ -929,21 +1029,127 @@ def window_minimize(query: str) -> str:
     return f"Свернула «{w['title'][:60]}»."
 
 
+# С ЧЕМ РАБОТАЛИ ПОСЛЕДНИМ (2026-08-13, живой мат владельца: «подними его
+# повыше, я из-за браузера его не вижу» — и в ответ «я не могу поднять
+# что-то, о чём ничего не знаю, уточни, что ты имеешь в виду под "его"».
+# Проводник она открыла СЕКУНДОЙ РАНЬШЕ. Человек говорит местоимениями,
+# как со всеми — предмет живёт в разговоре, а не в каждой фразе.)
+LAST_APP = {"name": "", "ts": 0.0}
+
+_PRONOUN = re.compile(
+    r"^\W*(?:его|её|ее|их|это|этого|эту|этот|ту|тот|там|окно|окошко|"
+    r"программу|прогу|приложение)"
+    # хвост вроде «повыше», «вперёд», «наверх» — это КУДА, а не ЧТО:
+    # предмет всё равно остаётся местоимением («подними его повыше»)
+    r"(?:\s+(?:повыше|выше|вперёд|вперед|наверх|сюда|обратно|назад|"
+    r"поближе|нормально|полностью))*\W*$", re.I)
+
+
+def remember_app(name: str):
+    if name and len(name) > 1:
+        LAST_APP.update(name=str(name), ts=time.time())
+
+
+def _resolve_pronoun(query: str) -> str:
+    q = (query or "").strip()
+    if not q or not _PRONOUN.match(q):
+        return q
+    if LAST_APP["name"] and time.time() - LAST_APP["ts"] < 900:
+        log.info("«%s» -> последнее, с чем работали: %s", q, LAST_APP["name"])
+        return LAST_APP["name"]
+    return q
+
+
+def _force_front(hwnd) -> bool:
+    """ВЫВЕСТИ ОКНО ВПЕРЁД ПО-НАСТОЯЩЕМУ (2026-08-14).
+
+    Голого SetForegroundWindow мало: Windows разрешает менять активное окно
+    только процессу, который САМ сейчас на переднем плане, — защита от
+    выпрыгивающих поверх всего окон. Сайка при этом фоновая служба, и
+    честный ответ «Windows не даёт, кликни на панели задач» человеку не
+    годится: он лежит на диване, кликать некому. Без фокуса же не работает
+    вообще ничего дальше — ни ввод текста, ни клики, ни клавиши.
+
+    Обходим тем же способом, которым это делают оконные менеджеры, по
+    возрастанию грубости — как только окно оказалось впереди, выходим:
+      1) просто попросить (вдруг мы и так активны);
+      2) ALT-заглушка: системный «щелчок» снимает блокировку смены фокуса;
+      3) AttachThreadInput — на секунду становимся одной очередью ввода с
+         текущим передним окном, и запрет перестаёт нас касаться;
+      4) SwitchToThisWindow — то же, что Alt+Tab делает руками человека.
+    Ничего экзотического и никаких прав администратора."""
+    if not _IS_WIN:
+        return True
+    ctypes, wt, user32 = _win32()
+    kernel32 = ctypes.windll.kernel32
+
+    def _front() -> bool:
+        time.sleep(0.08)
+        return int(user32.GetForegroundWindow()) == int(hwnd)
+
+    user32.ShowWindow(hwnd, 9)                     # SW_RESTORE
+    user32.SetForegroundWindow(hwnd)
+    if _front():
+        return True
+
+    # 2) ALT вверх-вниз: система считает это вводом пользователя и снимает
+    #    блокировку смены переднего окна на ближайший вызов
+    try:
+        user32.keybd_event(0x12, 0, 0, 0)          # VK_MENU down
+        user32.keybd_event(0x12, 0, 2, 0)          # up
+        user32.SetForegroundWindow(hwnd)
+        if _front():
+            return True
+    except Exception as e:
+        log.debug("alt-трюк не сработал: %s", e)
+
+    # 3) прицепиться к очереди ввода текущего переднего окна
+    try:
+        cur = user32.GetForegroundWindow()
+        tid_cur = user32.GetWindowThreadProcessId(cur, None)
+        tid_me = kernel32.GetCurrentThreadId()
+        tid_target = user32.GetWindowThreadProcessId(hwnd, None)
+        for tid in {tid_cur, tid_target}:
+            if tid and tid != tid_me:
+                user32.AttachThreadInput(tid_me, tid, True)
+        try:
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetActiveWindow(hwnd)
+        finally:
+            for tid in {tid_cur, tid_target}:
+                if tid and tid != tid_me:
+                    user32.AttachThreadInput(tid_me, tid, False)
+        if _front():
+            return True
+    except Exception as e:
+        log.debug("AttachThreadInput не сработал: %s", e)
+
+    # 4) то же, что Alt+Tab руками
+    try:
+        user32.SwitchToThisWindow(hwnd, True)
+        if _front():
+            return True
+    except Exception as e:
+        log.debug("SwitchToThisWindow не сработал: %s", e)
+    return False
+
+
 def window_focus(query: str) -> str:
+    query = _resolve_pronoun(query)
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
     _touch(w)   # помним: «это же окно» — про него
-    _, _, user32 = _win32()
-    user32.ShowWindow(w["hwnd"], 9)                # SW_RESTORE
-    user32.SetForegroundWindow(w["hwnd"])
-    if not _verify(w["hwnd"], "front"):
-        # вывод окна вперёд Windows ограничивает и без всяких прав: чужому
-        # процессу нельзя перехватывать фокус у активного
-        return (f"Показала «{w['title'][:50]}», но вперёд она не вышла — "
-                "Windows не даёт чужой программе перехватывать фокус. "
-                "Кликни по ней на панели задач.")
-    return f"Показала «{w['title'][:60]}»."
+    if _force_front(w["hwnd"]):
+        return f"Показала «{w['title'][:60]}» — оно теперь впереди."
+    if _elevated(w.get("pid", 0)):
+        return (f"«{w['title'][:50]}» запущено от администратора, а я нет — "
+                "Windows не даёт мне командовать такими окнами. Запусти "
+                "меня от администратора, и смогу.")
+    return (f"«{w['title'][:50]}» не вышло вывести вперёд даже в обход — "
+            "так себя ведут полноэкранные игры и окна поверх всех. "
+            "Скажи это человеку честно, не делай вид, что получилось.")
 
 
 def window_maximize(query: str = "", full: bool = False) -> str:
@@ -956,7 +1162,7 @@ def window_maximize(query: str = "", full: bool = False) -> str:
     _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
     user32.ShowWindow(w["hwnd"], 3)                # SW_MAXIMIZE
-    user32.SetForegroundWindow(w["hwnd"])
+    _force_front(w["hwnd"])   # F11 ниже уйдёт в АКТИВНОЕ окно — оно нужно
     if not _verify(w["hwnd"], "max"):
         return _blocked_note(w, "развернуть")
     if full:
@@ -1182,6 +1388,19 @@ def window_place(query: str, position: str = "center",
     ra = _Area()
     sw, sh = ra.r - ra.l, ra.b - ra.t
 
+    # СНАП ПО-ВИНДОВОМУ (2026-08-13, живой промах: «Google Chrome слева,
+    # как бы в половину экрана» -> модель прислала только width=50, и высота
+    # осталась прежней — окно легло слева огрызком). Когда человек говорит
+    # «слева», он имеет в виду Win+← : половина по ширине и ВСЯ высота.
+    # Достраиваем недостающее измерение сами, а не ждём от модели полноты.
+    _pos0 = (position or "center").strip().lower()
+    if width and not height and _pos0 in (
+            "left", "right", "лево", "слева", "право", "справа"):
+        height = 100
+    if height and not width and _pos0 in (
+            "top", "bottom", "верх", "сверху", "низ", "снизу"):
+        width = 100
+
     # размер: проценты экрана; 0 = не менять текущий
     cur = RECT()
     user32.GetWindowRect(w["hwnd"], ctypes.byref(cur))
@@ -1236,9 +1455,15 @@ def window_place(query: str, position: str = "center",
             where = f" на экране {got}"
     except Exception:
         pass
+    # ЧЕСТНЫЙ ОТЧЁТ (2026-08-13): здесь стояло max(10, …) и для height=0
+    # рапортовалось «10%», хотя высоту никто не трогал. Ровно тот случай,
+    # за который её справедливо ловят: сказала о том, чего не делала.
+    _wd = (f"{max(10, min(100, width))}% по ширине" if width
+           else "ширина как была")
+    _ht = (f"{max(10, min(100, height))}% по высоте" if height
+           else "высота как была")
     return (f"Поставила «{w['title'][:50]}» {position}{where}"
-            + (f", размер {max(10, min(100, width))}%x"
-               f"{max(10, min(100, height))}%" if width or height else "")
+            + (f", {_wd}, {_ht}" if (width or height) else "")
             + ".")
 
 
@@ -1296,15 +1521,64 @@ def volume(percent=None, mute=None, delta=None) -> str:
 # ───────────────────────── вкладки активного окна ─────────────────────────
 # Через клавиатуру, а не через API конкретного браузера: работает в Chrome,
 # Edge, Firefox и вообще везде, где есть вкладки, и не требует расширения.
+# ЧЬИ ВКЛАДКИ (2026-08-13, живой инцидент: «она мне чат в Клоде
+# переключила»). tab() шлёт ГЛОБАЛЬНЫЕ горячие клавиши — они летят в то
+# окно, что сейчас впереди, каким бы оно ни было. Человек работал в
+# десктопном Клоде, Сайка отправила Ctrl+Tab «в браузер» — и переключила
+# ему чат. Ctrl+W в том же положении закрыл бы разговор.
+#
+# Правило теперь простое: клавиши уходят ТОЛЬКО в браузер. Есть своё окно
+# Playwright — работаем в нём, там ничего чужого нет и промахнуться некуда.
+# Нет своего — проверяем, что впереди действительно браузер, и только тогда
+# жмём. Впереди что-то другое — честный отказ, а не слепой удар по чужому
+# приложению.
+_BROWSER_HINT = ("chrome", "chromium", "firefox", "edge", "opera", "yandex",
+                 "brave", "vivaldi", "браузер", "— google chrome",
+                 "mozilla firefox", "safari", "tor browser")
+
+
+def _front_is_browser():
+    """(бразуер ли впереди, заголовок). None — определить не вышло."""
+    w = _foreground()
+    if not w:
+        return None, ""
+    title = str(w.get("title") or "")
+    proc = str(w.get("proc") or w.get("exe") or "")
+    hay = (title + " " + proc).lower()
+    return any(k in hay for k in _BROWSER_HINT), title
+
+
+def _own_tab(a: str, index: int):
+    """Вкладки в СВО�ём окне браузера. None — своего окна нет."""
+    try:
+        from server import browser_hands as bh
+        if not bh.is_open():
+            return None
+        return bh.tabs(a, index)
+    except Exception as e:
+        log.debug("свои вкладки недоступны: %s", e)
+        return None
+
+
 def tab(action: str, index: int = 0) -> str:
     if not _IS_WIN:
         return "Управление вкладками есть только в Windows."
+    a = (action or "").lower()
+    own = _own_tab(a, index)
+    if own is not None:
+        return own
+    is_br, title = _front_is_browser()
+    if is_br is False:
+        return (f"Впереди сейчас не браузер, а «{title}» — вкладки трогать "
+                "НЕ БУДУ, иначе нажатие уйдёт в чужое приложение (уже так "
+                "переключала человеку чат в другой программе). Скажи "
+                "человеку, чтобы он вывел браузер вперёд, или сперва зови "
+                "window_focus с именем браузера.")
     try:
         import keyboard
     except Exception:
         return ("Нет модуля keyboard — не могу нажимать клавиши. "
                 "Поставь его: setup/install_pc_control.bat")
-    a = (action or "").lower()
     if a in ("open", "new", "открыть"):
         keyboard.send("ctrl+t")
         return "Открыла новую вкладку."
@@ -1589,11 +1863,36 @@ def open_folder(path: str = "") -> str:
     свободно; всё остальное только если владелец разрешил гулять по диску."""
     from server import file_hands
     p = (path or "").strip()
+    # «ОТКРОЙ РАБОЧУЮ ПАПКУ» — ЭТО КОРЕНЬ, А НЕ ПОИСК ПО ИМЕНИ (2026-08-13,
+    # живой отказ: она приняла «рабочую папку» за НАЗВАНИЕ и пошла искать
+    # подпапку с таким именем, потом «Рабочий стол» — обе не нашлись, и
+    # человек четыре раза повторил просьбу впустую. Эти слова значат
+    # «вернись в начало», для чего уже есть ветка _NAV_HOME ниже.)
+    if re.match(r"^(?:рабоч\w*\s+папк\w*|рабоч\w*\s+стол|"
+                r"рабоч\w*\s+област\w*|мою?\s+папк\w*|"
+                r"главн\w*\s+папк\w*|корень|начало)\s*$", p, re.I):
+        p = ""
     if not p:
-        rs = file_hands.roots()
-        if not rs:
-            return "Рабочая папка не задана — укажи её в настройках."
-        p = str(rs[0])
+        # «ОТКРОЙ ПРОВОДНИК» БЕЗ ПАПКИ = ОТКРОЙ ХОТЬ ЧТО-НИБУДЬ (2026-08-13,
+        # живой отказ: человек четыре раза сказал «просто открой проводник»,
+        # а получал «папки F:\AI_load_work тут нет» и встречный вопрос.
+        # Причина не в команде: в files.roots записан путь на переносимом
+        # диске, буква которого сменилась — корень мёртв. Мёртвый корень не
+        # повод отказывать: берём ПЕРВЫЙ ЖИВОЙ, а если живых нет — папку
+        # самой Сайки. Открыть окно ничего не стоит, отказать — стоит.)
+        rs = [Path(r) for r in file_hands.roots()]
+        alive = [r for r in rs if r.exists()]
+        if alive:
+            p = str(alive[0])
+        else:
+            here_now = Path(here()) if here() else None
+            if here_now is not None and here_now.exists():
+                p = str(here_now)
+            else:
+                p = str(Path(__file__).resolve().parent.parent)
+            if rs:
+                log.warning("Рабочий корень %s не существует (диск "
+                            "переехал?) — открываю %s", rs[0], p)
     # ПРОГУЛКА ПО ПАПКАМ: команды направления считаются от ТЕКУЩЕГО места
     cur = Path(here()) if here() else None
     if _NAV_UP.match(p) and cur is not None:
@@ -1691,6 +1990,16 @@ def open_folder(path: str = "") -> str:
                 near += f" Наверху — {up.name}."
         except Exception:
             pass
+        # мёртвый корень отличаем от опечатки: это разные разговоры
+        try:
+            dead = [str(r) for r in file_hands.roots() if not Path(r).exists()]
+        except Exception:
+            dead = []
+        if dead:
+            return (f"Папки «{p}» тут нет.{near} И отдельно: рабочая папка "
+                    f"в настройках указывает на {dead[0]}, а такого пути "
+                    "на диске НЕТ — похоже, сменилась буква диска. Скажи "
+                    "человеку про это прямо, тут нужна его правка настроек.")
         return f"Папки «{p}» тут нет.{near}"
     if target.is_file():                    # «зайди в файл» = открыть его
         target_dir = target.parent
@@ -1739,6 +2048,7 @@ def open_folder(path: str = "") -> str:
     # передний план фоновому процессу по первому требованию — поэтому не
     # SetForegroundWindow наугад, а тот же window_focus, что работает по
     # прямой просьбе.
+    remember_app("проводник")
     try:
         window_focus(target_dir.name or "проводник")
     except Exception as e:

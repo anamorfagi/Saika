@@ -32,7 +32,7 @@ _jobs: "queue.Queue" = queue.Queue()
 _thread = None
 _lock = threading.Lock()
 STATE = {"open": False, "last_used": 0.0, "installing": False,
-         "used_in_dialog": False}
+         "used_in_dialog": False, "system": False}
 
 
 def available() -> bool:
@@ -161,6 +161,146 @@ def _post(fn, timeout=90):
     return holder.get("result")
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ПОДКЛЮЧЕНИЕ К ЕГО CHROME — САМО (2026-08-13). Первую версию я оформил
+# отдельным .bat, и владелец справедливо сказал: «нафиг ты мне опять
+# подсовываешь батник». Смысл этой системы в том, что человек НЕ ДУМАЕТ,
+# как внутри что работает. Всё, что можно сделать самим, делаем сами.
+#
+# Что можно сделать молча: Chrome не запущен — поднимаем его сразу с
+# отладочным портом. Человек ничего не заметил, а браузер уже её.
+#
+# Что молча делать НЕЛЬЗЯ: Chrome уже работает. Порт открывается только при
+# старте, значит подключение требует перезапуска, а там его вкладки и
+# несохранённые формы. Это его решение, не наше — Сайка спросит словами.
+# ═══════════════════════════════════════════════════════════════════
+
+def _port_open(port: int, t: float = 0.4) -> bool:
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=t):
+            return True
+    except Exception:
+        return False
+
+
+def _chrome_exe():
+    import os
+    from pathlib import Path
+    for env, tail in (
+            ("ProgramFiles", r"Google\Chrome\Application\chrome.exe"),
+            ("ProgramFiles(x86)", r"Google\Chrome\Application\chrome.exe"),
+            ("LocalAppData", r"Google\Chrome\Application\chrome.exe")):
+        base = os.environ.get(env)
+        if base and Path(base, tail).exists():
+            return str(Path(base, tail))
+    return ""
+
+
+def _chrome_running() -> bool:
+    try:
+        import psutil
+        for pr in psutil.process_iter(["name"]):
+            if (pr.info.get("name") or "").lower() == "chrome.exe":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def chrome_state() -> dict:
+    port = int(CFG.get("browser.cdp_port", 9222))
+    return {"port": port, "attached": _port_open(port),
+            "running": _chrome_running(), "exe": bool(_chrome_exe())}
+
+
+def _launch_chrome_debug(restore=True) -> bool:
+    exe = _chrome_exe()
+    if not exe:
+        return False
+    port = int(CFG.get("browser.cdp_port", 9222))
+    args = [exe, f"--remote-debugging-port={port}"]
+    if restore:
+        args.append("--restore-last-session")
+    try:
+        subprocess.Popen(args, close_fds=True)
+    except Exception as e:
+        log.warning("Chrome с портом не запустился: %s", e)
+        return False
+    for _ in range(20):
+        time.sleep(0.5)
+        if _port_open(port):
+            log.info("Chrome поднят с отладочным портом %d", port)
+            return True
+    return False
+
+
+def autoattach():
+    """Зовётся при старте Сайки. Молча делает то, что безопасно."""
+    if not CFG.get("browser.use_system_chrome", True):
+        return ""
+    st = chrome_state()
+    if st["attached"]:
+        log.info("Chrome уже отдаёт управление на порту %d", st["port"])
+        return ""
+    if not st["exe"]:
+        return ""
+    if not st["running"]:
+        if _launch_chrome_debug(restore=False):
+            return ""
+        return ""
+    # запущен без порта — молча перезапускать чужие вкладки нельзя
+    return ("Твой Chrome запущен обычным способом, поэтому управлять им я "
+            "пока не могу — Chrome отдаёт себя только если стартовал с "
+            "отладочным ключом. Скажи «подключись к моему хрому», и я "
+            "перезапущу его с восстановлением вкладок. Пока работаю в "
+            "своём окне.")
+
+
+def attach_chrome(force: bool = True) -> str:
+    """«Подключись к моему хрому» — с перезапуском, если он уже открыт."""
+    st = chrome_state()
+    if st["attached"]:
+        return "уже подключена к твоему Chrome — работаю в нём"
+    if not st["exe"]:
+        return ("не нашла chrome.exe на диске — видимо, стоит другой "
+                "браузер. Работаю в своём окне.")
+    if st["running"]:
+        if not force:
+            return ("Chrome открыт без отладочного ключа. Перезапустить его "
+                    "с восстановлением вкладок? Спроси человека и позови "
+                    "меня снова, когда согласится.")
+        try:
+            import psutil
+            for pr in psutil.process_iter(["name"]):
+                if (pr.info.get("name") or "").lower() == "chrome.exe":
+                    pr.terminate()
+            time.sleep(2)
+        except Exception as e:
+            return f"не смогла закрыть Chrome: {e}"
+    if _launch_chrome_debug(restore=True):
+        _reset_state_for_reattach()
+        return ("Подключилась к твоему Chrome — вкладки восстановлены, "
+                "теперь работаю прямо в нём, с твоими логинами.")
+    return ("Chrome с отладочным портом не поднялся. Работаю в своём окне — "
+            "это не смертельно, просто без твоих логинов.")
+
+
+def _reset_state_for_reattach():
+    def job(ctx):
+        _reset_ctx(ctx)
+        return True
+    try:
+        _post(job, timeout=10)
+    except Exception:
+        pass
+    STATE["system"] = False
+
+
+def _port_open_cfg():
+    return _port_open(int(CFG.get("browser.cdp_port", 9222)))
+
+
 def _ublock_dir():
     """Папка распакованного uBlock Origin (setup/install_ublock.py).
     Нет — работаем без него, просто с баннерами."""
@@ -203,6 +343,45 @@ def _ensure_page(ctx):
             ctx["page"].evaluate("1")
         except Exception:
             _reset_ctx(ctx)
+    # ТВОЙ CHROME, А НЕ ЕЩЁ ОДИН (2026-08-13, вопрос владельца: «чё она не
+    # юзает текущий гугл?»). Своё окно решало проблему «два браузера», но
+    # создавало другую: в её окне НЕТ его логинов, подписок, истории и
+    # расширений. Для «включи мне музыку на ютубе» это разница между
+    # рекомендациями его канала и выдачей для анонима.
+    #
+    # Chrome отдаёт управление по отладочному порту — Playwright цепляется
+    # к УЖЕ ЗАПУЩЕННОМУ окну. Оговорка честная: порт открывается ТОЛЬКО при
+    # старте Chrome с ключом --remote-debugging-port. Работающий без ключа
+    # подключить нельзя никак, его придётся перезапустить (tools/chrome_debug.bat).
+    if CFG.get("browser.use_system_chrome", True) and ctx.get("ctx") is None:
+        port = int(CFG.get("browser.cdp_port", 9222))
+        try:
+            import socket
+            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
+                pass
+            if ctx["pw"] is None:
+                from playwright.sync_api import sync_playwright
+                ctx["pw"] = sync_playwright().start()
+            br = ctx["pw"].chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            ctx["browser"] = br
+            ctx["ctx"] = br.contexts[0] if br.contexts else br.new_context()
+            pages = [p for p in ctx["ctx"].pages if not p.is_closed()]
+            ctx["page"] = pages[-1] if pages else ctx["ctx"].new_page()
+            STATE["system"] = True
+            log.info("браузер: подключилась к ТВОЕМУ Chrome (порт %d, "
+                     "вкладок %d)", port, len(pages))
+            try:
+                ctx["page"].bring_to_front()
+            except Exception:
+                pass
+            return ctx["page"]
+        except OSError:
+            log.info("браузер: Chrome без отладочного порта %d — работаю в "
+                     "своём окне (tools/chrome_debug.bat подключит твой)",
+                     port)
+        except Exception as e:
+            log.warning("браузер: подключиться к Chrome не вышло (%s) — "
+                        "своё окно", e)
     alive = ctx.get("ctx") is not None
     if alive and ctx.get("browser") is not None:
         alive = ctx["browser"].is_connected()
@@ -393,10 +572,32 @@ _HOLLOW = {
 _STOP_TOPIC = {"что", "как", "где", "когда", "почему", "зачем", "кто",
                "какой", "какая", "какие", "ты", "мне", "мы", "вы", "нам"}
 
+# ПЛОЩАДКИ — НЕ ТЕМА (2026-08-13): «YouTube», «Яндекс», «Гугл» — это ГДЕ
+# искать, а не ЧТО. Сборщик принимал их за имя собственное и лепил в
+# запрос: «YouTube музыку дабстеп». Для «где» есть отдельный параметр
+# site у web_open и отдельный инструмент site_search.
+_PLATFORMS = {
+    "youtube", "ютуб", "ютюб", "google", "гугл", "яндекс", "yandex",
+    "chrome", "хром", "duckduckgo", "telegram", "телеграм", "телега",
+    "vk", "вк", "вконтакте", "twitch", "твич", "rutube", "рутуб",
+    "spotify", "спотифай", "кинопоиск", "steam", "стим", "discord",
+    "дискорд", "википедия", "wikipedia", "браузер", "интернет", "сеть",
+}
+
+# хвост-болтовня: «какой-нибудь, любой можешь выбрать сама» — это не часть
+# запроса, а разрешение действовать. В поисковую строку ему нечего делать.
+_CHAT_TAIL = re.compile(
+    r"[,;]?\s*(?:кака\w*|какой|какое|каких|любо\w*|что[- ]?нибудь|"
+    r"чё[- ]?нибудь|на\s+тво[её]\w*|на\s+сво[её]\w*|можешь|сама|сам|"
+    r"как\s+хочешь|тебе\s+видне\w*|выбер\w*|выбира\w*|реши)\b.*$", re.I)
+
 # вопросительная обвязка: «что нового», «когда выйдет» — это НЕ предмет, а
 # уточнение к нему. Без предмета из разговора такой запрос бесполезен.
 _ASKING = {"что", "чего", "когда", "где", "сколько", "какой", "какая",
-           "какие", "почему", "зачем", "кто", "нового", "новое", "там"}
+           "какие", "почему", "зачем", "кто", "нового", "новое", "там",
+           # глаголы-уточнения: сами по себе предмета не задают
+           "выйдет", "выйдут", "вышло", "вышел", "вышла", "будет", "стоит",
+           "стоил", "работает", "делает", "значит", "было", "есть"}
 
 
 def _topic_from_history() -> str:
@@ -433,9 +634,34 @@ def _topic_from_history() -> str:
                     else:
                         break
                 cand = " ".join(run)
+                if cand.lower() in _PLATFORMS:
+                    continue
                 if len(cand) > len(best):
                     best = cand
     return best
+
+
+# ГЛАГОЛ ПРОСЬБЫ — ГДЕ УГОДНО, А НЕ ТОЛЬКО В НАЧАЛЕ (2026-08-13, второй
+# заход. Первая версия срезала обвязку только с начала фразы, и «Найди
+# музыку» уезжало чистым. А «Хватит пиздеть, ёперный театр уже. Найди
+# музыку.» уходило в поиск ЦЕЛИКОМ: в начале стоит не команда, а эмоция.
+# Человек не строит фразу вокруг запроса — он сначала выдыхает, а просит
+# потом. Значит искать надо сам глагол, а не надеяться на порядок слов.)
+_ASK_VERB = re.compile(
+    r"\b(?:поищ\w*|найд\w*|ищи|погугл\w*|загугл\w*|посмотр\w*|глян\w*|"
+    r"узна\w*|включ\w*|запусти|открой|покаж\w*|расскаж\w*)\b", re.I)
+
+
+def _after_ask(q: str) -> str:
+    """Кусок фразы ПОСЛЕ последнего глагола просьбы. Пусто — глагола нет."""
+    last = None
+    for m in _ASK_VERB.finditer(q):
+        last = m
+    if not last:
+        return ""
+    tail = q[last.end():].strip(" ,.!?-")
+    # «Найди музыку.» -> «музыку»; «поищи.» -> пусто, предмет был раньше
+    return tail
 
 
 def smart_query(raw: str) -> str:
@@ -444,6 +670,14 @@ def smart_query(raw: str) -> str:
     q = " ".join(str(raw or "").split())
     if not q:
         return ""
+    # сначала пробуем вырезать по глаголу просьбы: всё до него — это
+    # обращение к Сайке (в том числе мат и «ёперный театр»), а не запрос
+    tail = _after_ask(q)
+    if tail:
+        q = tail
+    cut = _CHAT_TAIL.sub("", q).strip(" ,.!?-")
+    if len(cut) >= 3:                    # не режем фразу в ноль
+        q = cut
     core = _TAIL_RE.sub("", _CMD_RE.sub("", q)).strip(" ,.!?-")
     words = [w for w in re.split(r"[\s,]+", core) if w]
     meaty = [w for w in words if w.lower().strip(".,!?") not in _HOLLOW]
@@ -461,8 +695,11 @@ def smart_query(raw: str) -> str:
         return _clean_query(q)
     # предмет из истории добавляем и когда фраза осмысленная, но КОРОТКАЯ
     # («что нового», «когда выйдет») — без него это не запрос, а обрывок
-    if len(meaty) < 3 or all(
-            w.lower().strip(".,!?") in _ASKING for w in meaty):
+    # ТЕМУ ПОДМЕШИВАЕМ ТОЛЬКО КОГДА ПРЕДМЕТА НЕТ (2026-08-13, второй заход:
+    # правило «меньше трёх слов — добавь тему» приклеивало «Стеллар Блейд»
+    # к честному запросу «музыку дабстеп». Если человек предмет НАЗВАЛ,
+    # история не нужна — она только портит).
+    if not meaty or all(w.lower().strip(".,!?") in _ASKING for w in meaty):
         topic = _topic_from_history()
         if topic and topic.lower() not in core.lower():
             core = topic + " " + core
@@ -708,6 +945,121 @@ def show_passage(url: str, quote: str) -> str:
         return ("Открыла страницу на нужном абзаце и подсветила его — "
                 "человек видит это место у себя на экране.\n\n" + out)
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ТКНУТЬ В СТРАНИЦУ (2026-08-13, живой позор: дошла до плейлиста дабстепа
+# и встала — «не могу управлять воспроизведением внутри уже открытого
+# плейлиста, нажми сама». Открыть страницу умела, ткнуть в неё — нет.
+# Для человека это выглядит как «довела до двери и не открыла».)
+#
+# Никакого «воспроизведения звука» ей и не нужно: на ютубе видео стартует
+# от КЛИКА по превью. Клик — обычное действие в её же окне.
+# ═══════════════════════════════════════════════════════════════════
+
+# первые кандидаты — то, ради чего человек вообще на этой странице
+_JS_MAIN_LINKS = """
+(want) => {
+  const sel = ['a#video-title', 'ytd-video-renderer a#thumbnail',
+               'ytd-playlist-renderer a#thumbnail',
+               'a.yt-simple-endpoint#video-title-link',
+               'article a[href]', 'main a[href]', '.result a[href]',
+               'h2 a[href]', 'h3 a[href]', 'a[href]'];
+  const seen = new Set(), out = [];
+  for (const s of sel) {
+    for (const a of document.querySelectorAll(s)) {
+      const r = a.getBoundingClientRect();
+      if (r.width < 40 || r.height < 12) continue;
+      const t = (a.innerText || a.getAttribute('title') || '').trim();
+      const href = a.href || '';
+      if (!href || href.startsWith('javascript')) continue;
+      if (seen.has(href)) continue;
+      seen.add(href);
+      out.push({t: t.slice(0, 120), href: href,
+                x: Math.round(r.left + r.width / 2),
+                y: Math.round(r.top + r.height / 2)});
+      if (out.length >= 25) break;
+    }
+    if (out.length >= 8) break;
+  }
+  if (!want) return out;
+  const w = String(want).toLowerCase();
+  const hit = out.filter(o => o.t.toLowerCase().includes(w));
+  return hit.length ? hit : out;
+}
+"""
+
+
+def click_on(what: str = "", n: int = 1) -> str:
+    """Ткнуть в ссылку/видео на ОТКРЫТОЙ странице. Пусто — первое главное
+    (на ютубе это первое видео, то есть «включи первую песню»)."""
+    if not available() or not _chromium_present():
+        return "браузер ещё не готов"
+    try:
+        n = max(1, int(str(n).strip() or 1))
+    except Exception:
+        n = 1
+
+    def job(ctx):
+        page = _ensure_page(ctx)
+        # баннер перехватывает клик — сначала убираем, иначе «нажала, а
+        # ничего не произошло» (уже проходили с поисковой строкой)
+        if _overlays(page):
+            try:
+                page.keyboard.press("Escape")
+                page.evaluate(_JS_CLOSE_OVERLAY)
+                page.wait_for_timeout(250)
+            except Exception:
+                pass
+        # СЛОВА-УКАЗАТЕЛИ (2026-08-13): «открой плейлист», «первый список»,
+        # «вот этот, 93 видео» — человек показывает пальцем, а не называет
+        # заголовок. Ищем не по тексту, а по типу ссылки.
+        want = (what or "").strip()
+        wl = want.lower()
+        if any(k in wl for k in ("плейлист", "плей-лист", "список", "подборк",
+                                 "сборник", "альбом")):
+            pl = page.evaluate("""() => [...document.querySelectorAll(
+                'a[href*="list="], ytd-playlist-renderer a#thumbnail,'
+                + 'ytd-radio-renderer a#thumbnail')]
+                .map(a => { const r = a.getBoundingClientRect();
+                  return {t: (a.innerText||a.title||'').trim().slice(0,120),
+                          href: a.href,
+                          x: Math.round(r.left + r.width/2),
+                          y: Math.round(r.top + r.height/2)}; })
+                .filter(o => o.href && o.y > 0)""") or []
+            if pl:
+                items = pl
+            else:
+                items = page.evaluate(_JS_MAIN_LINKS, "") or []
+        else:
+            if wl in ("это", "этот", "эту", "вот это", "вот этот", "первый",
+                      "первое", "первую", "тот", "вон тот"):
+                want = ""
+            items = page.evaluate(_JS_MAIN_LINKS, want) or []
+        if not items:
+            return None, None
+        if n > len(items):
+            return "range", len(items)
+        it = items[n - 1]
+        try:
+            page.mouse.click(it["x"], it["y"])
+        except Exception:
+            page.goto(it["href"], wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_timeout(1500)
+        return it, _page_text(page, 1200)
+
+    try:
+        first, rest = _post(job, timeout=45)
+    except Exception as e:
+        return f"ткнуть не вышло: {e}"
+    if first is None:
+        return ("на странице не нашла, во что ткнуть — скажи человеку "
+                "честно и предложи назвать, что именно нажать")
+    if first == "range":
+        return (f"на странице всего {rest} подходящих пунктов — номера {n} "
+                "там нет, не выдумывай")
+    _mark_used()
+    return (f"Нажала: {first['t'] or first['href']}\n\n{rest}")
 
 
 def research(query: str) -> str:
@@ -1181,8 +1533,178 @@ def type_into_search(text: str, submit: bool = True) -> str:
     return f"Вписала «{text}» в поиск сайта. Что на странице:\n\n{out}"
 
 
+def tabs(action: str, index: int = 0):
+    """Вкладки в СВОЁМ окне. Здесь всё своё: ни чужого чата не закроешь,
+    ни рабочей страницы человека (2026-08-13)."""
+    if not available() or not _chromium_present():
+        return None
+    a = (action or "").lower()
+
+    def job(ctx):
+        page = _ensure_page(ctx)
+        bctx = ctx["ctx"]
+        pages = [p for p in bctx.pages if not p.is_closed()]
+        cur = pages.index(page) if page in pages else 0
+        if a in ("open", "new", "открыть"):
+            ctx["page"] = bctx.new_page()
+            ctx["page"].bring_to_front()
+            return "Открыла новую вкладку в своём окне."
+        if a in ("close", "закрыть"):
+            if len(pages) <= 1:
+                return ("В моём окне одна вкладка — закрывать её значит "
+                        "закрыть окно. Скажи «закрой браузер», если это "
+                        "нужно.")
+            page.close()
+            ctx["page"] = None
+            _ensure_page(ctx)
+            return "Закрыла свою вкладку."
+        if a in ("next", "следующая", "prev", "previous", "предыдущая"):
+            if len(pages) < 2:
+                return "У меня открыта одна вкладка — листать нечего."
+            step = 1 if a in ("next", "следующая") else -1
+            nxt = pages[(cur + step) % len(pages)]
+            nxt.bring_to_front()
+            ctx["page"] = nxt
+            return f"Перешла на «{nxt.title()[:60]}»."
+        if a in ("go", "перейти", "switch"):
+            n = max(1, int(index or 1))
+            if n > len(pages):
+                return f"У меня всего {len(pages)} вкладок."
+            pages[n - 1].bring_to_front()
+            ctx["page"] = pages[n - 1]
+            return f"Перешла на вкладку {n}: «{pages[n - 1].title()[:60]}»."
+        return None
+
+    try:
+        return _post(job, timeout=25)
+    except Exception as e:
+        log.debug("свои вкладки: %s", e)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ПУЛЬТ (2026-08-13, живой отказ: click_on запустил дабстеп — и тут же
+# «останови», «пауза», «воспроизведи обратно», «следующая». Она всё это
+# ПРОГОВАРИВАЛА («Ставлю на паузу», «Возобновляю воспроизведение») и не
+# делала ничего: инструмента не было. Один раз с отчаяния дёрнула
+# volume_set на «останови» — то есть искала хоть что-то похожее.
+#
+# Играет обычный <video> на странице. Значит и управление обычное: не
+# горячие клавиши в чужое окно, а прямой вызов в СВОЁМ окне.
+# ═══════════════════════════════════════════════════════════════════
+
+_JS_MEDIA = """
+(cmd) => {
+  const els = [...document.querySelectorAll('video,audio')]
+    .filter(e => e.readyState > 0 || e.currentSrc || e.src);
+  const v = els.sort((a, b) => (b.duration || 0) - (a.duration || 0))[0];
+  if (!v && !['next', 'prev'].includes(cmd)) return {err: 'нет плеера'};
+  const nice = (t) => {
+    if (!isFinite(t)) return '';
+    const m = Math.floor(t / 60), s = Math.floor(t % 60);
+    return m + ':' + String(s).padStart(2, '0');
+  };
+  const where = () => v ? (nice(v.currentTime) + ' из ' + nice(v.duration)) : '';
+  switch (cmd) {
+    case 'pause': v.pause(); return {ok: 'пауза', at: where()};
+    case 'play':  v.play();  return {ok: 'играет', at: where()};
+    case 'toggle':
+      if (v.paused) { v.play(); return {ok: 'играет', at: where()}; }
+      v.pause(); return {ok: 'пауза', at: where()};
+    case 'mute':   v.muted = true;  return {ok: 'звук выключен'};
+    case 'unmute': v.muted = false; return {ok: 'звук включён'};
+    case 'louder':
+      v.volume = Math.min(1, (v.volume || 0) + 0.2);
+      return {ok: 'громче', vol: Math.round(v.volume * 100)};
+    case 'quieter':
+      v.volume = Math.max(0, (v.volume || 0) - 0.2);
+      return {ok: 'тише', vol: Math.round(v.volume * 100)};
+    case 'restart': v.currentTime = 0; v.play(); return {ok: 'с начала'};
+    case 'forward': v.currentTime += 30; return {ok: 'вперёд на 30с', at: where()};
+    case 'back':    v.currentTime -= 15; return {ok: 'назад на 15с', at: where()};
+    case 'next': case 'prev': {
+      const b = document.querySelector(
+        cmd === 'next' ? '.ytp-next-button' : '.ytp-prev-button');
+      if (b) { b.click(); return {ok: cmd === 'next' ? 'следующий' : 'предыдущий'}; }
+      return {err: 'кнопки переключения тут нет'};
+    }
+  }
+  return {err: 'не поняла команду'};
+}
+"""
+
+_MEDIA_WORDS = {
+    "pause": ("пауза", "стоп", "останови", "остановись", "выключи",
+              "притормози", "хватит играть", "pause", "stop"),
+    "play": ("играй", "продолжи", "продолжай", "воспроизведи", "включи "
+             "обратно", "возобнови", "дальше играй", "play", "resume"),
+    "next": ("следующ", "переключи", "дальше", "next", "другую"),
+    "prev": ("предыдущ", "назад песню", "прошлую", "prev"),
+    "louder": ("громче", "прибавь", "louder"),
+    "quieter": ("тише", "убавь", "потише", "quieter"),
+    "mute": ("заглуши", "без звука", "убери звук", "mute"),
+    "unmute": ("верни звук", "включи звук", "unmute"),
+    "restart": ("сначала", "с начала", "заново"),
+    "forward": ("перемотай вперёд", "промотай вперёд", "вперёд"),
+    "back": ("перемотай назад", "промотай назад", "отмотай"),
+}
+
+
+def _media_cmd(word: str) -> str:
+    w = (word or "").strip().lower()
+    if not w:
+        return "toggle"
+    if w in _MEDIA_WORDS:
+        return w
+    for cmd, keys in _MEDIA_WORDS.items():
+        if any(k in w for k in keys):
+            return cmd
+    return "toggle"
+
+
+def media(action: str = "") -> str:
+    """Пульт для того, что играет в её окне."""
+    if not available() or not _chromium_present():
+        return "браузер ещё не готов"
+    cmd = _media_cmd(action)
+
+    def job(ctx):
+        page = _ensure_page(ctx)
+        return page.evaluate(_JS_MEDIA, cmd)
+
+    try:
+        r = _post(job, timeout=25) or {}
+    except Exception as e:
+        return f"пульт не сработал: {e}"
+    if r.get("err"):
+        if "нет плеера" in str(r["err"]):
+            return ("на этой странице ничего не играет — скажи человеку "
+                    "честно. Возможно, видео открыто в ДРУГОМ окне, не в "
+                    "твоём: тогда управлять им ты не можешь.")
+        return str(r["err"])
+    _mark_used()
+    out = str(r.get("ok") or "готово")
+    if r.get("at"):
+        out += f" ({r['at']})"
+    if r.get("vol") is not None:
+        out += f" — громкость {r['vol']}%"
+    return out
+
+
 def close() -> str:
     def job(ctx):
+        if STATE.get("system"):
+            # ЧУЖОЙ БРАУЗЕР НЕ ЗАКРЫВАЕМ (2026-08-13): к нему мы только
+            # подключились. Закрыть его — снести человеку все вкладки.
+            try:
+                if ctx.get("browser"):
+                    ctx["browser"].close()   # рвём соединение, не окно
+            except Exception:
+                pass
+            ctx["ctx"] = ctx["browser"] = ctx["page"] = None
+            STATE["system"] = False
+            return ("отцепилась от твоего Chrome — окно и вкладки на месте, "
+                    "я их не трогаю")
         _reset_ctx(ctx)
         return "закрыто"
 
