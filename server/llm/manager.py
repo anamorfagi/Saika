@@ -1249,6 +1249,25 @@ def _sampling_fields(keys) -> dict:
     return out
 
 
+def _is_cloud_url(url: str) -> bool:
+    """Облако или свой порт. Считаем по адресу: локальные движки всегда на
+    127.0.0.1/localhost, всё остальное — чужой сервер за деньги."""
+    u = (url or "").lower()
+    return not ("127.0.0.1" in u or "localhost" in u or "::1" in u)
+
+
+def _local_backend_of(url: str) -> str:
+    u = (url or "").lower()
+    for name, fn in (("llamacpp", _llamacpp_url), ("locallm", _locallm_url),
+                     ("lmstudio", _lmstudio_url), ("ollama", _ollama_url)):
+        try:
+            if fn().lower().rstrip("/") in u:
+                return name
+        except Exception:
+            continue
+    return "local"
+
+
 def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
                    image=None):
     """Общий OpenAI-совместимый стрим (LM Studio и облако).
@@ -1506,6 +1525,17 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         if _usage:
             log.info("API %s usage: %s", model,
                      json.dumps(_usage, ensure_ascii=False))
+            # СЧЁТ (2026-08-13): цифры и раньше проходили через лог, но
+            # нигде не копились — узнать «сколько сожгли за день» можно было
+            # только грепом. Бюджет нельзя соблюдать, не умея считать, а
+            # фоновым облачным задачам бюджет обязателен.
+            try:
+                from server import usage as _u
+                _bk = ("cloud" if _is_cloud_url(base_url)
+                       else _local_backend_of(base_url))
+                _u.add(_bk, model, _usage)
+            except Exception as e:
+                log.debug("счётчик расхода пропущен: %s", e)
             # ГЛАВНЫЙ ПОЖИРАТЕЛЬ СЕКУНД, ЕСЛИ ОН ВЕРНЁТСЯ (2026-07-27).
             # Размышления не видно ни в чате, ни в счётчике токенов ответа —
             # они всплывают ТОЛЬКО здесь, отдельным полем usage. Пока это

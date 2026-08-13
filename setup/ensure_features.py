@@ -95,6 +95,51 @@ FEATURES = {
         "extra_modules": ["qrcode", "cryptography"],
         "extra_pip": ["qrcode", "cryptography"],
     },
+    # УМНЫЙ ПОИСК (2026-08-13). Ставится САМО при старте — владелец не
+    # должен знать, что внутри вообще есть какие-то пакеты. Всё в extra:
+    # без них поиск работает по-старому (свой разбор HTML и вёрстки DDG),
+    # просто хуже — значит провал установки ничего не ломает.
+    "search": {
+        "title": "Умный поиск: текст статей без мусора, даты, надёжная выдача",
+        "core_modules": [],
+        "core_pip": [],
+        # trafilatura — выдирает ТЕКСТ СТАТЬИ (без меню, футеров, «читайте
+        # также») и ДАТУ публикации. Без даты Сайка выдавала прошлогоднюю
+        # статью за свежую новость — живой случай с патчем игры.
+        # ddgs — выдача поисковика без разбора вёрстки: не ломается при
+        # редизайне («выдача не распарсилась») и отдаёт десятки ссылок.
+        "extra_modules": ["trafilatura", "ddgs"],
+        "extra_pip": ["trafilatura", "ddgs"],
+    },
+    # РЕЗАК БАННЕРОВ (2026-08-13). ~5 МБ, качается один раз с GitHub.
+    # Свой close_ad остаётся страховкой на куки-стены и окна подписки.
+    "ublock": {
+        "title": "Резак баннеров в её браузере (uBlock Origin)",
+        "core_modules": [],
+        "core_pip": [],
+        "extra_modules": [],
+        "extra_pip": [],
+        # метка, а не manifest.json: от неудачной MV2-попытки манифест
+        # остаётся, и проверка по нему считала бы битую папку установленной
+        "core_files": ["third_party/ublock/.saika_mv3"],
+        "install_script": "setup/install_ublock.py",
+        "config_flag": "browser.ublock",
+    },
+    # УХО (2026-08-13): метки звуков вокруг — речь / клавиатура / музыка /
+    # лай. Нужно для двух вещей сразу: не пускать НЕ-речь в карту голосов
+    # (клацанье клавиатуры заводило себе профиль) и давать Сайке фон
+    # разговора. Всё в extra: нет пакета — работает как раньше.
+    "hearing": {
+        "title": "Ухо: что звучит вокруг (метки звуков)",
+        "core_modules": [],
+        "core_pip": [],
+        # PANNs, а НЕ YAMNet (отступление от плана в HEARING.md): YAMNet
+        # тянет TensorFlow, то есть второй фреймворк глубокого обучения в
+        # венв, где уже стоит torch. Этот венв хрупкий — см. FORBIDDEN_PKG
+        # в ai_doctor. panns_inference работает на имеющемся torch.
+        "extra_modules": ["panns_inference"],
+        "extra_pip": ["panns-inference"],
+    },
     "pdf": {
         "title": "Чтение PDF-чертежей",
         "core_modules": ["fitz"],
@@ -188,6 +233,21 @@ FEATURES = {
         "windows_only": True,
     },
 }
+
+
+def setup_log(msg: str):
+    """Провалы установки — В ЛОГ (2026-08-13, просьба владельца). Раньше
+    они жили только в консоли старта и в .setup_state.json: окно закрылось —
+    и никто, включая ИИ-Беймакса, уже не знал, что именно не встало."""
+    try:
+        d = ROOT / "logs"
+        d.mkdir(exist_ok=True)
+        import datetime as _dt
+        stamp = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(d / "setup.log", "a", encoding="utf-8") as f:
+            f.write(f"{stamp} {msg}\n")
+    except Exception:
+        pass
 
 
 def _state():
@@ -353,6 +413,8 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
                             attempts=int(erec.get("attempts", 0)) + 1)
                 print("    [~] не встали: " + ", ".join(left) +
                       " — не страшно, работаем без них")
+                setup_log(f"[~] {name}: необязательное не встало — "
+                          f"{', '.join(left)} (работает хуже, но работает)")
             else:
                 erec.update(status="ok", ts=time.time(), attempts=0, missing=[])
 
@@ -364,6 +426,8 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
                    missing=still)
         print(f"[X] {spec['title']}: всё ещё нет {', '.join(still)}. "
               "Сайка запустится, но эта возможность будет молчать.")
+        setup_log(f"[X] {name}: не встало — не хватает {', '.join(still)}"
+                  f" (попытка {rec.get('attempts', 0)})")
         return {"feature": name, "ok": False, "action": "не удалось"}
 
     rec.update(status="ok", ts=time.time(), attempts=0, missing=[])

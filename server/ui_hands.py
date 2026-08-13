@@ -338,14 +338,27 @@ def web_open(site: str, query: str = "") -> str:
     else:                                   # неизвестный сайт — через гугл
         url = ("https://www.google.com/search?q=" +
                urllib.parse.quote_plus((q + " " + s).strip()))
+    # ОДНО ОКНО, А НЕ ДВА (2026-08-13, живой отказ владельца: «если уж
+    # открыла окно, то там и работала»). Было так: web_open запускал
+    # СИСТЕМНЫЙ браузер через startfile, а web_research/web_list работали в
+    # СВОЁМ окне Playwright. Получалось два разных браузера: она открыла
+    # человеку YouTube в его Chrome, а искала музыку у себя — и связи между
+    # этими окнами нет никакой. Теперь всё идёт в её окно: там она видит
+    # DOM, умеет скроллить, закрывать баннеры и печатать в строку сайта.
+    try:
+        from server import browser_hands
+        if browser_hands.available() and browser_hands._chromium_present():
+            return browser_hands.open_url(url)
+    except Exception as e:
+        log.debug("web_open: своё окно недоступно (%s) — иду системным", e)
     try:
         if _IS_WIN:
             os.startfile(url)               # noqa: S606 — браузер по умолчанию
         else:
             import subprocess
             subprocess.Popen(["xdg-open", url])
-        return (f"Открыла {url} в браузере. Подожди секунду-другую, потом "
-                "see() покажет, что на странице.")
+        return (f"Открыла {url} в системном браузере (своё окно недоступно). "
+                "Подожди секунду-другую, потом see() покажет, что на странице.")
     except Exception as e:
         return f"Не смогла открыть {url}: {e}"
 

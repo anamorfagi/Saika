@@ -1674,7 +1674,57 @@ function handleJson(m){
     $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
   }
   else if(m.type==='baymax'){ addBaymax(m); }
+  // НУМЕРОВАННАЯ ВЫДАЧА (2026-08-13): список ссылок приходит ОТДЕЛЬНЫМ
+  // событием, а не текстом ответа. Смысл ровно в этом: текст ответа уходит
+  // в озвучку, и раньше она зачитывала вслух заголовки сайтов, а выбрать из
+  // них было нечем — номеров не существовало. Теперь номера видно глазами,
+  // и достаточно сказать «открой второй».
+  else if(m.type==='links'){ addLinks(m); }
   else if(m.type==='problem'){ showProblem(m); }
+}
+function addLinks(m){
+  const items=(m&&m.items)||[];
+  if(!items.length) return;
+  const d=document.createElement('div');
+  d.className='msg saika';
+  d.style.cssText='max-width:92%';
+  const h=document.createElement('div');
+  h.style.cssText='font-size:11px;color:var(--dim);margin-bottom:6px';
+  h.textContent='🔎 '+(m.query||'выдача')+' — скажи номер, чтобы открыть';
+  d.appendChild(h);
+  items.forEach(it=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;gap:8px;align-items:baseline;'
+      +'padding:4px 0;border-top:1px solid rgba(255,255,255,.06)';
+    const n=document.createElement('span');
+    n.style.cssText='flex:none;min-width:20px;text-align:right;'
+      +'font-weight:600;color:var(--acc,#8ab4ff)';
+    n.textContent=it.n+'.';
+    const box=document.createElement('div');
+    box.style.cssText='flex:1;min-width:0';
+    const a=document.createElement('a');
+    a.href=it.url; a.target='_blank'; a.rel='noopener noreferrer';
+    a.textContent=it.title||it.url;
+    a.title=it.url;
+    a.style.cssText='color:inherit;text-decoration:none;display:block;'
+      +'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    a.onmouseenter=()=>a.style.textDecoration='underline';
+    a.onmouseleave=()=>a.style.textDecoration='none';
+    const host=document.createElement('div');
+    host.style.cssText='font-size:11px;color:var(--dim);overflow:hidden;'
+      +'text-overflow:ellipsis;white-space:nowrap';
+    let hn=it.url||''; try{ hn=new URL(it.url).hostname.replace(/^www\./,''); }catch(e){}
+    host.textContent=hn+(it.snippet?' · '+it.snippet:'');
+    box.appendChild(a); box.appendChild(host);
+    row.appendChild(n); row.appendChild(box);
+    d.appendChild(row);
+  });
+  const ts=document.createElement('div');
+  ts.style.cssText='font-size:10px;color:var(--dim);margin-top:6px';
+  ts.textContent=new Date().toLocaleTimeString('ru-RU');
+  d.appendChild(ts);
+  $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
+  curSaikaMsg=null;
 }
 function addBaymax(m){
   // не речь, а мелкая приглушённая строка с анимированным ремонтником.
@@ -2236,6 +2286,104 @@ async function fillModelPop(){
   const prevScroll=pop?pop.scrollTop:0;
   const wasAtBottom=pop ? (pop.scrollTop+pop.clientHeight>=pop.scrollHeight-30) : true;
   list.innerHTML='';
+  // МОДЕЛЬ БЕЙМАКСА (2026-08-13). Отдельно от разговорной осознанно:
+  // разговорную выбирают по скорости, а Беймакс ставит пакеты и правит
+  // конфиг — там цена ошибки другая. Предупреждение висит прямо здесь,
+  // потому что читать его будут ровно в момент выбора.
+  try{
+    const dm = await (await fetch('/api/doctor/model')).json();
+    const box=document.createElement('div');
+    box.className='title';
+    box.style.cssText='padding:6px 8px;margin-bottom:4px;border-radius:8px;'
+      +'background:rgba(255,255,255,.04);line-height:1.5';
+    const cur = dm.model ? (dm.backend+'/'+dm.model) : 'та же, что в разговоре';
+    box.innerHTML='<div style="display:flex;gap:6px;align-items:center;'
+      +'justify-content:space-between"><span>🩺 Чинит окружение:</span>'
+      +'<b style="font-weight:600;overflow:hidden;text-overflow:ellipsis;'
+      +'white-space:nowrap;max-width:60%" title="'+cur+'">'+cur+'</b></div>';
+    const sel=document.createElement('select');
+    sel.style.cssText='width:100%;margin-top:6px;background:rgba(0,0,0,.35);'
+      +'color:var(--text);border:1px solid rgba(255,255,255,.12);'
+      +'border-radius:6px;padding:4px;font-size:12px';
+    const o0=document.createElement('option');
+    o0.value=''; o0.textContent='— как в разговоре —'; sel.appendChild(o0);
+    // ТОЛЬКО ЛОКАЛЬНЫЕ (2026-08-13, живой отказ: выбрали cloud/kimi-k3, а
+    // запрос ушёл на адрес GigaChat и вернул «404 No such model» — у каждой
+    // облачной модели свой адрес и свой ключ). Но дело не только в этом:
+    // Беймакс чинит ЛОКАЛЬНОЕ окружение и просыпается в том числе когда
+    // отвалилась сеть — облачный доктор в такой момент бесполезен.
+    ((r.models)||[]).filter(m=>m.backend!=='cloud').forEach(m=>{
+      const o=document.createElement('option');
+      o.value=m.backend+'\u0000'+m.name;
+      o.textContent=m.name+' ('+m.backend+')';
+      if(dm.model===m.name && dm.backend===m.backend) o.selected=true;
+      sel.appendChild(o);
+    });
+    sel.onchange=async()=>{
+      const [b,n]=(sel.value||'\u0000').split('\u0000');
+      await api('/api/doctor/model',{backend:b||'',model:n||''});
+      fillModelPop();
+    };
+    // РАСХОД ТОКЕНОВ (2026-08-13). Стоит рядом с выбором модели не
+    // случайно: именно здесь человек решает, кому отдать работу, и именно
+    // здесь ему нужно видеть, во что обошлась прошлая неделя.
+    try{
+      const us = await (await fetch('/api/usage?days=7')).json();
+      const cloud=(us.rows||[]).filter(r=>r.cloud);
+      const loc=(us.rows||[]).filter(r=>!r.cloud);
+      const K=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1000?Math.round(n/1000)+'k':String(n||0);
+      const u=document.createElement('div');
+      u.style.cssText='margin-top:8px;padding-top:8px;border-top:1px solid '
+        +'rgba(255,255,255,.08);font-size:10.5px;line-height:1.6';
+      let h='<div style="color:var(--text)">Расход за 7 дней</div>';
+      if(!cloud.length && !loc.length){
+        h+='<div style="color:var(--dim)">пока ничего не считано</div>';
+      }else{
+        if(cloud.length){
+          h+='<div style="color:var(--dim);margin-top:2px">облако — за это платят</div>';
+          cloud.forEach(r=>{
+            const cost = r.cost==null ? '<span title="Ставка не задана: '
+              +'добавь llm.pricing в config.json">цена ?</span>'
+              : ('$'+r.cost.toFixed(2));
+            h+='<div style="display:flex;gap:6px;justify-content:space-between">'
+              +'<span style="overflow:hidden;text-overflow:ellipsis;'
+              +'white-space:nowrap">'+r.model.replace(/^cloud\//,'')+'</span>'
+              +'<span style="flex:none;color:var(--dim)">'+K(r.in)+'→'+K(r.out)
+              +' · '+r.calls+' · '+cost+'</span></div>';
+          });
+          const t=us.today_cloud||{in:0,out:0};
+          h+='<div style="color:var(--dim);margin-top:2px">сегодня: '
+            +K(t.in+t.out)+' токенов'
+            +(us.cloud_cost!=null?' · всего $'+us.cloud_cost.toFixed(2):'')
+            +'</div>';
+        }
+        if(loc.length){
+          h+='<div style="color:var(--dim);margin-top:4px">локально — бесплатно, '
+            +'но видно, где жуётся контекст</div>';
+          loc.slice(0,3).forEach(r=>{
+            const hit = r.in ? Math.round(100*(r.cached||0)/r.in) : 0;
+            h+='<div style="display:flex;gap:6px;justify-content:space-between">'
+              +'<span style="overflow:hidden;text-overflow:ellipsis;'
+              +'white-space:nowrap">'+r.model.split('/').pop()+'</span>'
+              +'<span style="flex:none;color:var(--dim)" title="Доля промпта, '
+              +'взятая из KV-кэша. Низкая — каждый ход жуётся заново">'
+              +K(r.in)+'→'+K(r.out)+' · кэш '+hit+'%</span></div>';
+          });
+        }
+      }
+      u.innerHTML=h;
+      box.appendChild(u);
+    }catch(e){}
+    const warn=document.createElement('div');
+    warn.style.cssText='margin-top:6px;font-size:10.5px;color:var(--warn);'
+      +'line-height:1.45';
+    warn.textContent='Бери модель покрупнее. Беймакс имеет право ставить '
+      +'пакеты и править конфиг — мелкая модель тут не чинит, а ломает: '
+      +'однажды решила переустановить torch и чуть не снесла видеокарту '
+      +'всему проекту.';
+    box.appendChild(sel); box.appendChild(warn);
+    list.appendChild(box);
+  }catch(e){}
   // тумблер «размышлений» думающих моделей (gemma-4, qwen3, r1…):
   // мысли = те самые «думала 7-10с» перед ответом. Выкл = отвечает сразу.
   {
@@ -7901,6 +8049,16 @@ eqFrame();
 
   /* ─────────────────── наполнение панели ─────────────────── */
   const pane = $id('vp-pane');
+  const bindAbout = () => {
+    const b = $id('vp-about-btn'), box = $id('vp-about');
+    if(!b || !box) return;
+    b.onclick = () => {
+      const on = box.style.display === 'none';
+      box.style.display = on ? 'block' : 'none';
+      b.classList.toggle('acc', on);
+    };
+  };
+  setTimeout(bindAbout, 0);
   if(pane) pane.innerHTML =
     '<div class="vp-h">👤 <span>Голос</span>' +
       '<span class="sub" id="vp-sub"></span><span style="flex:1"></span>' +
@@ -7910,6 +8068,50 @@ eqFrame();
       '<button class="vp-btn" id="vp-t-tail" title="Хвост живой точки">〜</button>' +
       '<button class="vp-btn" id="vp-t-dust" title="Пыль: поле, которое ' +
         'сгущается там, где звучит голос">·˙·</button>' +
+      '<button class="vp-btn" id="vp-about-btn" title="Что это за панель и ' +
+        'как она работает">?</button>' +
+    '</div>' +
+    // ОПИСАНИЕ СИСТЕМЫ (2026-08-13, просьба владельца). Панель выросла из
+    // одной карты в целый прибор: эмбеддинги, спектр, лента минуты, метки
+    // звуков. Половина элементов необъяснима без текста, а подсказка при
+    // наведении вмещает одну фразу. Прячем за «?», чтобы не занимало место
+    // у того, кто и так всё знает.
+    '<div id="vp-about" style="display:none;font-size:11px;line-height:1.6;' +
+      'color:var(--dim);background:rgba(255,255,255,.03);border-radius:10px;' +
+      'padding:10px 12px;margin:4px 0 8px">' +
+      '<div style="color:var(--text);margin-bottom:6px">Как она слышит</div>' +
+      'Звук с микрофона идёт по трём дорожкам сразу, и это разные вопросы.' +
+      '<br><br>' +
+      '<b style="color:var(--text)">Что за звук.</b> Классификатор на 527 ' +
+      'классов отвечает «речь / клавиатура / музыка / лай». Он же ' +
+      'предохранитель: если в кадре не речь, отпечаток не считается — иначе ' +
+      'клацанье клавиатуры заводит себе профиль в карте. Метки того, что ' +
+      'слышно, уходят к ней фоном разговора — она может о них заговорить, а ' +
+      'может не заметить, как не замечают гула холодильника.' +
+      '<br><br>' +
+      '<b style="color:var(--text)">Чей голос.</b> Из речи считается ' +
+      'отпечаток — 192 числа, описывающих не слова, а сам голос: строение ' +
+      'связок и манеру. Похожесть двух отпечатков и есть «это тот же ' +
+      'человек». <b style="color:var(--text)">Карта</b> сверху — эти числа, ' +
+      'сплющенные до двух измерений: рядом лежат похожие голоса, каждое ' +
+      'облако — отдельный человек. Живая точка едет туда, чей голос сейчас ' +
+      'звучит.' +
+      '<br><br>' +
+      '<b style="color:var(--text)">Какие слова.</b> Этим занят движок ' +
+      'распознавания, к панели он отношения не имеет.' +
+      '<br><br>' +
+      '<b style="color:var(--text)">Спектр</b> — как звук разложен по ' +
+      'высотам прямо сейчас. <b style="color:var(--text)">Последняя ' +
+      'минута</b> — кто говорил за минуту, полосой по времени: видно паузы, ' +
+      'перебивания и кто кого перекрикивал.' +
+      '<br><br>' +
+      'Записать голос: назови имя внизу и жми «Записать» — дальше она ' +
+      'узнаёт его сама. Кластер можно переименовать или удалить крестиком.' +
+      '<br><br>' +
+      '<span style="color:var(--warn)">Звук не хранится.</span> На диск ' +
+      'ложатся только числа: из отпечатка и спектра речь не восстановить. ' +
+      'Час микрофона в квартире — это чужие разговоры и телевизор, и ' +
+      'складывать их ради отчёта про щелчки было бы не тем разменом.' +
     '</div>' +
     '<div id="vp-mapwrap"><canvas id="vp-map"></canvas>' +
     '<div id="vp-mapgrip" title="Потяни — изменится высота карты; двойной ' +

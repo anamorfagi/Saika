@@ -41,6 +41,7 @@ from server import git_sync
 from server.proc_utils import kill_by_port, register_console_close_handler
 from server.stt.manager import STTManager
 from server.tts.manager import TTSManager, split_sentences
+from server import hearing
 from server import voiceprint
 from server.denoise import DENOISE
 from server.draft import DRAFT
@@ -568,6 +569,39 @@ def _apply_gesture_marks(text: str, fire: bool = True) -> str:
 _TOOL_MARK_RE = re.compile(
     r'[\[({]\s*([a-z][a-z0-9_]{2,})\s*[:=]?\s*([^\])}]*)[\])}]')
 
+# ДИАЛЕКТ ВЫЗОВА — ОДИН НА ДВА ПУТИ (2026-08-13). Раньше «прощение диалекта»
+# жило внутри _run_tool_marks, а _strip_tool_marks резала озвучку сырой
+# _TOOL_MARK_RE. Из-за этого «[вызываю close_browser]» ОДНОВРЕМЕННО не
+# исполнялся (имя не латинское сразу после скобки) и не вырезался — то есть
+# действие не происходило, а маркер зачитывался вслух. Теперь нормализация
+# общая: что исполняем, то и вырезаем.
+_CALL_PREFIX_RE = re.compile(
+    r'([\[({])\s*(?:вызыв\w*|вызов\w*|вызв\w*|зову|зова\w*|'
+    r'запуска\w*|запущ\w*|использу\w*|дёрга\w*|дерга\w*|'
+    r'инструмент\w*|команда|tool[_\s-]?calls?|tool[_\s-]?use|'
+    r'function[_\s-]?call|tool|call|calling|invoke|using)'
+    r'\s*[:=]?\s*', re.I)
+
+# ОБОРВАННЫЙ ВЫЗОВ (2026-08-13, живой чат: «[tool_callПохоже, ты прислал
+# мне какой-то служебный текст…» — gemma открыла скобку, передумала и
+# продолжила обычным текстом. Скобка не закрылась, _TOOL_MARK_RE такое не
+# ловит, и служебное слово уехало в чат И В ОЗВУЧКУ).
+_BROKEN_CALL_RE = re.compile(
+    # \b здесь НЕ годится: между латинской «l» и кириллической «П» границы
+    # слова нет — для Python обе буквы словесные, и «[tool_callПохоже» не
+    # ловилось. Смотрим на смену алфавита явно.
+    r'[\[({]\s*(?:tool[_\s-]?calls?|tool[_\s-]?use|function[_\s-]?call|'
+    r'вызов|вызываю)(?![a-zA-Z_])[^\])}]{0,20}?(?=[А-ЯЁ])', re.I)
+
+
+def _norm_call_dialect(text: str) -> str:
+    return _CALL_PREFIX_RE.sub(r'\1', text or "")
+
+
+def _strip_broken_call(text: str) -> str:
+    """Убрать оборванную скобку вызова, за которой пошёл обычный текст."""
+    return _BROKEN_CALL_RE.sub("", text or "")
+
 # результат исполненных маркеров — для следующего хода (см. run_dialog)
 PENDING_ACTIONS: list = []
 
@@ -601,6 +635,35 @@ def _marker_args(name: str, raw: str, schemas: list) -> dict:
     return {"query": val}
 
 
+def _args_from_last_user(name: str, schemas: list) -> dict:
+    """Маркер пришёл без аргументов — подставить последнюю фразу человека в
+    первый обязательный параметр. Работает только для инструментов, которым
+    нужен ОДИН текстовый параметр (поиск, исследование, открыть) — там это
+    ровно то, что человек и просил. Для всего остального пусто: лучше
+    честный отказ, чем действие с выдуманным аргументом."""
+    try:
+        from server.llm import tools as _tls
+        txt = (_tls.LAST_USER.get("text") or "").strip()
+    except Exception:
+        txt = ""
+    if not txt:
+        return {}
+    for sc in schemas:
+        f = sc.get("function", {})
+        if f.get("name") != name:
+            continue
+        params = (f.get("parameters") or {})
+        props = params.get("properties") or {}
+        req = params.get("required") or list(props)[:1]
+        if len(req) != 1:
+            return {}
+        key = req[0]
+        if (props.get(key, {}) or {}).get("type", "string") != "string":
+            return {}
+        return {key: txt}
+    return {}
+
+
 def _run_tool_marks(text: str, skip: set | None = None) -> list:
     """Найти в готовом ответе текстовые вызовы, исполнить, вернуть
     [(имя, результат)]. Не больше двух за ответ — остальное пусть просит
@@ -615,8 +678,13 @@ def _run_tool_marks(text: str, skip: set | None = None) -> list:
     # рапортовала «готово». Человек ждал впустую четыре раза подряд.
     # Синтаксис, который модель выбирает сама, дешевле принять, чем
     # переучивать: срезаем служебные префиксы перед именем инструмента.
-    text = re.sub(r'([\[({])\s*(?:вызов|вызвать|tool|call|инструмент)'
-                  r'\s*[:=]?\s*', r'\1', text, flags=re.I)
+    # 2026-08-13, живой вечер: та же болезнь, новая форма — gemma писала
+    # «[вызываю web_research]» и «[вызываю close_browser]». «вызываю» не
+    # совпадало ни с «вызов», ни с «вызвать», префикс не срезался, а
+    # _TOOL_MARK_RE требует ЛАТИНСКОЕ имя сразу после скобки — маркер не
+    # матчился вообще и умирал молча. Человек трижды повторил «браузер до
+    # сих пор торчит». Поэтому теперь ловим не слова целиком, а КОРНИ.
+    text = _norm_call_dialect(text)
     # диалект «[tool_code] web_open ... [/tool_code]» (gemma, живой вечер):
     # имя инструмента СНАРУЖИ скобок — заворачиваем в нормальный маркер
     text = re.sub(r'\[(?:tool_code|code|функция)\]\s*([a-z][a-z0-9_]{2,})'
@@ -652,6 +720,13 @@ def _run_tool_marks(text: str, skip: set | None = None) -> list:
             continue                       # уже вызван по-настоящему — дубль
         try:
             args = _marker_args(name, m.group(2), schemas)
+            # МАРКЕР БЕЗ АРГУМЕНТОВ (2026-08-13): «[вызываю web_research]» —
+            # имя есть, запроса нет. Инструмент честно отвечал «пустой
+            # запрос», но человек видел только голый маркер и тишину. Тему
+            # берём из последней фразы человека — она и есть то, что он
+            # просил найти.
+            if not args:
+                args = _args_from_last_user(name, schemas)
             res = _tls.call(name, args)
             log.info("Текст-вызов %s(%s) -> %s", name, args, str(res)[:100])
             done.append((name, str(res or "сделано")[:300]))
@@ -670,7 +745,8 @@ def _strip_tool_marks(text: str) -> str:
         # [прим: ...] и кириллица остаются текстом
         return " "
     return re.sub(r'[ 	]{2,}', ' ',
-                  _TOOL_MARK_RE.sub(_sub, text or "")).strip()
+                  _TOOL_MARK_RE.sub(_sub, _strip_broken_call(
+                      _norm_call_dialect(text)))).strip()
 
 
 def _diagnose_silence(backend: str, model: str, generated_tokens: int) -> str:
@@ -1306,6 +1382,44 @@ def voiceprint_clear_map():
 def voiceprint_refit():
     voiceprint.refit()
     return voiceprint.status()
+
+
+@app.get("/api/usage")
+def usage_report(days: int = 7):
+    """Сколько токенов сожжено и на что. Отдельно облако (деньги) и
+    локальные (бесплатно, но показывает, где жуётся контекст)."""
+    from server import usage as _u
+    return _u.report(days)
+
+
+@app.get("/api/doctor/model")
+def doctor_model_get():
+    """Какая модель чинит окружение (ИИ-Беймакс)."""
+    return {"backend": CFG.get("doctor.backend", "") or "",
+            "model": CFG.get("doctor.model", "") or ""}
+
+
+@app.post("/api/doctor/model")
+def doctor_model_set(payload: dict):
+    """СВОЯ МОДЕЛЬ ДЛЯ БЕЙМАКСА (2026-08-13, просьба владельца).
+    Разговорная модель выбирается по скорости — для болтовни это правильно,
+    для починки окружения губительно: Беймакс ставит пакеты и правит конфиг,
+    и мелкая модель тут именно ЛОМАЕТ (2026-07-29 она решила переустановить
+    torch — колесо без CUDA снесло бы видеокарту всему проекту). Пустое
+    значение — вернуться к текущей разговорной."""
+    b = str(payload.get("backend") or "")
+    m = str(payload.get("model") or "")
+    if b == "cloud":
+        # облако Беймаксу не отдаём: у каждой облачной модели свой адрес и
+        # свой ключ (живой 404 с kimi-k3 по адресу GigaChat), а главное — он
+        # просыпается в том числе когда отвалилась сеть
+        return JSONResponse({"error": "Беймаксу нужна ЛОКАЛЬНАЯ модель: он "
+                                      "чинит окружение и должен работать "
+                                      "без сети"}, status_code=400)
+    CFG.set("doctor.backend", b)
+    CFG.set("doctor.model", m)
+    log.info("Беймакс будет чинить моделью: %s", f"{b}/{m}" if m else "текущей")
+    return {"ok": True, "backend": b, "model": m}
 
 
 @app.post("/api/panic_unload")
@@ -2731,12 +2845,39 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                             if time.time() - FAIL_STREAK["ts"] < 600 else 1)
         FAIL_STREAK["ts"] = time.time()
     _escalated = False
-    if (FAIL_STREAK["n"] >= 2 and _route != "cloud"
+    _prefer_local = None
+    # два повода поднять мозги: жалоба человека И собственный механический
+    # провал. Второй важнее — он объективен и не требует, чтобы человек
+    # дважды сказал «не работает».
+    _mech = (MODEL_FAIL["n"] >= 2
+             and time.time() - MODEL_FAIL["ts"] < 600)
+    if ((FAIL_STREAK["n"] >= 2 or _mech) and _route != "cloud"
             and CFG.get("llm.escalate_on_fail", True)):
+        _why = ("не справляется механически: " + MODEL_FAIL["why"]
+                if _mech else "две неудачи подряд")
         _c = CFG.get("llm.cloud", {}) or {}
         if _c.get("enabled") and _c.get("model"):
-            _route, _route_why = "cloud", "две неудачи подряд — зову облако"
+            _route, _route_why = "cloud", _why + " — зову облако"
             _escalated = True
+        else:
+            # ОБЛАКА НЕТ — БЕРЁМ ЛУЧШУЮ ЛОКАЛЬНУЮ (2026-08-13). Раньше без
+            # облака эскалация просто не происходила, и мелкая модель
+            # оставалась барахтаться. А в парке обычно есть кто-то крупнее.
+            try:
+                from server import ratings as _rt
+                _cur = CFG.get("llm.model", "")
+                _sc = _rt.llm_scores() or {}
+                _best = max((m for m in _sc if m != _cur),
+                            key=lambda m: _sc.get(m, 0), default=None)
+                if _best and _sc.get(_best, 0) > _sc.get(_cur, 0):
+                    _prefer_local = _best
+                    _route_why = _why + f" — беру {_best}"
+                    _escalated = True
+                    log.info("Эскалация без облака: %s -> %s", _cur, _best)
+            except Exception as e:
+                log.debug("эскалация на локальную не вышла: %s", e)
+        if _escalated:
+            MODEL_FAIL["n"] = 0
             FAIL_STREAK["n"] = 0
             log.info("Эскалация: %s", _route_why)
     _fast = bool(CFG.get("llm.fast_mode", False))
@@ -2853,6 +2994,18 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             "состояние инструментами (window_list / apps_list / open_folder), "
             "разберись, что именно не сработало, и добейся результата или "
             "честно объясни, что мешает и какой есть обходной путь.")
+    # ЧТО СЛЫШНО ВОКРУГ (2026-08-13, просьба владельца: «давать Сайке
+    # понимание за счёт меток от её слуха — но не как прямой запрос, а как
+    # то, что она могла бы использовать в контексте диалога»). Поэтому это
+    # dyn_parts, а не системный промпт: обстановка меняется каждую минуту и
+    # не должна ломать KV-кэш, а формулировка блока прямо снимает с неё
+    # обязанность реагировать.
+    try:
+        _ears = hearing.context_line()
+        if _ears:
+            dyn_parts.append("### Обстановка вокруг (факт): " + _ears)
+    except Exception:
+        pass
     if PENDING_ACTIONS:
         _acts = PENDING_ACTIONS[:3]
         del PENDING_ACTIONS[:len(_acts)]
@@ -3545,6 +3698,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
 
         t_req = time.monotonic()  # промпт собран, уходим в LLM
         _prefer = None
+        # эскалация без облака: берём модель покрупнее из парка. Бэкенд
+        # ищем в списке моделей — одного имени llm.chat_stream мало.
+        if _prefer_local:
+            try:
+                for _m in llm.list_models():
+                    if _m["name"] == _prefer_local and _m["backend"] != "cloud":
+                        _prefer = (_m["backend"], _m["name"])
+                        break
+            except Exception as e:
+                log.debug("не нашла бэкенд для %s: %s", _prefer_local, e)
         if _route == "cloud":
             _c = CFG.get("llm.cloud", {}) or {}
             if _c.get("model"):
@@ -3980,6 +4143,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 "инструмент не вызывался",
                 "снизила ей надёжность в досье — при выборе модели это "
                 "теперь учитывается")
+            # и СРАЗУ поднимаем мозги, а не только пишем в досье: досье
+            # влияет на следующий автопуск, а человеку плохо сейчас
+            note_model_fail("отрапортовала о действии, не вызвав инструмент")
         elif _tool_used["any"]:
             _dos.record_ok(_who)
         # прямая жалоба владельца — самый весомый сигнал, весит как десять
@@ -4089,6 +4255,28 @@ TAB_CLOSED = {"ts": 0.0}
 # ОБЛАЧНАЯ модель (как при «быстром мышлении», но триггер — неудача), с
 # прямым указанием проверить состояние инструментами, а не отписаться.
 FAIL_STREAK = {"n": 0, "ts": 0.0}
+
+# ОНА САМА ВИДИТ, ЧТО НЕ ТЯНЕТ (2026-08-13, мысль владельца: «когда модель
+# явно маленькая и мы физически не можем тут работать — она же может менять
+# свои мозги, чтобы решать сложные задачи»).
+#
+# Раньше подъём модели запускала только ЖАЛОБА ЧЕЛОВЕКА, причём вторая
+# подряд (FAIL_STREAK). То есть человек должен был дважды сказать «не
+# работает», прежде чем что-то менялось. А механические провалы видны
+# СЕРВЕРУ и без него, объективно: модель отрапортовала о действии, не
+# вызвав инструмента; уронила в текст «[tool_call»; промолчала. В досье
+# это и так писалось («снизила надёжность»), но на выбор модели ПРЯМО
+# СЕЙЧАС не влияло — оно учитывалось только при следующем автопуске.
+MODEL_FAIL = {"n": 0, "ts": 0.0, "why": ""}
+
+
+def note_model_fail(why: str):
+    """Механический провал модели — не жалоба человека, а факт сервера."""
+    MODEL_FAIL["n"] = (MODEL_FAIL["n"] + 1
+                       if time.time() - MODEL_FAIL["ts"] < 600 else 1)
+    MODEL_FAIL["ts"] = time.time()
+    MODEL_FAIL["why"] = why
+    log.info("Провал модели (%s), подряд: %d", why, MODEL_FAIL["n"])
 # АВТООТКЛЮЧЕНИЕ ГЛАЗ (2026-07-28, просьба владельца). Зрение — это захват
 # кадров и место в VRAM; включённое «на всякий случай» оно просто греет
 # карту. Помним, когда взгляд ПОСЛЕДНИЙ раз был нужен (auto_look отдал кадр,
@@ -4410,7 +4598,13 @@ async def ws_endpoint(ws: WebSocket):
                 t0 = time.monotonic()
                 p = DENOISE.process(p)
                 t1 = time.monotonic()
-                voiceprint.feed(p)
+                # УХО (2026-08-13): сначала «что это вообще за звук», потом
+                # «чей голос». Без этого порядка клацанье клавиатуры честно
+                # получало эмбеддинг и заводило себе профиль в карте
+                # («Голос 4», 153 срабатывания, 103-400 Гц — живой случай).
+                hearing.feed(p)
+                if hearing.speech_ok():
+                    voiceprint.feed(p)
                 if not observe["stt"]:
                     continue
                 HEAR_STAT["chunks"] += 1

@@ -58,6 +58,7 @@ editable-пакеты в third_party/).
  {"action":"repair_venv"},
  {"action":"reinstall_editable","path":"third_party/ИмяПакета"},
  {"action":"set_config","key":"tts.engine","value":"qwen3"},
+ {"action":"retry_feature","name":"search"},
  {"action":"note","text":"короткое пояснение пользователю по-русски"},
  {"action":"done","text":"итог"}
 ]
@@ -74,6 +75,18 @@ pip_force_reinstall владельца модуля или repair_venv, НЕ pip
 - «No module named X» при существующем third_party/<репозиторий X> — это \
 reinstall_editable, а не pip_install;
 - если всё в порядке или починить нельзя — верни [{"action":"done","text":"…"}].
+
+НЕ ВСТАВШИЕ ВОЗМОЖНОСТИ (раздел «ЧТО НЕ ВСТАЛО ПРИ ЗАПУСКЕ» в контексте):
+- это провалы автоустановки из setup/ensure_features.py. Их чинят
+retry_feature с именем возможности — он заново прогонит её установщик;
+- если попыток уже было 3+ и причина сетевая — retry бесполезен, дай note
+с тем, что человеку сделать руками (включить VPN, проверить прокси);
+- если возможность необязательная и без неё всё работает хуже, но работает —
+скажи это прямо в note, не пугай.
+
+ЧТО НАПИСАТЬ ЧЕЛОВЕКУ: текст note читает не программист. Пиши, ЧТО не
+работает, ЧЕМ это ему аукнется и ЧТО сделать — одной-двумя фразами, без
+имён функций и стектрейсов.
 """
 
 
@@ -87,6 +100,29 @@ def _log(msg):
 def _pip(*args):
     return subprocess.run([sys.executable, "-m", "pip", *args],
                           check=False).returncode == 0
+
+
+def failed_features():
+    """Что не встало при автоустановке (.setup_state.json). Именно этого
+    Беймаксу и не хватало: он видел живые движки, но не знал, что половина
+    возможностей просто не доехала при старте."""
+    out = []
+    try:
+        st = json.loads((ROOT / ".setup_state.json").read_text(
+            encoding="utf-8"))
+    except Exception:
+        return out
+    for name, rec in (st.get("features") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("status") in ("ok", None):
+            continue
+        out.append({"возможность": name,
+                    "статус": rec.get("status"),
+                    "попыток": rec.get("attempts", 0),
+                    "не хватает": rec.get("missing") or [],
+                    "ошибка": str(rec.get("error", ""))[:300]})
+    return out
 
 
 def collect_context():
@@ -108,7 +144,17 @@ def collect_context():
     if ki.exists():
         issues = ki.read_text(encoding="utf-8")
 
+    bad = failed_features()
+    setup_tail = ""
+    slog = ROOT / "logs" / "setup.log"
+    if slog.exists():
+        setup_tail = slog.read_text(encoding="utf-8",
+                                    errors="ignore")[-2500:]
+
     ctx = (f"ШПАРГАЛКА ИЗВЕСТНЫХ ПРОБЛЕМ:\n{issues}\n\n"
+           f"ЧТО НЕ ВСТАЛО ПРИ ЗАПУСКЕ:\n"
+           f"{json.dumps(bad, ensure_ascii=False, indent=1) if bad else 'всё встало'}\n\n"
+           f"ХВОСТ ЛОГА УСТАНОВКИ setup.log:\n{setup_tail or '(пусто)'}\n\n"
            f"ОТЧЁТ ДИАГНОСТИКИ:\n{json.dumps(report, ensure_ascii=False, indent=1)}\n\n"
            f"ПАПКИ В third_party/: {tp}\n\n"
            f"КОНФИГ:\n{cfg}\n\n"
@@ -118,6 +164,8 @@ def collect_context():
 
 def has_problems(report):
     if any(c["status"] == "fail" and c["required"] for c in report):
+        return True
+    if failed_features():
         return True
     saika_log = ROOT / "logs" / "saika.log"
     if saika_log.exists():
@@ -132,9 +180,30 @@ def ask_llm(ctx):
     if not any(llm.backend_status().values()):
         _log("[X] Ни один LLM-бэкенд не отвечает — ИИ-Беймаксу не с кем думать.")
         return None
-    _log("[ai] Спрашиваю модель…")
-    raw = llm.chat_once([{"role": "system", "content": SYSTEM},
-                         {"role": "user", "content": ctx}], max_len=8000)
+    # СВОЯ МОДЕЛЬ ДЛЯ БЕЙМАКСА (2026-08-13, просьба владельца). Разговорная
+    # модель выбирается по скорости — для болтовни это правильно, а для
+    # починки окружения губительно: Беймакс имеет право ставить пакеты и
+    # править конфиг, и мелкая модель тут ЛОМАЕТ (живой случай 2026-07-29:
+    # решила «для общего исправления» переустановить torch — колесо без CUDA
+    # снесло бы видеокарту всему проекту). Ключи doctor.backend/doctor.model.
+    from server.config import CFG
+    d_backend = CFG.get("doctor.backend", "") or ""
+    d_model = CFG.get("doctor.model", "") or ""
+    msgs = [{"role": "system", "content": SYSTEM},
+            {"role": "user", "content": ctx}]
+    if d_backend and d_model:
+        _log(f"[ai] Спрашиваю ОТДЕЛЬНУЮ модель Беймакса: {d_backend}/{d_model}")
+        try:
+            raw = llm.ask_specific(d_backend, d_model, msgs, max_len=8000)
+            if not (raw or "").strip():
+                raise RuntimeError("пустой ответ")
+        except Exception as e:
+            _log(f"[!] Модель Беймакса {d_model} не ответила ({e}) — "
+                 "беру текущую разговорную")
+            raw = llm.chat_once(msgs, max_len=8000)
+    else:
+        _log("[ai] Спрашиваю модель…")
+        raw = llm.chat_once(msgs, max_len=8000)
     m = re.search(r"\[.*\]", raw, re.S)
     if not m:
         _log(f"[!] Модель ответила не-JSON: {raw[:300]}")
@@ -219,6 +288,18 @@ def execute(act) -> str:
             CFG.set(key, act.get("value"))
         else:
             _log(f"[skip] ключ вне белого списка: {key}")
+    elif a == "retry_feature":
+        # ДОКАЧАТЬ В ФОНЕ (2026-08-13): установка могла не пройти из-за
+        # моргнувшей сети или занятого pip. Второй заход — самое дешёвое,
+        # что можно попробовать, прежде чем звать человека руками.
+        name = re.sub(r"[^a-z_0-9]", "", str(act.get("name", "")).lower())
+        if name:
+            _log(f"[fix] доустанавливаю возможность «{name}» (в фоне)")
+            subprocess.run([sys.executable,
+                            str(ROOT / "setup" / "ensure_features.py"),
+                            "--force", name], check=False)
+        else:
+            _log("[skip] retry_feature без имени")
     elif a == "note":
         _log(f"[ai] {act.get('text', '')}")
     elif a == "done":

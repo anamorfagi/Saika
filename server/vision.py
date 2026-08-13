@@ -84,11 +84,29 @@ def _cfg_set(key, val):
         log.debug("не смогла сохранить %s: %s", key, e)
 
 
+# ГЛАЗА ОТКРЫЛИ — НАДО ПОСМОТРЕТЬ (2026-08-13, живой отказ владельца:
+# «она же должна уметь смотреть, но как будто не может поглядеть»).
+# Сцепка рвалась ровно посередине: человек говорит «посмотри на экран», на
+# этом ходу глаза ещё выключены — она получает подсказку «глаза выключены»
+# и зовёт eyes. Глаза включаются ПОСЛЕ ответа. Следующая фраза человека
+# («ну и как, получается?») слов про экран уже не содержит, wants() ничего
+# не находит, кадр не делается — и она отвечает по памяти, выдумывая
+# рабочий стол. То есть включила глаза и не посмотрела ни разу.
+# Флаг закрывает этот разрыв: включили — значит просили посмотреть.
+_PENDING = {"look": False}
+
+
+def want_look_next():
+    """Взвести «посмотреть на следующем же ходу» (зовётся из eyes)."""
+    _PENDING["look"] = True
+
+
 def set_enabled(on: bool) -> bool:
     _cfg_set("vision.enabled", bool(on))
     if not on:
         watch_stop()
         camera_stop()
+        _PENDING["look"] = False
     log.info("Глаза Сайки: %s", "ВКЛ" if on else "ВЫКЛ")
     return bool(on)
 
@@ -971,6 +989,15 @@ def auto_look(user_text: str):
     Возвращает (data_url | None, подсказка-в-промпт | None).
     """
     kind = wants(user_text)
+    if not kind and _PENDING["look"] and enabled():
+        # глаза открыли прошлым ходом по просьбе посмотреть — смотрим,
+        # даже если в этой фразе слова «экран» уже нет
+        d = str(CFG.get("vision.default_source", "screen"))
+        kind = "camera" if (d.startswith("cam") and camera_enabled()) \
+            else "screen"
+        log.info("Зрение: смотрю по взведённому флагу (глаза только что "
+                 "открыли)")
+    _PENDING["look"] = False
     if not kind:
         return None, None
     if not enabled():
