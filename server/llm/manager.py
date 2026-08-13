@@ -339,12 +339,16 @@ def loaded_models() -> list[str]:
     try:
         # мёртвый порт не опрашиваем вовсе: нет окружения — нечего спрашивать
         from server.llm import locallm
-        if locallm.installed():
+        if locallm.installed() and not _down("locallm"):
             r = requests.get(_locallm_url() + "/health", timeout=2)
             if r.ok and r.json().get("model_loaded"):
                 out.append(locallm.model_name())
     except Exception:
-        pass
+        # 2026-08-13: одного кэша (TTL 5с) было мало — «загруженные 2032мс»
+        # возвращались КАЖДЫЕ 5 секунд. У ollama/lmstudio предохранитель был,
+        # у locallm его забыли: воркер установлен, но не запущен — обычное
+        # состояние, а платили за него полным таймаутом перед каждой репликой.
+        _mark_down("locallm")
     try:
         from server.llm import llamacpp
         if llamacpp.installed():
@@ -430,12 +434,16 @@ def _loaded_with_backend() -> list[tuple]:
     except Exception:
         _mark_down("lmstudio")
     try:
-        r = requests.get(_locallm_url() + "/health", timeout=2)
-        if r.ok and r.json().get("model_loaded"):
-            from server.llm import locallm
-            out.append(("locallm", locallm.model_name()))
+        # те же два предохранителя, что и в loaded_models (2026-08-13):
+        # здесь не было даже проверки installed(), хотя функция зовётся из
+        # unload_others — то есть при каждом переключении модели
+        from server.llm import locallm
+        if locallm.installed() and not _down("locallm"):
+            r = requests.get(_locallm_url() + "/health", timeout=2)
+            if r.ok and r.json().get("model_loaded"):
+                out.append(("locallm", locallm.model_name()))
     except Exception:
-        pass
+        _mark_down("locallm")
     # свой llama-server (2026-07-27): без этой записи keep_only_one не видел
     # его в списке «кто в памяти» — при переключении на другую модель наш
     # движок оставался жить со своей копией, и в VRAM висели две больших LLM
@@ -533,11 +541,33 @@ def prewarm_next(messages: list, reply_text: str):
     try:
         url = {"llamacpp": _llamacpp_url, "lmstudio": _lmstudio_url,
                "locallm": _locallm_url}[backend]()
-        body = {"model": CFG.get("llm.model", ""),
+        model = CFG.get("llm.model", "")
+        body = {"model": model,
                 "messages": list(messages) + [
                     {"role": "assistant", "content": reply_text or "…"}],
                 "max_tokens": 1, "stream": False, "cache_prompt": True,
                 "chat_template_kwargs": {"enable_thinking": False}}
+        # ТЕ ЖЕ ИНСТРУМЕНТЫ, ЧТО И В БОЮ (2026-08-13). Без этого прогрев не
+        # грел, а ВЫТИРАЛ: боевой запрос уходит с tools (51 схема, ~21к
+        # символов), шаблон рендерит их в самое начало промпта, а прогрев
+        # слал те же сообщения БЕЗ tools — префиксы расходились почти сразу.
+        # В llamacpp_server.log это читалось прямо: два промпта (12.2к и
+        # 6.8к токенов) ходили по кругу в единственном слоте (--parallel 1),
+        # «selected slot by LCP similarity» скакал 0.58 -> 0.325 -> 0.58, а
+        # cached_tokens замер на 3959 — общей голове двух разных промптов.
+        # Цена ошибки: 8200 токенов полного prefill КАЖДЫЙ ход, ~1.6с.
+        try:
+            from server.llm import tools as handspc
+            _tools = handspc.schemas()
+            # модели с нечитаемым tool_calls инструментов не получают и в
+            # бою (см. chat_stream) — прогрев обязан повторять это решение,
+            # иначе он снова разойдётся с боевым промптом
+            if model in set(CFG.get("llm.tools_broken", [])):
+                _tools = []
+            if _tools:
+                body["tools"] = _tools
+        except Exception as e:
+            log.debug("прогрев без инструментов: %s", e)
         _HTTP.post(url + "/v1/chat/completions", json=body, timeout=120)
         log.debug("KV-кэш прогрет следующим ходом")
     except Exception as e:

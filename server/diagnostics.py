@@ -6,7 +6,8 @@
 сырой стек-трейс, а понятную причину и то, что Сайка уже делает сама.
 
 Возвращаемая структура (dict):
-  category : str   — loading / network / space / corrupt / cuda / internal / offline / unknown
+  category : str   — loading / vram / noref / network / space / corrupt /
+                     cuda / internal / offline / unknown
   human    : str   — что случилось, человеческим языком
   action   : str   — что Сайка делает автоматически прямо сейчас
   fix      : str|None — код авто-починки для менеджера:
@@ -26,11 +27,24 @@
 _LOADING = ("ещё загружается", "модель ещё грузится", "первая закачка",
             "still loading", "model is loading", "воркер живой")
 
+# 2026-08-13. Обе причины уже писались в лог ПОЛНЫМ человеческим текстом, но
+# classify их не знал — и владелец видел «упал с незнакомой мне ошибкой» ×92,
+# то есть худшее из двух: причина есть, а до глаз не доходит.
+_VRAM_BUSY = ("не хватает видеопамяти", "занята моей же llm",
+              "для клон-голоса")
+
+_NO_REF = ("нет референса голоса", "voice_ref_wav", "voice_ref_text",
+           "нет wav или транскрипта")
+
 _NETWORK = ("read timed out", "readtimeout", "read timeout", "max retries",
             "httpsconnectionpool", "connectionerror", "getaddrinfo",
             "failed to resolve", "name or service not known",
             "temporarily unavailable", "network is unreachable",
             "connection aborted", "connection reset", "proxy", "ssl",
+            # «connection timeout» (без пробела в timed/out) — формулировка
+            # aiohttp у edge-tts: в логе 2026-08-13 она уходила в unknown,
+            # хотя это буквально «нет сети»
+            "connection timeout", "timeout to host", "cannot connect to host",
             "timed out", "no route to host")
 
 _SPACE = ("not enough space", "os error 1455", "error 1455", "paging file",
@@ -73,6 +87,32 @@ def classify(component: str, error: str) -> dict:
             "action": ("работаю на запасном движке; воркер докачает сам, "
                        "и я вернусь на него автоматически"),
             "fix": "wait"}
+
+    # порядок: обе новые причины ДО network — в их тексте встречается
+    # «ssl»/«timed out» из чужих сигнатур не может, но специфичное всегда
+    # раньше общего, иначе следующая правка _NETWORK молча их перехватит
+    if _has(t, _NO_REF):
+        return {
+            "category": "noref",
+            "human": (f"«{name}» не нашёл образец моего голоса по пути из "
+                      "config.json (tts.voice_ref_wav). Сам файл может лежать "
+                      "на месте — не сходится путь."),
+            "action": ("проверь tts.voice_ref_wav в config.json — он должен "
+                       "быть ОТНОСИТЕЛЬНЫМ (voice/ref.wav), иначе после "
+                       "переезда или git pull с другого ПК он указывает в "
+                       "чужую папку; пока говорю запасным движком"),
+            "fix": "switch"}
+
+    if _has(t, _VRAM_BUSY):
+        return {
+            "category": "vram",
+            "human": (f"На «{name}» не осталось видеопамяти — её занимает моя "
+                      "же LLM. Это не поломка движка, а очередь за одной "
+                      "видеокартой."),
+            "action": ("возьми модель полегче, урежь llamacpp.n_ctx или "
+                       "выгрузи текущую кнопкой 🧹 — после этого клон-голос "
+                       "поднимется; пока говорю запасным движком"),
+            "fix": "switch"}
 
     if _has(t, _NETWORK):
         return {
@@ -145,6 +185,9 @@ def short(component: str, error: str) -> str:
 # сломанному модулю оценка зависит от категории причины (что-то лечится легко,
 # что-то — глубокая проблема)
 _BROKEN_SCORE = {"loading": 6, "corrupt": 4, "network": 4, "offline": 4,
+                 # noref/vram чинятся одной строкой в конфиге и кнопкой —
+                 # это не «глубоко сломано», а «не настроено под эту машину»
+                 "noref": 5, "vram": 5,
                  "internal": 3, "space": 3, "cuda": 2, "unknown": 2}
 
 

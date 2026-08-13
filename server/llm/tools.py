@@ -26,7 +26,10 @@ _cache = {"t": 0.0, "schemas": [], "checking": False, "fail_until": 0.0}
 IMPULSE_MODE = {"on": False}
 _IMPULSE_SAFE = {"close_browser", "shutdown_self",
                  "devboard_read", "devboard_add", "avatar_action",
-                 "change_outfit"}
+                 "change_outfit",
+                 # свои глаза (2026-08-05): лог, ошибка и свой код — это
+                 # СВОЁ, в импульсе смотреть можно.
+                 "fs_log", "fs_lasterr", "fs_grep", "fs_slice"}
 
 # ЛОКАЛЬНЫЕ инструменты Сайки (не через HandsPC): дев-доска — чтобы она могла
 # свериться со своей историей разработки и дописывать в блокнот сама.
@@ -848,6 +851,19 @@ def schemas() -> list:
             local += _fs
         except Exception as e:
             log.debug("file_hands недоступен: %s", e)
+    # СВОИ ГЛАЗА (2026-08-05): лог, последняя ошибка, поиск по своему коду.
+    # Отдаём ВСЕМ тирам, включая мелкие модели: это единственные инструменты,
+    # которые ничего не меняют, а без них мелкая модель именно что выдумывает
+    # («я посмотрела, всё в порядке») — ровно то враньё, от которого мы
+    # лечились безопасным подмножеством файловых рук выше.
+    if CFG.get("selfread.enabled", True):
+        try:
+            from server import self_read
+            hands_names = {s["function"]["name"] for s in hands}
+            local += [s for s in self_read.SCHEMAS
+                      if s["function"]["name"] not in hands_names]
+        except Exception as e:
+            log.debug("self_read недоступен: %s", e)
     return local + hands
 
 
@@ -1295,6 +1311,27 @@ def _call(name: str, arguments) -> str:
                 return f"файловая операция не удалась: {e}"
     except ImportError:
         pass
+    # свои глаза: лог, ошибка, свой код (2026-08-05). Только чтение —
+    # предохранителя намерения им не нужно.
+    try:
+        from server import self_read
+        if name in self_read.NAMES:
+            import json as _json
+            args = arguments
+            if isinstance(args, str):
+                try:
+                    args = _json.loads(args)
+                except Exception:
+                    args = {}
+            try:
+                return str(self_read.CALLS[name](args or {}))
+            except PermissionError as e:
+                return f"нельзя: {e}"
+            except Exception as e:
+                log.exception("self_read %s", name)
+                return f"посмотреть не вышло: {e}"
+    except ImportError:
+        pass
     # браузерные задачи многошаговые — им нужен большой таймаут
     timeout = CFG.get("tools.timeout_s", 60)
     if name == "browser_task":
@@ -1363,6 +1400,14 @@ _TOOL_HINTS = {
     "screen_click": ("кликни", "тыкни", "ткни", "нажми на", "выбери"),
     "app_remember": ("запомни путь", "вот путь", "она находится", "лежит в",
                      ".exe", "это прога", "запомни программу"),
+    # свои глаза (2026-08-05)
+    "fs_lasterr":   ("сломал", "не работает", "что случилось", "почему упал",
+                     "почему не получилось", "ошибка", "что у тебя"),
+    "fs_log":       ("в логе", "лог сервера", "что в логах", "покажи лог",
+                     "что там произошло", "проверь лог"),
+    "fs_grep":      ("в своём коде", "в твоём коде", "как у тебя устроено",
+                     "где это настраивается", "найди в коде", "почему так"),
+    "fs_slice":     ("покажи код", "что там в файле", "открой строку"),
 }
 
 # СВЯЗКИ (2026-07-29, живой провал: «введи в поисковую строку в телеграме

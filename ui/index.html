@@ -4497,7 +4497,14 @@ eqFrame();
   let lastClick = null;
   document.addEventListener('click', e => {
     const b = e.target.closest('button,.item,.chip,.iconbtn');
-    if(b) lastClick = b;
+    // КНОПКИ САМОГО ТОСТА НЕ СЧИТАЮТСЯ (2026-08-13, живой отказ: «выгрузить
+    // всё из памяти буквально ничего не выгружает»). Слушатель висит в фазе
+    // ПЕРЕХВАТА, поэтому клик по «Да» переписывал lastClick РАНЬШЕ, чем
+    // отрабатывал onYes — и повтор действия кликал саму кнопку «Да»:
+    // синхронная рекурсия вместо запроса. Снаружи выглядело как «кнопка
+    // мёртвая», в логах сервера — ни одного /api/panic_unload с 14 июля.
+    // Ломало ЛЮБОЕ подтверждение в интерфейсе, а не только разгрузку.
+    if(b && !b.closest('.toast')) lastClick = b;
   }, true);
   window.saikaNativeConfirm = nativeConfirm;
   window.saikaNativeAlert = nativeAlert;
