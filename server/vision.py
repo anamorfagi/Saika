@@ -1172,17 +1172,54 @@ def _describe(url: str, question: str) -> str:
         # Правило: локальную модель можно спрашивать, только если она УЖЕ
         # в памяти; запускать движок ради подглядки нельзя — этот запуск
         # стоит дороже, чем честное «сейчас посмотреть некому».)
+        booted_here = False
         if backend in ("llamacpp", "locallm", "ollama", "lmstudio"):
             try:
                 if model not in set(llm.loaded_models()):
-                    errs.append(f"{model}: не загружена (ради кадра движок "
-                                "не поднимаю)")
-                    continue
+                    # ПОДНЯТЬ МОЖНО — ЕСЛИ ЕСТЬ ИЗ ЧЕГО (2026-08-15,
+                    # владелец: «сделай ты уже алгоритм, при котором она
+                    # сможет нормально смотреть»). Полный запрет холодного
+                    # старта оказался второй крайностью: все облачные
+                    # зрячие легли разом (GitHub на плановом отключении),
+                    # и на «что видишь» она разводила руками, хотя gemma
+                    # лежала в двух гигабайтах от готовности. Алгоритм:
+                    # смотрим СВОБОДНУЮ VRAM. Хватает с запасом (порог
+                    # vision.boot_engine_free_gb, по умолчанию 7) — молча
+                    # поднимаем, смотрим и ВЫГРУЖАЕМ обратно: подглядел —
+                    # верни память. Не хватает (идёт игра) — честно
+                    # говорим сколько есть и сколько надо, не душим машину.
+                    free_gb = 0.0
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            free_gb = torch.cuda.mem_get_info()[0] / 2**30
+                    except Exception:
+                        pass
+                    need = float(CFG.get("vision.boot_engine_free_gb", 7.0))
+                    if free_gb < need:
+                        errs.append(
+                            f"{model}: не загружена, а поднимать не из чего "
+                            f"(свободно {free_gb:.1f} ГБ видеопамяти, надо "
+                            f"~{need:.0f} — закрой игру, и посмотрю)")
+                        continue
+                    booted_here = True
+                    log.info("Зрение: VRAM свободно %.1f ГБ — поднимаю %s "
+                             "ради кадра, после ответа выгружу",
+                             free_gb, model)
             except Exception:
                 continue
         try:
             txt = llm.ask_specific(backend, model,
                                    [{"role": "user", "content": q}], image=url)
+            if booted_here:
+                # подглядела — верни память: движок поднимался ради ОДНОГО
+                # кадра, держать его дальше — снова душить машину
+                try:
+                    from server.llm import llamacpp as _lcp
+                    threading.Thread(target=_lcp.unload,
+                                     daemon=True).start()
+                except Exception:
+                    pass
             if txt.strip():
                 return txt.strip()
             errs.append(f"{model}: ответила пусто")

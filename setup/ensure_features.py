@@ -57,6 +57,18 @@ FEATURES = {
         "extra_modules": ["dxcam", "windows_capture", "pygrabber"],
         "extra_pip": ["dxcam[cv2]", "windows-capture", "pygrabber"],
     },
+    "ocr": {
+        "title": "Мгновенное чтение текста с экрана (OCR)",
+        # winsdk — мост к встроенному Windows.Media.Ocr: 50-150мс на кадр,
+        # на процессоре, по-русски, ноль видеопамяти. Именно им читают
+        # текст PowerToys и «Ножницы». rapidocr — запасной, лучше на
+        # стилизованных игровых шрифтах (2026-08-15, просьба владельца:
+        # «чтобы в игре могла даже диалоги читать, мгновенно»).
+        "core_modules": ["winsdk"],
+        "core_pip": ["winsdk"],
+        "extra_modules": ["rapidocr_onnxruntime"],
+        "extra_pip": ["rapidocr-onnxruntime"],
+    },
     "piper": {
         "title": "Голос Piper (офлайн, MIT)",
         # onnxruntime, а не torch — ставится за секунды и не тянет CUDA.

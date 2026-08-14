@@ -206,6 +206,18 @@ _PC_SCHEMAS = [
                       "description": "на сколько изменить, +10 / -10"},
             "mute": {"type": "boolean"}}, "required": []}}},
     {"type": "function", "function": {
+        "name": "screen_text",
+        "description": ("МГНОВЕННО прочитать ТЕКСТ с экрана (OCR за ~100мс, "
+                        "без больших моделей): субтитры, диалоги в игре, "
+                        "надписи, сообщения. Зови на «прочитай, что "
+                        "написано», «что за текст», «прочитай диалог», "
+                        "«что там в субтитрах». Для «что ПРОИСХОДИТ на "
+                        "экране» есть look_screen; этот — про буквы."),
+        "parameters": {"type": "object", "properties": {
+            "monitor": {"type": "integer",
+                        "description": "номер дисплея, если их несколько"}},
+            "required": []}}},
+    {"type": "function", "function": {
         "name": "net_bypass",
         "description": ("Состояние обходчика DPI (zapret) и его перезапуск. "
                         "Зови, когда не открываются YouTube/Discord/"
@@ -864,6 +876,7 @@ _MUTATING_INTENT = {
     "eyes": r"глаз|зрен|смотр|посмотр|включи вид|видеть",
     "look_screen": r"экран|что.{0,8}вид|посмотр|глян|что у меня|что открыт|"
                    r"что там|покажи что|прочит.{0,6}экран|скрин",
+    "screen_text": r"прочит|написан|текст|диалог|субтитр|надпис|что за слов",
     "look_camera": r"камер|вебк|на меня|в комнат|как я выгляж",
     # 2026-08-13: вопросы про память — предохранителю мешать не надо
     "memory_recall": r".", "memory_recap": r".", "memory_about": r".",
@@ -1335,7 +1348,8 @@ _CORE_TOOLS = (
     "app_launch", "open_folder", "find_folder", "folder_list",
     "go_to", "scan_disk", "find_here", "pick_number",
     "window_focus", "window_close", "window_place", "minimize_all",
-    "volume_set", "eyes", "look_screen", "fs_list", "fs_read", "fs_write",
+    "volume_set", "eyes", "look_screen", "screen_text",
+    "fs_list", "fs_read", "fs_write",
     "recall_thread", "day_recall",
 )
 
@@ -1931,6 +1945,9 @@ def _call(name: str, arguments) -> str:
             if name == "volume_set":
                 return _pc.volume(percent=a.get("percent"),
                                   delta=a.get("delta"), mute=a.get("mute"))
+            if name == "screen_text":
+                from server import ocr as _ocr
+                return _ocr.tool_call(a)
             if name == "net_bypass":
                 from server import netpolicy as _np
                 act = str(a.get("action", "status")).lower()
@@ -2170,6 +2187,8 @@ _TOOL_HINTS = {
                     "глянь на экран", "посмотри на экран", "что у меня открыт",
                     "что там на экране", "посмотри что"),
     "look_camera": ("в камеру", "на меня посмотри", "что в комнате"),
+    "screen_text": ("прочитай что написано", "прочитай диалог", "что за текст",
+                    "прочитай субтитры", "что написано на экране"),
     "minimize_all": ("сверни", "убери окна"),
     "volume_set":   ("громк", "звук", "тише", "громче"),
     "net_bypass":   ("запрет", "zapret", "обходчик", "что с сетью",

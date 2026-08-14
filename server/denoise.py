@@ -338,13 +338,38 @@ class _NoiseReduce(_Base):
 
     def __init__(self):
         super().__init__()
+        self._retry_after = 0.0
         try:
             import noisereduce as nr
             self.nr = nr
         except Exception as e:
             self.ok, self.error = False, str(e)[:160]
+            # ГОНКА ИМПОРТА — НЕ ПРИГОВОР НА ВЕСЬ СЕАНС (2026-08-15, живой
+            # лог: «cannot import name minkowski from partially initialized
+            # module scipy.spatial.distance (most likely due to a circular
+            # import)». Пакет СТОИТ — просто два потока параллельного
+            # автопуска импортировали scipy одновременно, и один застал
+            # другого на полпути. Раньше это означало «весь вечер на
+            # запасном wiener»: шумодав хуже — GigaAM слышит кашу — владелец
+            # получает «Поторо» вместо своей фразы и «распознаватель пишет
+            # полную ахинею». Гонка рассасывается за секунды: пробуем
+            # импорт ещё раз, когда все уже загрузились.)
+            import time as _t
+            self._retry_after = _t.time() + 15
 
     def process(self, x):
+        if not self.ok and self._retry_after:
+            import time as _t
+            if _t.time() >= self._retry_after:
+                self._retry_after = 0.0
+                try:
+                    import noisereduce as nr
+                    self.nr = nr
+                    self.ok, self.error = True, ""
+                    log.info("Шумодав noisereduce ожил со второй попытки — "
+                             "гонка импорта scipy рассосалась")
+                except Exception as e:
+                    self.error = str(e)[:160]
         if not self.ok or len(x) < SR // 8:
             return x
         try:
