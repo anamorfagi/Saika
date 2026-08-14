@@ -115,7 +115,11 @@
     position:relative}
 
   /* ── левая колонка: система ── */
+  /* 2026-08-14: в низком окне колонка обрезала нижние кнопки, и человек
+     их просто не находил — «и где кнопка?». Скроллиться она умела, но
+     min-height:auto у flex-элемента не давал ей сжаться до прокрутки. */
   #sysbar{width:246px;flex:none;order:0;padding:16px 15px;overflow-y:auto;
+    min-height:0;
     font-size:12px;color:var(--dim);border-radius:var(--r-tile);
     display:flex;flex-direction:column;gap:2px}
   #sysbar .hdr{font-size:10px;text-transform:uppercase;letter-spacing:.14em;
@@ -1603,9 +1607,25 @@ function handleJson(m){
     $('#chat').scrollTop = 1e9;
   }
   else if(m.type==='tool'){
+    // СТРОКА ИНСТРУМЕНТА ОБРЕЗАЛАСЬ ПО ПРАВОМУ КРАЮ (2026-08-14, владелец:
+    // «сделай возможность скролить»). Она была одной длинной строкой без
+    // переноса, шире чата, — и всё, что не влезло, просто пропадало:
+    // «Открыла C:\. Внутри папки: Activators, AI, AMD, Autodesk, comfy ui,»
+    // и обрыв. А там как раз ответ, ради которого инструмент и звали.
+    // Теперь: текст переносится, длинный ответ сворачивается до трёх
+    // строк и внутри КРУТИТСЯ колесом, клик разворачивает целиком.
     const d=document.createElement('div');
-    d.style.cssText='align-self:flex-start;font-size:11px;color:var(--dim);padding:0 6px';
+    d.style.cssText='align-self:flex-start;font-size:11px;color:var(--dim);'+
+      'padding:0 6px;max-width:100%;white-space:pre-wrap;'+
+      'overflow-wrap:anywhere;max-height:3.9em;overflow-y:auto;'+
+      'overscroll-behavior:contain;cursor:zoom-in;line-height:1.3';
     d.textContent='🔎 '+m.name+' '+(m.args||'');
+    d.title='Клик — развернуть целиком';
+    d.onclick=()=>{
+      const full = d.style.maxHeight==='none';
+      d.style.maxHeight = full ? '3.9em' : 'none';
+      d.style.cursor = full ? 'zoom-in' : 'zoom-out';
+    };
     $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
     curSaikaMsg=null;
   }
@@ -2429,8 +2449,22 @@ async function fillModelPop(){
   // все модели обоих бэкендов в один список, сортировка по оценке ВВЕРХ:
   // ЛУЧШАЯ — СВЕРХУ (2026-07-29, владелец: «то что выше идёт первым»):
   // порядок списка совпадает с порядком автоподбора при падении
+  // ранги приходят с сервера — кладём в общий словарь ДО сортировки
+  (r.models||[]).forEach(m=>{ if(m.rank!=null) rankMap[m.name]=m.rank; });
+  const recentOf = n => { const m=(r.models||[]).find(x=>x.name===n);
+                          return m && m.recent!=null ? m.recent : 99; };
+  // ПОРЯДОК СОВПАДАЕТ С ПОДПИСЬЮ (2026-08-14). Заголовок обещает «худшие
+  // сверху → лучшие внизу, у курсора», а сортировка стояла по убыванию —
+  // то есть лучшие оказывались НАВЕРХУ, дальше всего от руки. Список
+  // читался задом наперёд, и рейтингу верить было нельзя. Меню
+  // раскрывается вверх от кнопки, рука внизу — значит лучшее внизу.
+  // При равном уме выше тот, с кем работали недавно.
   const all=(r.models||[]).slice()
-    .sort((a,b)=>effScore(b.name,ratings[b.name]||0)-effScore(a.name,ratings[a.name]||0));
+    .sort((a,b)=>{
+      const d = effScore(a.name,ratings[a.name]||0)
+              - effScore(b.name,ratings[b.name]||0);
+      return d || (recentOf(b.name)-recentOf(a.name));
+    });
   if(!all.length){
     list.innerHTML='<div class="title">нет моделей — запусти Ollama или LM Studio</div>';
     return;
@@ -2564,7 +2598,17 @@ function capsBadges(m){
 }
 /* ручные оценки (перебивают авто), хранятся локально */
 let manualScores=(()=>{try{return JSON.parse(localStorage.manualScores||'{}')}catch(e){return {}}})();
-function effScore(name, auto){ return manualScores[name]!=null?manualScores[name]:(auto||0); }
+/* РЕЙТИНГ — ЭТО УМ, А НЕ СКОРОСТЬ (2026-08-14, владелец: «какого хрена у
+   меня не работает рейтинг и не загружаются самые первые по рейтингу»).
+   Порядок источников тот же, что в автопуске на сервере, иначе список и
+   загрузка расходятся: ручная оценка владельца → таблица лестницы (rank
+   из /api/models) → авто-замер ток/с как запасной для незнакомых имён. */
+let rankMap = {};
+function effScore(name, auto){
+  if(manualScores[name]!=null) return manualScores[name];
+  if(rankMap[name]!=null) return rankMap[name];
+  return auto||0;
+}
 /* оценки раньше жили ТОЛЬКО тут (localStorage) — сервер их не видел, и
    автопуск при старте игнорировал выбор владельца, грузя по авто-замеру
    скорости (жалоба 2026-07-23). Теперь при каждом открытии UI отдаём весь
@@ -7382,7 +7426,117 @@ eqFrame();
   const bar = $id('sysbar');
   if(bar) new MutationObserver(() => mount()).observe(bar, {childList: true});
 })();
+</script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   САЙКА · ОКНО С МОДЕЛЬЮ — ДУБЛЬ КНОПОК В КОЛОНКЕ (2026-08-14)
+
+   Сначала эти кнопки жили здесь, владелец попросил убрать («нафиг мне
+   слева в панели эти же кнопки») — убрал. Через час он же вернулся с
+   причиной, которую мы оба не учли: «если я закрываю окно с моделью в
+   браузере, я тупо не могу ничего нажать». И верно — основные кнопки
+   живут ВНУТРИ панели аватара, вместе с ней и пропадают.
+
+   Поэтому здесь только три, самые нужные, и они дублируют панель, а не
+   заменяют её. Дубль — не грех, когда основной путь может исчезнуть.
+   ═════════════════════════════════════════════════════════════════════ */
+(function(){
+  // помощники свои: $id и toast в этом файле объявлены внутри каждого
+  // блока через const и снаружи не видны (обжигался)
+  const $id = s => document.getElementById(s);
+  const say = (t, warn) => {
+    try { toast(t, {kind: warn ? 'warn' : 'ok'}); }
+    catch(e){ console.log('[окно модели]', t); }
+  };
+  const post = async (b) => (await fetch('/api/avatar/desk', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(b)})).json();
+
+  let st = {on: false, lock: false, frame: true, busy: false, step: ''};
+  let watch = null;
+
+  function paint(){
+    const bOn = $id('desk-on'), bLock = $id('desk-lock'), bFr = $id('desk-frame');
+    if (bOn){
+      bOn.textContent = st.busy ? ('⏳ ' + (st.step || 'ставлю PySide6…'))
+                      : st.on   ? '🪟 Окно с моделью — открыто'
+                                : '🪟 Окно с моделью — открыть';
+      bOn.disabled = !!st.busy;
+      bOn.style.borderColor = st.on ? 'rgba(145,132,217,.6)'
+                                    : 'rgba(255,255,255,.13)';
+    }
+    if (bLock){
+      bLock.textContent = st.lock ? '🔒 Замок стоит — кликаю сквозь неё'
+                                  : '🔓 Замок снят — окно ловит мышь';
+      bLock.style.opacity = st.on ? '1' : '.45';
+      bLock.disabled = !st.on;
+    }
+    if (bFr){
+      bFr.textContent = st.frame ? '▣ Рамка видна — тяни за края'
+                                 : '▢ Рамки нет — только модель';
+      bFr.style.opacity = st.on ? '1' : '.45';
+      bFr.disabled = !st.on;
+    }
+  }
+
+  function follow(){
+    if (watch) return;
+    watch = setInterval(async () => {
+      try{
+        const r = await fetch('/api/avatar/desk').then(x => x.json());
+        st = r; paint();
+        if (!r.busy){ clearInterval(watch); watch = null; }
+      }catch(e){ clearInterval(watch); watch = null; }
+    }, 1500);
+  }
+
+  async function send(patch){
+    try{
+      const r = await post(patch);
+      st = r;
+      if (r.note) say(r.note, r.ok === false);
+      if (r.busy) follow();
+    }catch(e){ say('не вышло: ' + e, true); }
+    paint();
+  }
+
+  function mk(id, title, onclick){
+    const b = document.createElement('button');
+    b.id = id; b.title = title; b.onclick = onclick;
+    b.style.cssText = 'width:100%;margin-top:6px;background:rgba(255,255,255,.05);' +
+      'border:1px solid rgba(255,255,255,.13);color:var(--text);' +
+      'border-radius:8px;padding:6px;cursor:pointer;font:inherit;font-size:12px';
+    return b;
+  }
+
+  function mount(){
+    const bar = $id('sysbar');
+    if (!bar || $id('desk-on')) return;
+    bar.appendChild(mk('desk-on',
+      'Отдельное окно с 3D-моделью поверх рабочего стола. Дублирует ' +
+      'кнопку в панели аватара — на случай, если панель закрыта.',
+      () => send({on: !st.on})));
+    bar.appendChild(mk('desk-lock',
+      'Замок: окно перестаёт ловить мышь, можно кликать сквозь неё',
+      () => send({lock: !st.lock})));
+    bar.appendChild(mk('desk-frame',
+      'Рамка окна: видно границы, за края тянется размер',
+      () => send({frame: !st.frame})));
+    fetch('/api/avatar/desk').then(r => r.json()).then(r => {
+      st = r; paint(); if (r.busy) follow();
+    }).catch(() => paint());
+  }
+  mount();
+  const sb = $id('sysbar');
+  if (sb) new MutationObserver(() => mount()).observe(sb, {childList: true});
+  // состояние могли поменять из панели аватара — держим кнопки в курсе
+  setInterval(() => {
+    if (!$id('desk-on')) return;
+    fetch('/api/avatar/desk').then(r => r.json())
+      .then(r => { st = r; paint(); }).catch(() => {});
+  }, 3000);
+})();
 </script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
@@ -8038,23 +8192,65 @@ eqFrame();
     box-shadow:0 0 0 1px currentColor inset,0 0 16px -4px currentColor}
   .vp-card .nm{font-weight:600;font-size:12px;line-height:1.25}
   .vp-card .sm{font-size:10px;color:var(--dim);line-height:1.3}
-  .vp-card .acts{margin-left:auto;display:flex;gap:4px;flex:none}
+  .vp-card .acts{margin-left:auto;display:flex;gap:4px;flex:none;
+    cursor:default}
+  /* РУЧКА ПЕРЕТАСКИВАНИЯ НАД КНОПКАМИ (2026-08-14, владелец: «нах над
+     этими кнопками появляется ручка для перемещения?»). Курсор grab стоял
+     на всей плашке и просачивался в полосу кнопок и в зазоры между ними —
+     рука над крестиком означает «сейчас потащу», а нажатие означает
+     «забыть голос». Два разных обещания в одной точке экрана. Кнопки
+     живут своей жизнью: обычный курсор и никакого перетаскивания. */
+  .vp-card .acts, .vp-card .acts *{cursor:pointer}
+  .vp-card .acts{cursor:default}
   .vp-card{cursor:grab}
   /* СКЛЕЙКА ГОЛОСОВ БЕЗ ДИАЛОГА (2026-08-13, требование владельца:
      «перетащил один голос на другой — он моргнул один раз, ещё пара секунд,
      моргнул второй раз по контуру и склеился; лишних кнопок нет и случайных
      склеек тоже нет»). Подтверждение — сам жест: бросил и не трогал две
      секунды. Отдёрнул мышь, кликнул, нажал Esc — отмена. */
-  @keyframes vpBlink{0%,100%{filter:none}
-    45%{filter:brightness(2.1) saturate(1.4)}}
-  @keyframes vpRing{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0)}}
-  .vp-card.merging{animation:vpBlink .38s ease-in-out;position:relative}
-  .vp-card.merging::after{content:'';position:absolute;inset:-2px;
-    border:2px solid currentColor;border-radius:11px;pointer-events:none;
-    animation:vpRing var(--vpwait,2s) linear forwards}
-  .vp-card.merged{animation:vpBlink .38s ease-in-out}
-  .vp-card.drop{outline:2px dashed currentColor;outline-offset:2px;
-    background:rgba(255,255,255,.06)}
+  /* МОРГАЕТ КОНТУР, А НЕ ВСЯ ПЛАШКА (2026-08-14, владелец дословно: «я
+     просил сделать: один раз мигнул по контуру при перетаскивании и
+     второй раз при удержании»). Ровно два события, между ними ничего не
+     движется. Кольцо обратного отсчёта, которое я приделал раньше, отсюда
+     убрано совсем: непрерывно ползущая по краю линия и читается как
+     «мерцает постоянно». Ожидание должно быть НЕПОДВИЖНЫМ. */
+  @keyframes vpEdge{
+    0%,100%{box-shadow:0 0 0 1px currentColor inset,0 0 18px -4px currentColor}
+    45%{box-shadow:0 0 0 3px currentColor inset,0 0 26px 2px currentColor}}
+  /* ВСПЫШКА И КОЛЬЦО — РАЗНЫЕ КЛАССЫ (2026-08-14). Раньше оба висели на
+     .merging, и любое повторное навешивание класса перезапускало вспышку.
+     Теперь .flash живёт 400 мс и снимается, а .merging — только кольцо
+     отсчёта: даже если его навесят снова, мигать нечему. */
+  .vp-card.flash{animation:vpEdge .38s ease-in-out}
+  .vp-card.merging{position:relative}
+  .vp-card.merged{animation:vpEdge .38s ease-in-out}
+  /* ПОДСВЕТКА ЦЕЛИ (2026-08-14, владелец: «сколько можно просить
+     правильно сделать совмещение голосов и подсветку на них»). Тонкий
+     пунктир цветом самой плашки на тёмном фоне почти не виден — особенно
+     когда тащишь и смотришь на курсор, а не на края. Цель теперь
+     заливается своим же цветом, обводится сплошной рамкой, слегка
+     подрастает и прямо подписывается «слить сюда»: перепутать, куда
+     ляжет, нельзя. */
+  .vp-card.drop{outline:2px solid currentColor;outline-offset:2px;
+    background:rgba(255,255,255,.12);          /* запасной, если движок */
+    background:color-mix(in srgb, currentColor 22%, transparent);
+    box-shadow:0 0 0 1px currentColor inset,0 0 18px -4px currentColor;
+    transform:scale(1.02);position:relative;z-index:2}
+  .vp-card.drop::before{content:'слить сюда';position:absolute;right:8px;
+    top:-9px;font-size:9px;letter-spacing:.04em;padding:1px 6px;
+    border-radius:7px;background:currentColor;color:#0b0d12;
+    font-weight:700;pointer-events:none}
+  /* та, которую тащим: видно, что она «поднята» и уедет отсюда */
+  .vp-card.lifted{opacity:.4;outline:1px dashed currentColor;
+    outline-offset:2px}
+  /* ОТКУДА БРАЛОСЬ МЕРЦАНИЕ (2026-08-14, владелец: «слияние до сих пор
+     мерцает как тварь при наведении одного на другой»). dragenter и
+     dragleave всплывают ОТ ДЕТЕЙ: пока курсор идёт по плашке, он входит
+     то в имя, то в подпись, то в кнопки — и плашка получает leave-enter
+     по десять раз в секунду, каждый раз перезапуская вспышку. Пока идёт
+     перетаскивание, детей для мыши не существует: события получает
+     только сама плашка, и «навёл» случается ровно один раз. */
+  body.vp-dragging .vp-card > *{pointer-events:none}
   .vp-row input::-webkit-search-cancel-button,
   .vp-row input::-webkit-search-decoration{-webkit-appearance:none;display:none}
   .vp-card .acts button{background:transparent;border:0;color:var(--dim);
@@ -8194,11 +8390,18 @@ eqFrame();
         'title="Слушать звук компьютера вместо микрофона: включи кино и ' +
         'посмотри, что она из него вытащит. Отвечать при этом не будет">' +
         '🖥 система</button>' +
-      '<button class="vp-btn" id="vp-tr" style="flex:1;font-size:11px" ' +
-        'title="Стенограмма: дословная запись разговора с именами говорящих ' +
-        'и пометками настроения. Сохраняется файлом">✎ запись</button>' +
-      '<button class="vp-btn" id="vp-trsave" style="font-size:11px" ' +
-        'title="Сохранить стенограмму в файл и открыть">файл</button>' +
+      // ДИКТОФОН ВМЕСТО СТЕНОГРАММЫ (2026-08-14, владелец: «убери вот эту
+      // залупу, лучше сделай диктофон записать голос-референс: стоп,
+      // пауза»). Стенограмма — про слова; эта панель про ГОЛОСА, и
+      // главное действие тут одно: записать эталон, чтобы она узнавала.
+      // Сама стенограмма никуда не делась, её роуты живы — просто ушла
+      // с глаз, из панели голоса.
+      '<button class="vp-btn" id="vp-rec" style="flex:1;font-size:11px" ' +
+        'title="Диктофон: записать эталон голоса. Говори что угодно — ' +
+        'важен тембр, а не слова. Пауза не теряет набранное">' +
+        '● эталон</button>' +
+      '<button class="vp-btn" id="vp-recpause" style="font-size:11px;' +
+        'display:none" title="Пауза — набранное сохраняется">⏸</button>' +
       '<button class="vp-btn" id="vp-log" style="flex:1;font-size:11px" ' +
         'title="Журнал слуха: час слушает комнату и показывает, кто говорил ' +
         'и что звучало — со спектрами">◉ час</button>' +
@@ -8209,6 +8412,7 @@ eqFrame();
     '</div>' +
     '<span id="vp-sysst" style="display:none"></span>' +
     '<span id="vp-trst" style="display:none"></span>' +
+    '<span id="vp-recst" style="display:none"></span>' +
     '<span id="vp-logst" style="display:none"></span>';
 
   /* ВЫСОТА СПЕКТРА ТЯНЕТСЯ МЫШЬЮ (2026-07-29). У разных людей разный
@@ -8394,10 +8598,26 @@ eqFrame();
   // цель под курсором нечем
   const drag2 = {nm: ''};
   document.addEventListener('dragstart', ev => {
+    // из полосы кнопок и из поля имени перетаскивание НЕ начинается:
+    // там человек целится в кнопку, а не тащит плашку
+    if(ev.target && ev.target.closest &&
+       (ev.target.closest('.acts') || ev.target.closest('.nm'))){
+      ev.preventDefault();
+      return;
+    }
     const c = ev.target && ev.target.closest && ev.target.closest('.vp-card');
     drag2.nm = c ? (c.dataset.nm || '') : '';
+    if(drag2.nm){
+      document.body.classList.add('vp-dragging');
+      c.classList.add('lifted');
+    }
   });
-  document.addEventListener('dragend', () => { drag2.nm = ''; });
+  document.addEventListener('dragend', () => {
+    drag2.nm = '';
+    document.body.classList.remove('vp-dragging');
+    document.querySelectorAll('.vp-card.lifted, .vp-card.drop')
+      .forEach(c => c.classList.remove('lifted', 'drop'));
+  });
 
   // взведённая склейка: пока она висит, панель НЕ перерисовываем — иначе
   // таймер сносит плашку вместе с анимацией, и всё «мерцает и лагает»
@@ -8406,32 +8626,50 @@ eqFrame();
   function cancelMerge(why){
     if(!armed.t) return;
     clearTimeout(armed.t); armed.t = null;
-    if(armed.card){ armed.card.classList.remove('merging'); }
+    if(armed.card){
+      armed.card.classList.remove('merging', 'drop', 'flash');
+    }
     armed.card = null; armed.src = armed.dst = '';
     if(why) toast(why, {kind: 'info', ttl: 2500});
   }
 
+  // РОВНО ДВА МОРГАНИЯ, И НИ ОДНИМ БОЛЬШЕ (2026-08-14, владелец описал
+  // это дословно: «один раз мигнул при наложении, второй раз через 3 сек,
+  // если подержать над ним, — и сразу сливаем»).
+  //
+  //   моргание 1 — в момент, когда перетаскиваемая плашка НАКРЫЛА чужую.
+  //                Один раз на цель. Пока курсор гуляет по той же плашке,
+  //                ничего не происходит: цель не сменилась.
+  //   между ними — три секунды НЕПОДВИЖНОГО ожидания: подсветка цели
+  //                стоит ровно, ничего не бегает и не пульсирует.
+  //   моргание 2 — отсчёт кончился (или человек отпустил кнопку раньше:
+  //                отпустил = решил). Сразу за ним склейка.
+  //
+  // Отмена: увести курсор с плашки, Esc, Ctrl+Z, клик мимо.
   function armMerge(card, src, dst){
+    if(armed.card === card && armed.t) return;   // уже целимся сюда
     cancelMerge('');
-    // 3 секунды: за две человек не успевал понять, что происходит —
-    // склейка «слишком быстро происходила» (2026-08-13)
     const wait = 3000;
     armed.card = card; armed.src = src; armed.dst = dst;
-    card.style.setProperty('--vpwait', wait + 'ms');
-    // вспышка уже была при подлёте — здесь только кольцо обратного отсчёта
-    card.classList.remove('merging');
-    void card.offsetWidth;              // перезапустить анимацию кольца
-    card.classList.add('merging');
-    armed.t = setTimeout(async () => {
-      armed.t = null;
-      card.classList.remove('merging');
-      void card.offsetWidth;
-      card.classList.add('merged');     // второе моргание — «склеил»
-      setTimeout(() => card.classList.remove('merged'), 400);
-      const a = armed.src, b = armed.dst;
-      armed.card = null; armed.src = armed.dst = '';
-      await mergeVoices(a, b);
-    }, wait);
+    card.classList.add('drop');
+    card.classList.remove('merging', 'flash');
+    void card.offsetWidth;              // перезапустить вспышку и кольцо
+    card.classList.add('merging');      // просто метка «целимся сюда»
+    card.classList.add('flash');        // ← моргание 1, ровно одно
+    setTimeout(() => card.classList.remove('flash'), 420);
+    armed.t = setTimeout(() => fireMerge(card), wait);
+  }
+
+  async function fireMerge(card){
+    if(armed.card !== card) return;
+    if(armed.t){ clearTimeout(armed.t); armed.t = null; }
+    const a = armed.src, b = armed.dst;
+    armed.card = null; armed.src = armed.dst = '';
+    card.classList.remove('merging', 'drop', 'flash');
+    void card.offsetWidth;
+    card.classList.add('merged');       // ← моргание 2, «склеил»
+    setTimeout(() => card.classList.remove('merged'), 400);
+    await mergeVoices(a, b);
   }
 
   // отмена: клик мимо, Esc, уход мыши с плашки
@@ -8583,6 +8821,76 @@ eqFrame();
   const sysBtn = $id('vp-sys');
   if(sysBtn) sysBtn.onclick = () => sysStream ? sysStop() : sysStart();
   paintSys();
+
+  /* ─────────────────── ДИКТОФОН ЭТАЛОНА ───────────────────
+     Владелец: «сделай диктофон записать голос-референс, стоп, пауза».
+     Одна кнопка, три состояния и ни одного лишнего вопроса:
+
+        ● эталон   — жмёшь, вводишь имя один раз, дальше просто говори
+        ⏸ / ▶      — пауза не теряет набранное (откашлялся, ответил кому-то)
+        ■ стоп     — записала; можно и не жать: наберёт нужное и сама
+                     закончит, показывая, сколько осталось
+
+     Никаких «вы уверены»: запись голоса ничего не ломает, а лишний эталон
+     всегда можно забыть крестиком на карточке. */
+  let REC = {on: false, name: '', got: 0, need: 24, paused: false};
+
+  function paintRec(){
+    const b = $id('vp-rec'), p = $id('vp-recpause'), st = $id('vp-toolst');
+    if(!b) return;
+    b.textContent = REC.on ? '■ стоп' : '● эталон';
+    b.classList.toggle('acc', REC.on);
+    if(p){
+      p.style.display = REC.on ? '' : 'none';
+      p.textContent = REC.paused ? '▶' : '⏸';
+      p.title = REC.paused ? 'Продолжить запись' : 'Пауза — набранное сохранится';
+    }
+    if(st && REC.on){
+      st.textContent = (REC.paused ? 'пауза · ' : 'пишу «' + REC.name + '» · ')
+        + 'набрано ' + REC.got + ' из ' + REC.need
+        + (REC.paused ? '' : ' · говори что угодно, важен тембр');
+    }
+  }
+
+  // событие прогресса приходит с сервера — берём его как есть
+  window.saikaVpEnroll = ev => {
+    REC.on = !!(ev && ev.name);
+    REC.name = (ev && ev.name) || '';
+    REC.got = (ev && ev.got) || 0;
+    REC.need = (ev && ev.need) || 24;
+    REC.paused = !!(ev && ev.paused);
+    paintRec();
+  };
+
+  const recBtn = $id('vp-rec');
+  if(recBtn) recBtn.onclick = async () => {
+    try{
+      if(REC.on){
+        const r = await api('/api/voiceprint/enroll', {action: 'stop'});
+        toast(r.ok ? 'Записала «' + (r.name || '') + '», эталонов ' +
+                     (r.vectors || 0)
+                   : (r.error || 'мало речи — скажи ещё пару фраз'),
+              {kind: r.ok ? 'ok' : 'err', ttl: 5000});
+        REC.on = false; paintRec();
+        loadPoints(); paintPanel();
+        return;
+      }
+      const nm = (prompt('Чей голос пишем?', '') || '').trim();
+      if(!nm) return;
+      await api('/api/voiceprint/enroll', {action: 'start', name: nm});
+      REC = {on: true, name: nm, got: 0, need: 24, paused: false};
+      paintRec();
+    }catch(e){ toast('Диктофон: ' + e.message, {kind: 'err'}); }
+  };
+  const recPause = $id('vp-recpause');
+  if(recPause) recPause.onclick = async () => {
+    try{
+      const r = await api('/api/voiceprint/enroll',
+                          {action: REC.paused ? 'resume' : 'pause'});
+      REC.paused = !!r.paused; paintRec();
+    }catch(e){}
+  };
+  paintRec();
 
   /* ─────────────────── стенограмма ─────────────────── */
   let TR = null;
@@ -8809,6 +9117,14 @@ eqFrame();
        ~полсекунды и молча сносил поле ввода вместе с набранным. Пока
        человек печатает имя — карточки НЕ перерисовываются вообще. */
     if(window.__vpEditing) return;
+    // ПАУЗА НА ВРЕМЯ ЖЕСТА — ЗДЕСЬ ТОЖЕ (2026-08-14, владелец: «я тащу, и
+    // по контуру начинает мерцать постоянно… каждый тик»). Ровно так и
+    // было: защита стояла на paintPanel, а САМИ КАРТОЧКИ рисует эта
+    // функция, и её зовут ещё из двух мест по таймеру. Каждый тик плашки
+    // пересобирались заново, класс подсветки вешался на новый узел — и
+    // вспышка, задуманная одноразовой, повторялась вечно. Пока человек
+    // тащит плашку или идёт отсчёт склейки — список не трогаем вообще.
+    if(armed.t || drag2.nm) return;
     const names = Object.keys(ST.speakers || {});
     if(!names.length){
       box2.innerHTML = '<div class="vp-dim" style="font-size:11px">' +
@@ -8838,7 +9154,7 @@ eqFrame();
                   : s.auto ? ' <span class="sm" title="познакомилась сама">✨</span>'
                   : '') + '</div>' +
         '<div class="sm">' + ago(s.last) + ' · ' + (s.heard || 0) + ' раз · ' +
-        pitch + '</div>' + g + '</div><div class="acts">' +
+        pitch + '</div>' + g + '</div><div class="acts" draggable="false">' +
         '<button draggable="false" data-col="' + esc(n) + '" title="Сменить цвет">◑</button>' +
         // КОРОНА — СКРЫТАЯ НАСТРОЙКА (2026-07-29, владелец: «такое не надо
         // делать, это скрытая настройка»). Кнопка «назначить создателя» на
@@ -8886,40 +9202,38 @@ eqFrame();
         card.style.opacity = '';
         box2.querySelectorAll('.vp-card').forEach(c => c.classList.remove('drop'));
       };
-      card.ondragover = ev => {
+      // dragenter/dragover/dragleave — три события об одном и том же.
+      // Мигаем ТОЛЬКО когда сменилась ЦЕЛЬ (armed.card), а не когда
+      // пришло очередное событие: dragover прилетает десятки раз в
+      // секунду просто потому, что курсор дрожит.
+      const aim = ev => {
         const src = drag2.nm;
         if(!src || src === card.dataset.nm) return;
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = 'move';
-        if(!card.classList.contains('drop')){
-          // ПЕРВОЕ МОРГАНИЕ — ПРИ ПОДНЕСЕНИИ (2026-08-13, уточнение
-          // владельца). Смысл вспышки — показать, НА КАКОЙ голос ложится
-          // перетаскиваемый, пока рука ещё держит. После броска это уже
-          // не подтверждение, а уведомление постфактум.
-          card.classList.remove('merging');
-          void card.offsetWidth;
-          card.classList.add('merging');
-          setTimeout(() => {
-            if(!armed.t) card.classList.remove('merging');
-          }, 420);
-        }
-        card.classList.add('drop');
+        ev.preventDefault();            // без этого drop не случится вовсе
+        if(ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+        armMerge(card, src, card.dataset.nm);
       };
-      card.ondragleave = () => {
+      card.ondragenter = aim;
+      card.ondragover = aim;
+      card.ondragleave = ev => {
+        // уход В СВОЕГО ЖЕ ребёнка уходом не считается (вторая половина
+        // лечения мерцания — на случай, если pointer-events не помогли)
+        if(ev.relatedTarget && card.contains(ev.relatedTarget)) return;
+        if(armed.card === card) cancelMerge('');
         card.classList.remove('drop');
-        if(!armed.t) card.classList.remove('merging');
       };
       card.ondrop = ev => {
         ev.preventDefault();
-        card.classList.remove('drop');
         const src = ev.dataTransfer.getData('text/plain') || drag2.nm;
         const dst = card.dataset.nm;
-        if(!src || !dst || src === dst) return;
+        if(!src || !dst || src === dst){ cancelMerge(''); return; }
         // ПОЧЕМУ НЕ confirm (2026-08-13): в этом интерфейсе confirm подменён
         // тостом, который ПОВТОРЯЕТ ПОСЛЕДНИЙ КЛИК. Для кнопки это работает,
         // а бросок мышью повторить нельзя — поэтому склейка то срывалась,
         // то срабатывала не на той плашке. Здесь подтверждение — сам жест.
-        armMerge(card, src, dst);
+        // Отпустил кнопку — значит решил: не ждём остаток отсчёта.
+        if(armed.card !== card) armMerge(card, src, dst);
+        fireMerge(card);
       };
     });
     // ПАЛИТРА (2026-07-29). Золото в списке отсутствует намеренно: это
@@ -9042,6 +9356,8 @@ eqFrame();
       } else live.on = false;
     } else if(m.type === 'voiceprint_enroll'){
       if(ST) ST.enroll = {name: m.name, got: m.got, need: m.need};
+      // диктофон живёт своим состоянием: прогресс приходит сюда же
+      try{ window.saikaVpEnroll && window.saikaVpEnroll(m); }catch(e){}
       paintPanel();
       if(!m.name){ refreshStatus(); loadPoints(); }
     } else if(m.type === 'voiceprint_met'){
