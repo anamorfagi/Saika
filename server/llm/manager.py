@@ -2013,6 +2013,15 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                                   + f"\n…[обрезано, всего {len(result)} симв.]")
                     log.info("tool %s(%s) -> %s символов",
                              name, args, len(result))
+                    # РАБОЧИЙ СТОЛ НА СЛЕДУЮЩИЙ ХОД (2026-08-15): результат
+                    # инструмента жил ровно один запрос и умирал вместе с
+                    # msgs — поэтому на «какие?» она честно не знала, о чём
+                    # речь. См. server/toolbuf.py, там разобран живой случай.
+                    try:
+                        from server import toolbuf as _tb
+                        _tb.note(name, args, result)
+                    except Exception:
+                        pass
                     if backend == "ollama":
                         msgs.append({"role": "tool", "tool_name": name,
                                      "name": name, "content": result})

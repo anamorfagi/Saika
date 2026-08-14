@@ -3507,6 +3507,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             dyn_parts.add("tools", _idx)
     except Exception as e:
         log.debug("карточки инструментов пропущены: %s", e)
+    # ЧТО В РУКАХ ПРЯМО СЕЙЧАС. Блок короткий и живёт пять минут, но
+    # именно он превращает «Извини, я не поняла» в ответ по существу,
+    # когда человек уточняет предыдущий ход одним словом.
+    try:
+        from server import toolbuf as _tb
+        _tbb = _tb.block()
+        if _tbb:
+            dyn_parts.add("tools", _tbb)
+    except Exception as e:
+        log.debug("буфер инструментов пропущен: %s", e)
     try:
         if _is_perf_query(user_text):
             _pfb = _perf_block()
