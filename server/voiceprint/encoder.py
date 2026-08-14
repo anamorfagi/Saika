@@ -187,11 +187,39 @@ class Encoder:
                     from speechbrain.pretrained import EncoderClassifier
                 savedir = ROOT / "models" / "ecapa"
                 savedir.mkdir(parents=True, exist_ok=True)
-                self._sb = EncoderClassifier.from_hparams(
-                    source="speechbrain/spkrec-ecapa-voxceleb",
-                    savedir=str(savedir), run_opts={"device": "cpu"})
+                # ГДЕ СЧИТАТЬ ОТПЕЧАТОК (2026-08-14, владелец: «а чё у
+                # меня ЦП так сильно грузить стало»). Стало — потому что
+                # раньше ECAPA была сломана (гонка импорта speechbrain) и
+                # молча падала на лёгкие 68 признаков, почти бесплатные.
+                # Починили — и на КАЖДЫЙ кусок речи считается настоящая
+                # нейросеть. На процессоре это заметно, а видеокарта у него
+                # свободна: мозги в облаке, озвучка на piper.
+                #
+                # Модель крошечная (~20 МБ), места не занимает. Не вышло с
+                # видеокартой — спокойно считаем на процессоре, как раньше.
+                _dev = str(CFG.get("voiceprint.device", "auto"))
+                if _dev == "auto":
+                    try:
+                        _dev = "cuda" if torch.cuda.is_available() else "cpu"
+                    except Exception:
+                        _dev = "cpu"
+                try:
+                    self._sb = EncoderClassifier.from_hparams(
+                        source="speechbrain/spkrec-ecapa-voxceleb",
+                        savedir=str(savedir), run_opts={"device": _dev})
+                except Exception as _e:
+                    if _dev == "cpu":
+                        raise
+                    log.info("Отпечаток голоса: на видеокарте не вышло "
+                             "(%s) — считаю на процессоре", _e)
+                    _dev = "cpu"
+                    self._sb = EncoderClassifier.from_hparams(
+                        source="speechbrain/spkrec-ecapa-voxceleb",
+                        savedir=str(savedir), run_opts={"device": "cpu"})
+                self._dev = _dev
             self._torch = torch
             self.backend, self.dim = "ecapa", 192
+            log.info("Отпечаток голоса: ECAPA считает на %s", _dev)
             # Защита от ленивых мин speechbrain — общая для всех, кто трогает
             # torch (см. server/torch_gate.py). Здесь она нужна потому, что
             # именно мы притащили speechbrain в процесс.
@@ -237,6 +265,8 @@ class Encoder:
                 with self._lock:
                     t = self._torch.from_numpy(x).unsqueeze(0)
                     with self._torch.no_grad():
+                        if getattr(self, "_dev", "cpu") != "cpu":
+                            t = t.to(self._dev)
                         emb = self._sb.encode_batch(t).squeeze().cpu().numpy()
                 v = np.asarray(emb, dtype=np.float32).ravel()
                 f0, _ = _pitch(x)                   # тон всё равно нужен для UI

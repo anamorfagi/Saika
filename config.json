@@ -9,15 +9,15 @@
     "backend": "cloud",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "model": "GigaChat-2-Pro",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "cloudflare",
-      "base_url": "https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1",
-      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      "provider": "gigachat",
+      "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
+      "model": "GigaChat-2-Pro"
     },
     "tools_broken": [
       "gemma-4-e4b-it",
@@ -190,7 +190,7 @@
     "draft": false
   },
   "tts": {
-    "engine": "piper",
+    "engine": "qwen3",
     "enabled": true,
     "disabled": [
       "qwen3"
@@ -400,24 +400,24 @@
       "top": true,
       "lock": false,
       "on": true,
-      "x": 1377,
-      "y": 227,
+      "x": 0,
+      "y": 303,
       "w": 434,
       "h": 918,
-      "frame": true,
+      "frame": false,
       "ghost": false,
       "view": {
-        "x": -0.0034077401721048974,
+        "x": -0.006815480344209791,
         "y": 0.013630960688419557,
         "z": 0.0,
-        "zoom": 0.7032561287499104,
+        "zoom": 0.8841292699910723,
         "rx": 0.0,
         "ry": 0.0,
         "rz": 0.0,
         "snap": 0.0,
         "ortho": false,
-        "az": 22.799999999999955,
-        "el": 3.199999999999997,
+        "az": -22.800000000000068,
+        "el": 6.399999999999999,
         "dist": 0.0,
         "ox": 0.0,
         "oy": 0.0,
@@ -427,25 +427,25 @@
       },
       "slots": {
         "saika_v1": {
-          "x": 1377,
-          "y": 227,
+          "x": 0,
+          "y": 303,
           "w": 434,
           "h": 918,
           "view": {
-            "x": -0.0034077401721048974,
+            "x": -0.006815480344209791,
             "y": 0.013630960688419557,
             "z": 0.0,
             "rx": 0.0,
             "ry": 0.0,
             "rz": 0.0,
-            "az": 22.799999999999955,
-            "el": 3.199999999999997,
+            "az": -22.800000000000068,
+            "el": 6.399999999999999,
             "dist": 0.0,
             "ox": 0.0,
             "oy": 0.0,
             "oz": 0.0,
             "lean": 0.0,
-            "zoom": 0.7032561287499104,
+            "zoom": 0.8841292699910723,
             "snap": 0.0,
             "ortho": false,
             "headFollow": true
@@ -516,7 +516,8 @@
   },
   "voiceprint": {
     "enabled": true,
-    "listen_self": true
+    "listen_self": true,
+    "device": "auto"
   },
   "doctor": {
     "backend": "",
@@ -524,5 +525,8 @@
   },
   "trust": {
     "level": 7
+  },
+  "hearing": {
+    "device": "cuda"
   }
 }

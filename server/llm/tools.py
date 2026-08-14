@@ -1085,7 +1085,56 @@ def _hands_schemas() -> list:
     return _cache["schemas"]
 
 
+# ═══ СХЕМЫ СОБИРАЮТСЯ ОДИН РАЗ, А НЕ НА КАЖДУЮ ФРАЗУ (2026-08-14) ═══
+# Живой лог владельца:
+#   LLM разбивка: ... | инструменты 6937мс | ... | итого 9437мс
+#   LLM разбивка: ... | инструменты 8282мс | ... | итого 11078мс
+# Семь-восемь секунд из девяти уходило на СБОРКУ СПИСКА ИНСТРУМЕНТОВ —
+# не на модель и не на сеть. Набор из 89 схем собирается из полутора
+# десятков модулей, и каждый по дороге что-то читает с диска, опрашивает
+# HandsPC, перебирает наряды в папке. На каждый ход заново.
+#
+# А меняется он редко: когда владелец правит конфиг, добавляет .vrm или
+# поднимает HandsPC. Держим готовый список несколько секунд и заодно
+# засекаем, кто именно тормозит, — чтобы не гадать во второй раз.
+_SCHEMA_CACHE = {"val": None, "ts": 0.0, "key": ""}
+
+
+def _schema_key() -> str:
+    """Дешёвая подпись входных условий: сменилась — пересобираем."""
+    try:
+        c = CFG
+        return "|".join(str(x) for x in (
+            c.get("llm.model", ""), c.get("llm.backend", ""),
+            c.get("tools.grade", ""), c.get("tools.enabled", True),
+            c.get("pc.enabled", True), c.get("avatar.enabled", False),
+            c.get("hotkeys.enabled", False), c.get("browser.enabled", True),
+            len(c.get("llm.tools_broken", []) or [])))
+    except Exception:
+        return ""
+
+
 def schemas() -> list:
+    """Схемы инструментов — с кэшем. Тяжёлую сборку делает _schemas_build."""
+    import time as _tt
+    ttl = float(CFG.get("tools.cache_s", 20))
+    key = _schema_key()
+    c = _SCHEMA_CACHE
+    if (c["val"] is not None and c["key"] == key
+            and _tt.monotonic() - c["ts"] < ttl):
+        return c["val"]
+    t0 = _tt.monotonic()
+    val = _schemas_build()
+    dt = _tt.monotonic() - t0
+    if dt > 0.5:
+        log.warning("Сборка схем инструментов заняла %.1fс (%d шт.) — это "
+                    "много. Держу в кэше %.0fс; если повторяется, смотри, "
+                    "кто из модулей так долго отвечает.", dt, len(val), ttl)
+    c.update(val=val, ts=_tt.monotonic(), key=key)
+    return val
+
+
+def _schemas_build() -> list:
     """Схемы инструментов (function calling): HandsPC + (опц.) дев-доска.
 
     Дев-доску модели по умолчанию НЕ отдаём: слабые модели (напр. llama3.2)
