@@ -76,6 +76,7 @@ RISK = {
     # нулевая, и держать их наравне с записью файлов было неправдой.
     "volume_set": 2, "window_minimize": 2, "window_focus": 2,
     "card_list": 1, "card_off": 1, "card_wear": 2, "card_make": 2,
+    "avatar_window": 2,
     "window_maximize": 2, "minimize_all": 2, "tab_control": 2,
     "avatar_action": 2, "change_outfit": 2, "devboard_add": 2,
     "model_switch": 2, "app_launch": 2, "place_save": 2,

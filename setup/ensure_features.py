@@ -384,6 +384,7 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
 
     print(f"\n[*] {spec['title']}: доставляю недостающее")
     ok = True
+    skipped = False
     if core_miss:
         print(f"    нет: {', '.join(core_miss)}")
         if spec.get("install_script"):
@@ -404,6 +405,7 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
         ereason = _skip_reason(erec, force)
         if ereason:
             print(f"    [~] необязательные пропускаю — {ereason}")
+            skipped = True
         else:
             print(f"    необязательные: {', '.join(extra_miss)}")
             pip_install(spec["extra_pip"])
@@ -431,7 +433,14 @@ def ensure(name: str, spec: dict, st: dict, force=False, check=False) -> dict:
         return {"feature": name, "ok": False, "action": "не удалось"}
 
     rec.update(status="ok", ts=time.time(), attempts=0, missing=[])
-    print(f"[+] {spec['title']}: готово")
+    # ЧЕСТНЫЙ ИТОГ (2026-08-14, лог владельца читался как издевательство:
+    # «необязательные пропускаю — установка не удавалась 3 раза» и следом
+    # «готово». Готово ЧТО? Строка «готово» после отказа обесценивает обе.)
+    if skipped:
+        print(f"[~] {spec['title']}: основное на месте, необязательное "
+              "пропущено (см. строку выше)")
+    else:
+        print(f"[+] {spec['title']}: готово")
     return {"feature": name, "ok": True, "action": "установлено"}
 
 

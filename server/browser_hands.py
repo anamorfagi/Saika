@@ -388,6 +388,16 @@ def _ensure_page(ctx):
     if not alive:
         _reset_ctx(ctx)
         args = ["--window-size=1200,800", "--lang=ru-RU"]
+        # НАСТОЯЩИЙ CHROME, А НЕ CHROMIUM (2026-08-14, живой скриншот: она
+        # ДОШЛА до конца — открыла YouTube, кликнула второй ролик — и
+        # получила «Что-то пошло не так. Обновите страницу». Это не её
+        # промах: в Chromium, который кладёт Playwright, нет проприетарных
+        # кодеков H.264/AAC, и YouTube в нём просто не играет. Ставим
+        # channel="chrome" — тот самый Chrome, что стоит у человека, со
+        # всеми кодеками. Нет его — молча падаем на Chromium, как раньше:
+        # искать и читать он умеет и без кодеков.
+        _channel = str(CFG.get("browser.channel", "chrome") or "").strip()
+        _chan = {"channel": _channel} if _channel else {}
         ext = _ublock_dir()
         if ext:
             # РЕЖЕМ БАННЕРЫ ЧУЖИМИ РУКАМИ (2026-08-13). Баннеры, куки-стены
@@ -397,18 +407,35 @@ def _ensure_page(ctx):
             args += [f"--disable-extensions-except={ext}",
                      f"--load-extension={ext}"]
             try:
-                ctx["ctx"] = ctx["pw"].chromium.launch_persistent_context(
-                    _profile_dir(), headless=False, args=args, locale="ru-RU",
-                    viewport={"width": 1180, "height": 760})
+                try:
+                    ctx["ctx"] = ctx["pw"].chromium.launch_persistent_context(
+                        _profile_dir(), headless=False, args=args,
+                        locale="ru-RU",
+                        viewport={"width": 1180, "height": 760}, **_chan)
+                    log.info("браузер: настоящий Chrome (%s) + uBlock",
+                             _channel or "chromium")
+                except Exception as e_ch:
+                    # Chrome не установлен — Chromium умеет всё, кроме видео
+                    log.info("Chrome не запустился (%s) — беру Chromium; "
+                             "видео на YouTube в нём может не играть", e_ch)
+                    ctx["ctx"] = ctx["pw"].chromium.launch_persistent_context(
+                        _profile_dir(), headless=False, args=args,
+                        locale="ru-RU",
+                        viewport={"width": 1180, "height": 760})
                 ctx["browser"] = None
-                log.info("браузер: uBlock Origin подключён")
             except Exception as e:
                 log.warning("uBlock не подключился (%s) — иду без него", e)
                 ext = None
         if not ext:
-            ctx["browser"] = ctx["pw"].chromium.launch(
-                headless=False, args=["--window-size=1200,800",
-                                      "--lang=ru-RU"])
+            try:
+                ctx["browser"] = ctx["pw"].chromium.launch(
+                    headless=False, args=["--window-size=1200,800",
+                                          "--lang=ru-RU"], **_chan)
+            except Exception as e_ch:
+                log.info("Chrome не запустился (%s) — беру Chromium", e_ch)
+                ctx["browser"] = ctx["pw"].chromium.launch(
+                    headless=False, args=["--window-size=1200,800",
+                                          "--lang=ru-RU"])
             ctx["ctx"] = ctx["browser"].new_context(
                 viewport={"width": 1180, "height": 760}, locale="ru-RU")
     if ctx["page"] is None or ctx["page"].is_closed():
@@ -569,6 +596,13 @@ _HOLLOW = {
     "статью", "сайт", "страницу", "человека", "модель", "программу",
 }
 
+# ЧИСТЫЕ МЕСТОИМЕНИЯ (2026-08-14). Часть _HOLLOW уточняет тему и в запросе
+# полезна: «игру» + «Stellar Blade» = осмысленный поиск. А «его» не уточняет
+# ничего — с ним получилось «Snailkick его», и выдача поехала в мемы. Такие
+# слова годятся как СИГНАЛ «предмет в разговоре», но не как часть запроса.
+_PRONOUN = {"это", "этого", "эту", "этот", "эта", "его", "её", "ее", "их",
+            "он", "она", "оно", "они", "там", "тут", "туда", "штуку", "вещь"}
+
 _STOP_TOPIC = {"что", "как", "где", "когда", "почему", "зачем", "кто",
                "какой", "какая", "какие", "ты", "мне", "мы", "вы", "нам"}
 
@@ -597,7 +631,18 @@ _ASKING = {"что", "чего", "когда", "где", "сколько", "ка
            "какие", "почему", "зачем", "кто", "нового", "новое", "там",
            # глаголы-уточнения: сами по себе предмета не задают
            "выйдет", "выйдут", "вышло", "вышел", "вышла", "будет", "стоит",
-           "стоил", "работает", "делает", "значит", "было", "есть"}
+           "стоил", "работает", "делает", "значит", "было", "есть",
+           # МЕСТОИМЕНИЯ (2026-08-14, живой позор: «попробуй загуглить, дай
+           # его» -> она открыла DuckDuckGo и честно искала «дай его».
+           # Скриншот: мемы «Дай его!» в TikTok. «Его» — это Snailkick,
+           # о котором шла речь пять реплик подряд; предмет надо брать из
+           # разговора, а не печатать местоимение в строку поиска.
+           "его", "её", "ее", "их", "это", "этого", "эту", "этот", "эти",
+           "того", "тот", "та", "те", "он", "она", "они", "оно",
+           "him", "her", "it", "them", "this", "that",
+           # и глаголы-просьбы, которые сами предмета не задают
+           "дай", "давай", "покажи", "найди", "поищи", "глянь", "скинь",
+           "включи", "открой", "загугли", "попробуй", "ну"}
 
 
 def _topic_from_history() -> str:
@@ -664,12 +709,74 @@ def _after_ask(q: str) -> str:
     return tail
 
 
+_AI_QUERY_PROMPT = """Разговор человека с ассистентом, последние реплики:
+{talk}
+
+Человек только что попросил поискать. Напиши ОДИН поисковый запрос, который
+надо ввести в поисковик, чтобы выполнить именно эту просьбу.
+
+Правила:
+- 2-6 слов, без кавычек, без пояснений, без «вот запрос:» — только сам запрос;
+- местоимения («его», «это», «там») раскрой по разговору: если речь шла о
+  канале Snailkick, то «дай его» — это «Snailkick»;
+- слова-обращения к ассистенту («попробуй», «загугли», «дай») в запрос НЕ идут;
+- если из разговора предмет не понятен — верни одно слово: НЕПОНЯТНО."""
+
+
+def ai_query(raw: str) -> str:
+    """ЗАПРОС ФОРМУЛИРУЕТ МОЗГ, А НЕ РЕГУЛЯРКИ (2026-08-14).
+
+    Владелец, глядя на скриншот с поиском «дай его»: «мне кажется, тут какой
+    то глупый механизм — что именно гуглит, она буквально не понимает
+    контекст». Он прав, и правка стоп-листов это не лечит. Разбор фразы
+    регулярками — это попытка угадать смысл, не читая разговора: «дай его»
+    из пяти реплик про Snailkick превращалось в поиск мемов «Дай его!».
+
+    Понимает контекст ровно одна вещь в системе — языковая модель. Ей и
+    поручаем: короткий вызов (запрос это 3-5 токенов), быстрый мозг с
+    лестницы, вся недавняя переписка на входе. Не вышло — ниже остаётся
+    старый разбор регулярками как запасной путь."""
+    if not CFG.get("browser.ai_query", True):
+        return ""
+    try:
+        from server.llm import brains, manager
+        from server.llm import tools as _t
+        talk = list(_t.LAST_USER.get("recent") or [])
+        if _t.LAST_USER.get("text"):
+            talk.append(_t.LAST_USER["text"])
+        talk = [t for t in talk if t][-6:]
+        if not talk:
+            return ""
+        step = brains.for_hands(6) or {}
+        backend = step.get("backend") or CFG.get("llm.backend", "")
+        model = step.get("model") or CFG.get("llm.model", "")
+        out = manager.ask_specific(
+            backend, model,
+            [{"role": "user", "content": _AI_QUERY_PROMPT.format(
+                talk="\n".join("— " + t for t in talk))}],
+            max_len=120)
+        q = " ".join(str(out or "").split()).strip(" «»\"'.:;")
+        # мелкие модели любят дописать пояснение — берём первую строку
+        q = q.split("\n")[0].strip()
+        if not q or "НЕПОНЯТНО" in q.upper() or len(q) > 90:
+            return ""
+        log.info("Запрос сформулировал %s: %r -> %r", model, raw[:50], q)
+        return q
+    except Exception as e:
+        log.debug("ИИ-формулировка запроса не вышла: %s", e)
+        return ""
+
+
 def smart_query(raw: str) -> str:
     """Собрать поисковый запрос из реплики. Возвращает то, что не стыдно
     напечатать в строку поиска."""
     q = " ".join(str(raw or "").split())
     if not q:
         return ""
+    # сперва спрашиваем того, кто читал разговор целиком
+    ai = ai_query(raw)
+    if ai:
+        return _clean_query(ai)
     # сначала пробуем вырезать по глаголу просьбы: всё до него — это
     # обращение к Сайке (в том числе мат и «ёперный театр»), а не запрос
     tail = _after_ask(q)
@@ -687,7 +794,8 @@ def smart_query(raw: str) -> str:
         topic = _topic_from_history()
         if topic:
             kind = next((w for w in words
-                         if w.lower().strip(".,!?") in _HOLLOW), "")
+                         if w.lower().strip(".,!?") in _HOLLOW
+                         and w.lower().strip(".,!?") not in _PRONOUN), "")
             built = (topic + " " + kind).strip() if kind else topic
             log.info("Запрос собран из разговора: %r -> %r", q, built)
             return _clean_query(built)
@@ -702,7 +810,13 @@ def smart_query(raw: str) -> str:
     if not meaty or all(w.lower().strip(".,!?") in _ASKING for w in meaty):
         topic = _topic_from_history()
         if topic and topic.lower() not in core.lower():
-            core = topic + " " + core
+            # ХВОСТ ИЗ МЕСТОИМЕНИЙ ВЫБРАСЫВАЕМ (2026-08-14): «дай его» после
+            # подстановки темы давало «Snailkick его» — предмет верный, но
+            # мусор в запросе портит выдачу. Раз все оставшиеся слова и так
+            # ничего не значат, они и не нужны.
+            rest = [w for w in core.split()
+                    if w.lower().strip(".,!?") not in _ASKING]
+            core = (topic + " " + " ".join(rest)).strip()
             log.info("Запрос дополнен темой разговора: %r", core)
     return _clean_query(core)
 

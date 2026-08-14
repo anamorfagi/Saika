@@ -50,7 +50,7 @@ if not defined PYCMD (
 )
 
 :: ---------- venv ----------
-:: перенос на другой ПК/диск: чиним абсолютные пути внутри venv
+:: perenos na drugoy PK/disk: chinim absolyutnye puti vnutri venv
 %PYCMD% setup\fix_venv.py
 if not exist ".venv\Scripts\python.exe" (
     echo [*] Creating virtual environment...
@@ -75,31 +75,52 @@ if "%NEED_SETUP%"=="1" (
 )
 
 :: ---------- quick check + auto-fix before start ----------
-:: --fast: если прошлый запуск был здоровым (младше суток), полный осмотр
-:: (десятки секунд подпроцессов с torch) пропускается — старт заметно быстрее.
-:: После падения сервера ниже зовётся полный doctor без --fast.
+:: --fast: esli proshlyy zapusk byl zdorovym (mladshe sutok), polnyy osmotr
+:: (desyatki sekund podprotsessov s torch) propuskaetsya - start zametno bystree.
+:: Posle padeniya servera nizhe zovetsya polnyy doctor bez --fast.
 "%VPY%" setup\doctor.py --fix --fast
 if errorlevel 1 (
     echo [!] Critical problems found - trying to start anyway...
 )
 
 :: ---------- start Ollama in background if present ----------
+:: MY ZAPUSTILI - MY I ZAKROEM (2026-08-14). Konsol Ollama ([GIN] GET /api/ps)
+:: ostavalas viset posle vyhoda Saiki i mozolila glaza. No esli Ollama uzhe
+:: rabotala DO nas - eto ne nasha programma: mozhet ee derzhit chto-to esche.
+:: Poetomu stavim metku tolko kogda zapuskaem sami, i po metke gasim v konce.
+set "OLLAMA_OURS="
+:: NUZHNA LI ONA VOOBSCHE (2026-08-14, vopros vladeltsa). Ollama - odin iz
+:: podderzhannyh dvizhkov, no esli mozgi rabotayut na llama.cpp ili v oblake,
+:: ona prosto zanimaet pamyat i pokazyvaet konsol s logom [GIN]. Reshaem po
+:: konfigu: nuzhna, esli vybrana dvizhkom ILI est zapasnye modeli s ee imenami.
+:: Vyklyuchit nasovsem: "ollama": {"autostart": false} v config.json.
+"%VPY%" -c "import json,sys;c=json.load(open('config.json',encoding='utf-8'));o=c.get('ollama',{});sys.exit(0 if o.get('autostart',True) else 1)" >nul 2>&1
+if errorlevel 1 goto skip_ollama
 where ollama >nul 2>&1 && (
-    tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /i "ollama.exe" >nul || start "" /min ollama serve
+    tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /i "ollama.exe" >nul || (
+        start "" /min ollama serve
+        set "OLLAMA_OURS=1"
+    )
 )
+:skip_ollama
 
 :: ---------- start HandsPC (tools: web search etc.) if present ----------
-:: скрытый запуск (без окна консоли): раньше start /min плодил окно,
-:: которое приходилось закрывать руками. Если порт 8767 уже занят -
-:: HandsPC уже работает, второй не поднимаем. Логи -> logs\handspc.log
-:: HandsPC переехал ВНУТРЬ проекта (2026-07-25): %~dp0HandsPC. Старое место
-:: (..\HandsPC, рядом с Саикой) поддерживаем как запасное — чтобы у тех, кто
-:: ещё не перенёс папку, всё продолжало работать без правок.
+:: skrytyy zapusk (bez okna konsoli): ranshe start /min plodil okno,
+:: kotoroe prihodilos zakryvat rukami. Esli port 8767 uzhe zanyat -
+:: HandsPC uzhe rabotaet, vtoroy ne podnimaem. Logi -> logs\handspc.log
+:: HandsPC pereehal VNUTR proekta (2026-07-25): %~dp0HandsPC. Staroe mesto
+:: (..\HandsPC, ryadom s Saikoy) podderzhivaem kak zapasnoe - chtoby u teh, kto
+:: esche ne perenes papku, vse prodolzhalo rabotat bez pravok.
 set "HANDS=%~dp0HandsPC\run.bat"
 if not exist "%HANDS%" set "HANDS=%~dp0..\HandsPC\run.bat"
 if exist "%HANDS%" (
-    netstat -ano | findstr ":8767 " | findstr "LISTENING" >nul 2>&1 || ^
-    powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%HANDS%\" > \"%~dp0logs\handspc.log\" 2>&1'"
+:: KARETKA V KONTSE STROKI + CRLF = SLOMANNAYA KOMANDA (2026-08-14).
+:: V logе vladeltsa: "" ne yavlyaetsya vnutrenney ili vneshney komandoy.
+:: Prichina: "^" v kontse stroki ekraniroval NE perevod stroki, a CR,
+:: i cmd poluchal "|| <CR>" - operator bez pravoy chasti. HandsPC pri
+:: etom voobsche ne zapuskalsya. Bez perenosa - bez problem.
+    netstat -ano | findstr ":8767 " | findstr "LISTENING" >nul 2>&1
+    if errorlevel 1 powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%HANDS%\" > \"%~dp0logs\handspc.log\" 2>&1'"
 )
 
 :: ---------- top up per-feature dependencies ----------
@@ -120,9 +141,9 @@ set RESTARTS=0
 :run
 echo.
 echo [*] Starting Saika... (Ctrl+C to exit)
-:: открыть вкладку только на первом запуске; при рестарте после падения
-:: уже открытая вкладка сама переподключится и обновится (по BOOT_ID),
-:: новую не плодим — иначе серия крэшей засыпает браузер вкладками
+:: otkryt vkladku tolko na pervom zapuske; pri restarte posle padeniya
+:: uzhe otkrytaya vkladka sama perepodklyuchitsya i obnovitsya (po BOOT_ID),
+:: novuyu ne plodim - inache seriya kreshey zasypaet brauzer vkladkami
 if %RESTARTS%==0 (set "SAIKA_AUTO_OPEN=1") else (set "SAIKA_AUTO_OPEN=0")
 "%VPY%" -m server.main
 set CODE=%errorlevel%
@@ -136,9 +157,12 @@ if %RESTARTS% GTR 3 (
 echo.
 echo [!] Saika crashed (code %CODE%). Beymax is looking into it... (attempt %RESTARTS%/3)
 "%VPY%" setup\doctor.py --fix
-:: обычный осмотр не помог? зовём ИИ-Беймакса (локальная LLM читает логи)
+:: obychnyy osmotr ne pomog? zovem II-Beymaksa (lokalnaya LLM chitaet logi)
 if %RESTARTS% GEQ 2 "%VPY%" setup\ai_doctor.py --auto
 goto run
 
 :end
+:: gasim to, chto zapustili sami: Ollama i okno s modelyu na stole
+if defined OLLAMA_OURS taskkill /F /IM ollama.exe >nul 2>&1
+"%VPY%" -c "import sys; sys.path.insert(0,'.'); from server import desk_avatar as d; d.kill_all()" >nul 2>&1
 endlocal

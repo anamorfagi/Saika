@@ -216,6 +216,83 @@ _SKEL_FIX = (("ch", "h"), ("sh", "s"), ("zh", "z"), ("ph", "f"),
              ("y", "i"), ("w", "v"), ("j", "i"))
 
 
+# ═══ СЛЫШУ КРИВО — УЗНАЮ ВСЁ РАВНО (2026-08-14) ═══
+# Владелец: «что нужно сделать, чтобы она могла анализировать косяки микро и
+# логично исправлять неточности, даже если криво всё сказали».
+#
+# Живой замер, с которого всё началось:
+#     _score("Genshin Impact", "гентион импакт") = 31
+#     _score("Genshin Impact", "генжон факт")    = 26   при пороге 45
+# То есть распознавание речи услышало «гентион», транслит дал «gention», а
+# скелет согласных gntn против gnshn — уже другое слово. Формально верно,
+# по делу — провал: человек сказал понятно, ошиблась цепочка.
+#
+# Лечим фонетикой, а не порогами. Шипящие и свистящие в русской речи через
+# микрофон путаются постоянно (ш/с/ж/з/щ/ч), звонкие глохнут (д/т, г/к,
+# б/п, в/ф), гласные съедаются. Приводим оба имени к «звуковому скелету»,
+# где эти различия стёрты, и сравниваем уже его.
+#
+# ВАЖНО: эта оценка только ПОДНИМАЕТ результат, никогда не опускает. Старый
+# счёт остаётся как есть — он рабочий, и ломать его ради нового нельзя.
+_PHON_MAP = str.maketrans({
+    # шипящие и свистящие — в один звук
+    "ш": "s", "щ": "s", "ж": "s", "з": "s", "с": "s", "ц": "s", "ч": "s",
+    "j": "s", "z": "s", "c": "s",
+    # звонкие/глухие пары
+    "д": "t", "т": "t", "d": "t",
+    "г": "k", "к": "k", "х": "k", "g": "k", "q": "k",
+    "б": "p", "п": "p", "b": "p",
+    "в": "f", "ф": "f", "v": "f", "w": "f",
+    # прочее
+    "л": "l", "р": "r", "м": "m", "н": "n", "й": "i", "y": "i",
+})
+_VOWELS = "аеёиоуыэюяaeiou"
+
+
+def _phon(t: str) -> str:
+    """Звуковой скелет: то, что реально слышно, без различимых мелочей."""
+    t = translit(str(t or "").lower())
+    t = "".join(ch for ch in t if ch.isalnum())
+    t = t.translate(_PHON_MAP)
+    out = []
+    for ch in t:
+        if ch in _VOWELS:
+            continue                      # гласные съедаются первыми
+        if out and out[-1] == ch:
+            continue                      # сдвоенные согласные — один звук
+        out.append(ch)
+    return "".join(out)
+
+
+def _ratio(a: str, b: str) -> float:
+    """Похожесть 0..1 без внешних библиотек (расстояние Левенштейна)."""
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+    return 1.0 - prev[-1] / max(len(a), len(b))
+
+
+def phon_score(name: str, query: str) -> int:
+    """Насколько похоже НА СЛУХ, 0..100. Только как добавка к _score."""
+    pn, pq = _phon(name), _phon(query)
+    if not pn or not pq:
+        return 0
+    r = _ratio(pn, pq)
+    # длинное имя, короткий запрос: «геншин» против «genshin impact» —
+    # человек назвал часть, и это нормально
+    if len(pq) >= 3 and pq in pn:
+        r = max(r, 0.86)
+    return int(r * 100)
+
+
 def _skeleton(t: str) -> str:
     v = translit(t)
     for a, b in _SKEL_FIX:
@@ -534,7 +611,10 @@ def launch(query: str) -> str:
         hits = find_app(q)
     # _score сравнивает с нижним регистром — «Telegram» с большой буквы
     # иначе тихо проигрывает собственному ярлыку (стенд 2026-07-29)
-    scored = [(a, _score(a["name"], q.lower())) for a in hits]
+    # берём лучшее из двух: буквенного счёта и фонетического. Второй
+    # вытягивает случаи, где микрофон услышал «гентион» вместо «genshin»
+    scored = [(a, max(_score(a["name"], q.lower()),
+                      phon_score(a["name"], q))) for a in hits]
     if scored:
         best, bs = scored[0]
         second = scored[1][1] if len(scored) > 1 else 0
@@ -570,6 +650,21 @@ def launch(query: str) -> str:
             continue
         seen.add(_norm(it["name"]))
         cands.append({"name": it["name"], "path": it["path"], "score": s})
+    # 3б. ПОИСК ПО ДИСКАМ (2026-08-14). Если ни «Пуск», ни реестр, ни
+    # запущенные процессы ничего не дали — идём смотреть туда, где программы
+    # и игры лежат физически: Program Files, библиотеки Steam/Epic/HoYoPlay
+    # на всех дисках, папки «games»/«игры». Медленно ровно один раз: найденное
+    # тут же уходит в память, и следующий запрос уже мгновенный.
+    if not cands:
+        try:
+            from server import app_finder
+            deep = app_finder.search(q)
+            if deep:
+                log.info("Поиск по дискам нашёл для «%s»: %s", q,
+                         ", ".join(d["name"] for d in deep))
+                cands = deep
+        except Exception as e:
+            log.debug("поиск по дискам не вышел: %s", e)
     cands.sort(key=lambda c: -c["score"])
     if not cands:
         # ПОДСМАТРИВАНИЕ (2026-07-29): не знаю — так покажи. Две минуты
@@ -579,8 +674,10 @@ def launch(query: str) -> str:
                 mem.watch(q)
             except Exception as e:
                 log.debug("вотчер не встал: %s", e)
-        return (f"Не нашла «{q}» ни в «Пуске», ни в реестре, ни среди "
-                f"запущенных программ. Запусти её сам ПРЯМО СЕЙЧАС — я две "
+        return (f"Не нашла «{q}»: смотрела в «Пуске», в реестре, среди "
+                f"запущенных программ и по дискам (Program Files, "
+                f"библиотеки Steam/Epic/HoYoPlay, папки с играми). "
+                f"Запусти её сам ПРЯМО СЕЙЧАС — я две "
                 "минуты смотрю за системой, увижу, что это за программа, и "
                 "запомню навсегда. Или скажи мне путь к ней — тоже запомню.")
     if not mem:
@@ -862,10 +959,14 @@ def _match(query: str):
     # объясняет). Срезаем командные глаголы и предлоги: если после этого
     # остаётся вменяемое имя — ищем по нему, если нет — честно говорим,
     # что имени в просьбе не было.
-    if len(q.split()) > 2:
+    # служебные слова («окно», «программу», «на», «в») в имени не нужны
+    # НИКОГДА (2026-08-14: match='окно Discorder' -> «окно Discorder найти
+    # не удалось»). Раньше срез включался только с трёх слов и такие пары
+    # проходили мимо.
+    if len(q.split()) > 1:
         cut = _CMD_HEAD.sub("", q).strip(" ,.!?-")
         if cut and len(cut.split()) <= 4:
-            q = cut
+            q = " ".join(cut.split())
     if not q:
         return None
     ws = windows()
@@ -1060,6 +1161,10 @@ def _resolve_pronoun(query: str) -> str:
     return q
 
 
+_PRON_ONLY = re.compile(r"(его|её|ее|их|это|этот|эту|тот|та|то|он|она|"
+                        r"окно|программу|приложение)\s*")
+
+
 def _force_front(hwnd) -> bool:
     """ВЫВЕСТИ ОКНО ВПЕРЁД ПО-НАСТОЯЩЕМУ (2026-08-14).
 
@@ -1137,6 +1242,16 @@ def _force_front(hwnd) -> bool:
 
 def window_focus(query: str) -> str:
     query = _resolve_pronoun(query)
+    # «покажи его» — предмет берём со стола разговора, если своей памяти
+    # о последнем окне не хватило (2026-08-14)
+    if query and _PRON_ONLY.fullmatch(query.strip().lower()):
+        try:
+            from server import focus as _focus
+            _subj = _focus.subject()
+            if _subj:
+                query = _subj
+        except Exception:
+            pass
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
@@ -1256,9 +1371,29 @@ def minimize_all(keep: str = "") -> str:
     # кликом. Просьба «сверни всё» означает ровно всё, иначе стол не
     # чистый и человек доделывает руками. Правило теперь такое: СВОРАЧИВАТЬ
     # можно всё, ЗАКРЫВАТЬ себя нельзя (см. window_close).
+    # …НО ТОЛЬКО ТЕ, КОТОРЫЕ ЧЕЛОВЕК СМОЖЕТ ВЕРНУТЬ (2026-08-14, владелец:
+    # «после сворачивания её окно не смогло нормально развернуться»). Окно
+    # модели на столе сделано без строки в панели задач (Qt.Tool) — это
+    # правильно, она не программа, с которой переключаются. Но у свёрнутого
+    # окна без строки в панели задач НЕТ НИ ОДНОГО способа вернуться:
+    # ни кликом, ни Alt+Tab, ни «развернуть всё». Оно просто исчезает.
+    # Правило общее, а не про аватар: чего человек не может достать
+    # обратно — того мы и не прячем.
+    WS_EX_TOOLWINDOW = 0x00000080
+    GWL_EXSTYLE = -20
+
+    def _has_taskbar_button(hwnd) -> bool:
+        try:
+            gwl = getattr(user32, "GetWindowLongPtrW", None) or \
+                user32.GetWindowLongW
+            return not (int(gwl(hwnd, GWL_EXSTYLE)) & WS_EX_TOOLWINDOW)
+        except Exception:
+            return True            # не смогли узнать — считаем обычным
+
     todo = [w for w in windows(include_minimized=False)
             if not (k and (k in w["title"].lower()
-                           or k in (w["proc"] or "").lower()))]
+                           or k in (w["proc"] or "").lower()))
+            and _has_taskbar_button(w["hwnd"])]
     for w in todo:
         try:
             user32.ShowWindow(w["hwnd"], 6)

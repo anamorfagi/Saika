@@ -206,6 +206,25 @@ class Encoder:
             log.info("Отпечаток голоса: ECAPA-TDNN на CPU, 192 измерения")
         except Exception as e:
             self.last_error = str(e)[:200]
+            # ВТОРОЙ ЗАХОД, ЕСЛИ ПАКЕТ ЗАСТАЛИ НА ПОЛПУТИ (2026-08-14,
+            # живой лог: «partially initialized module 'speechbrain' has
+            # no attribute utils»). Это не «нет пакета» и не «нет места» —
+            # это гонка: кто-то импортировал speechbrain одновременно с
+            # нами. Сдаваться навсегда из-за секундного совпадения нельзя:
+            # ценой был отпечаток голоса на 68 признаках вместо 192, то
+            # есть переставший узнавать владельца слух. Чистим следы
+            # неудачного импорта и пробуем ещё раз — ровно один.
+            if ("partially initialized" in self.last_error
+                    and not getattr(self, "_retried", False)):
+                self._retried = True
+                import sys
+                for nm in [n for n in list(sys.modules)
+                           if n == "speechbrain" or n.startswith("speechbrain.")]:
+                    sys.modules.pop(nm, None)
+                log.info("Отпечаток голоса: speechbrain застали на полпути "
+                         "— пробую ещё раз")
+                self._tried = False
+                return self.warmup()
             log.info("Отпечаток голоса: ECAPA недоступна (%s) — "
                      "работаю на лёгких признаках", self.last_error)
         return self.backend

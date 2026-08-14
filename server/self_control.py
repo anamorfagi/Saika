@@ -152,6 +152,40 @@ def card_make(args) -> str:
     return cards.make(str((args or {}).get("who", "")))
 
 
+SCHEMAS += [
+    {"type": "function", "function": {
+        "name": "avatar_window",
+        "description": ("Отдельное окно с твоей 3D-моделью на рабочем "
+                        "столе. open=true открыть, false закрыть; "
+                        "top — держать поверх всех окон; lock — замок, "
+                        "чтобы окно нельзя было случайно сдвинуть. Зови на "
+                        "«открой своё окно», «встань на стол», «зафиксируй "
+                        "окно», «поверх всех», «убери окно»."),
+        "parameters": {"type": "object", "properties": {
+            "open": {"type": "boolean"},
+            "top": {"type": "boolean"},
+            "lock": {"type": "boolean"}},
+            "required": []}}},
+]
+
+
+def avatar_window(args) -> str:
+    from server import desk_avatar as _da
+    a = args or {}
+    patch = {}
+    if "open" in a:
+        patch["on"] = bool(a["open"])
+    for k in ("top", "lock"):
+        if k in a:
+            patch[k] = bool(a[k])
+    if not patch:
+        st = _da.state()
+        return (f"окно {'открыто' if st['on'] else 'закрыто'}, "
+                f"поверх всех: {'да' if st['top'] else 'нет'}, "
+                f"замок: {'на месте' if st['lock'] else 'снят'}")
+    return _da.apply(patch).get("note") or "готово"
+
+
 NAMES = {s["function"]["name"] for s in SCHEMAS}
 
 
@@ -311,4 +345,5 @@ CALLS = {"unload_memory": unload_memory, "usage_report": usage_report,
          "guests_may_talk": guests_may_talk,
          "remember_my_voice": remember_my_voice,
          "card_list": card_list, "card_wear": card_wear,
-         "card_off": card_off, "card_make": card_make}
+         "card_off": card_off, "card_make": card_make,
+         "avatar_window": avatar_window}

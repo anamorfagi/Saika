@@ -54,6 +54,7 @@ class _State:
         self.enroll_name = ""
         self.enroll_buf: list = []
         self.enroll_need = 24
+        self.enroll_paused = False
         self.last_event: dict = {}
         self.new_points = 0
         self.refitting = False
@@ -196,6 +197,30 @@ def who_now(max_age=2.5):
         return "", 0.0
     ev = S.last_event or {}
     return S.who_last, float(ev.get("conf", 0.0))
+
+
+def near_now(max_age=2.5) -> tuple:
+    """КТО БЛИЖЕ ВСЕГО, даже если порог не взят -> (имя, похожесть).
+
+    2026-08-14, владелец: «меня как раз и раздражает то, что система должна
+    была понять, что на заднем плане заговорил ещё один голос, и не должна
+    была пропустить её слова в контекст». Ключевое слово — ПОНЯТЬ. Строгий
+    ответ who_now молчит, пока не уверена; но «не уверена, кто это» и «это
+    точно не владелец» — разные вещи, и вторая уже повод не отвечать.
+    Лидер сравнения знает и то, и другое."""
+    ev = S.last_event or {}
+    if not ev or time.monotonic() - S.who_ts > max_age:
+        return "", 0.0
+    return str(ev.get("near") or ev.get("who") or ""), float(ev.get("sim", 0))
+
+
+def owner_marked() -> bool:
+    """Отмечен ли владелец в реестре. Без него ВСЯ защита от чужих голосов
+    не работает — и это надо говорить вслух, а не молча пропускать."""
+    try:
+        return any(v.get("owner") for v in (S.reg.speakers or {}).values())
+    except Exception:
+        return False
 
 
 def room(window_s: float = 180.0):
@@ -454,13 +479,26 @@ def enroll_start(name: str, need: int = 24):
     return {"ok": True, **status()}
 
 
+def enroll_pause(on: bool = True):
+    """ПАУЗА ДИКТОФОНА (2026-08-14, просьба владельца: «сделай диктофон
+    записать голос-референс: стоп, пауза»). Запись эталона идёт из живого
+    потока микрофона, и остановить её иначе как выбросив набранное было
+    нечем. Пауза не трогает набранное — просто перестаёт брать новое:
+    откашлялся, ответил кому-то, вернулся и продолжил."""
+    S.enroll_paused = bool(on)
+    _emit(_enroll_event())
+    return {"ok": True, "paused": S.enroll_paused, **status()}
+
+
 def enroll_cancel():
+    S.enroll_paused = False
     S.enroll_name, S.enroll_buf = "", []
     _emit(_enroll_event())
     return {"ok": True, **status()}
 
 
 def enroll_finish():
+    S.enroll_paused = False
     name, buf = S.enroll_name, S.enroll_buf
     S.enroll_name, S.enroll_buf = "", []
     if not name or len(buf) < 4:
@@ -583,7 +621,8 @@ def _emit(evt: dict):
 
 def _enroll_event():
     return {"type": "voiceprint_enroll", "name": S.enroll_name,
-            "got": len(S.enroll_buf), "need": S.enroll_need}
+            "got": len(S.enroll_buf), "need": S.enroll_need,
+            "paused": bool(getattr(S, "enroll_paused", False))}
 
 
 class _Vad:
@@ -822,7 +861,7 @@ def _process(win: np.ndarray, rms: float):
     who, sim, conf, near = S.reg.match(emb)
     xy = S.proj.transform(emb)[0]
 
-    if S.enroll_name:
+    if S.enroll_name and not getattr(S, "enroll_paused", False):
         S.enroll_buf.append(emb)
         who = S.enroll_name                # свои же точки красим сразу
         _emit(_enroll_event())

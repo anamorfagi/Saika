@@ -511,6 +511,16 @@ class Denoiser:
                 "gate", "off"]
 
     def _ensure(self):
+        # ПОД ЗАМКОМ (2026-08-14, живой лог владельца: две одинаковые
+        # строки «Шумодав: движок noisereduce» в одну и ту же
+        # миллисекунду). Замок у объекта был, а сюда его не поставили —
+        # и два потока (микрофон и браузерный путь) поднимали движок
+        # одновременно: двойная загрузка, двойная запись в лог и лишний
+        # экземпляр модели в памяти.
+        with self._lock:
+            return self._ensure_locked()
+
+    def _ensure_locked(self):
         want = str(CFG.get("denoise.engine", "off"))
         if want not in ENGINES:
             want = "off"
