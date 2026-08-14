@@ -1164,6 +1164,22 @@ def _describe(url: str, question: str) -> str:
         log.debug("доп. зрячие не нашлись: %s", e)
     errs = []
     for backend, model in tries:
+        # У ВЫКЛЮЧЕННОГО ДВИЖКА ГЛАЗА НЕ ОДАЛЖИВАЮТ (2026-08-15, живой
+        # «БЛЯ ЧЕ ПРОИСХОДИТ»: облачные зрячие легли, следующей зрячей
+        # оказалась локальная gemma — и ask_specific ХОЛОДНО поднял весь
+        # llama.cpp с моделью на 4.7 ГБ поверх запущенного Genshin. VRAM
+        # 94%, GPU 99%, сторож железа кричит. Всё ради одного кадра.
+        # Правило: локальную модель можно спрашивать, только если она УЖЕ
+        # в памяти; запускать движок ради подглядки нельзя — этот запуск
+        # стоит дороже, чем честное «сейчас посмотреть некому».)
+        if backend in ("llamacpp", "locallm", "ollama", "lmstudio"):
+            try:
+                if model not in set(llm.loaded_models()):
+                    errs.append(f"{model}: не загружена (ради кадра движок "
+                                "не поднимаю)")
+                    continue
+            except Exception:
+                continue
         try:
             txt = llm.ask_specific(backend, model,
                                    [{"role": "user", "content": q}], image=url)
