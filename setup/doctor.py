@@ -328,6 +328,22 @@ def _from_black_box(fix) -> bool:
         return False
     name = where.split("\t")[0]
     print(f"[!] Прошлый запуск умер здесь: {name}")
+    # ИСТОРИЯ ПРОЕКТА — ВСЛУХ (2026-08-14, просьба владельца). Беймакс
+    # должен видеть, что до этого система поднималась нормально сотни раз:
+    # тогда он чинит ПОСЛЕДНЕЕ изменение, а не «всё вообще».
+    try:
+        from server import repairs
+        repairs.note_crash()
+        hist = repairs.summary()
+        if hist["healthy"]:
+            print(f"    (до этого здоровых запусков: {hist['healthy']}, "
+                  f"падений: {hist['crashes']})")
+        for f in repairs.tried_before(name):
+            if f.get("worked") is False:
+                print(f"    ! это уже лечили так: {f['action']} — НЕ "
+                      "помогло, пробую иначе")
+    except Exception:
+        pass
     if not fix:
         return True
     from server.config import CFG
@@ -337,6 +353,11 @@ def _from_black_box(fix) -> bool:
               "процесс нативно. Выключил его: stt.draft = false. Точный "
               "движок работает как работал, пропадёт только серый текст "
               "по ходу фразы. Вернуть: stt.draft = true.")
+        try:
+            from server import repairs as _rp
+            _rp.note_fix("обвал в черновике Vosk", "выключил stt.draft")
+        except Exception:
+            pass
         return True
     if name.startswith("слух:"):
         eng = name.split(":", 1)[1].strip().split(".")[0]
