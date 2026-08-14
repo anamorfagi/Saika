@@ -2083,7 +2083,37 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
 
 
 def chat_once(messages, max_len=4000) -> str:
-    """Нестриминговый вызов — для суммаризации памяти."""
+    """Нестриминговый вызов — для СЛУЖЕБНЫХ дел: суммаризация памяти,
+    осмотр Беймакса, сводки диалога, решения агентного цикла.
+
+    НЕ ЧЕРЕЗ МОДЕЛЬ СОБЕСЕДНИКА (2026-08-15). Раньше это шло через
+    chat_stream, то есть через ТУ ЖЕ модель, что ведёт разговор. У
+    бесплатного mistral лимит порядка запроса в секунду — и его съедали
+    внутренние жильцы: Беймакс на старте (14 тысяч токенов!), сжатие
+    памяти каждые полчаса, сводка после каждого ответа. Разговору
+    оставались 429-е, фолбэк уводил на другую модель, у той свой характер
+    — владелец: «они просто беспорядочно переключаются… всё делается не
+    чтобы ускорить ответ, а наоборот». Он прав: служба объедала беседу.
+    Теперь службе — другой здоровый облачный мозг, НЕ тот, что говорит с
+    человеком. Некому — тогда по-старому, это редкость."""
+    try:
+        from server.llm import brains
+        cur_m = CFG.get("llm.model", "")
+        for c in brains.ladder():
+            if c["backend"] != "cloud" or c["model"] == cur_m:
+                continue
+            if brains.is_sick(c["backend"], c["model"]):
+                continue
+            try:
+                txt = ask_specific(c["backend"], c["model"], messages,
+                                   max_len=max_len)
+                if txt.strip():
+                    return txt
+            except Exception as e:
+                log.debug("служебный мозг %s не ответил: %s", c["model"], e)
+                continue
+    except Exception as e:
+        log.debug("выбор служебного мозга не сложился: %s", e)
     return "".join(chat_stream(messages))[:max_len]
 
 
