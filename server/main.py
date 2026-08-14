@@ -6980,6 +6980,28 @@ def main():
         broadcast_event({"type": "guard", "level": "warn",
                          "temp": g.get("temp"),
                          "vram": round(g.get("vram_frac", 0) * 100)})
+        # БЕСХОЗНЫЙ ДВИЖОК ПРИ ТЕСНОЙ ПАМЯТИ ВЫГРУЖАЕМ САМИ (2026-08-15,
+        # живой вечер, дословно «я ебал эту хуйню»: зрение подняло
+        # llama.cpp c gemma на 5.3 ГБ поверх Genshin, VRAM 94%, слух начал
+        # ронять фразы — «Распознавание не догоняет» девять раз подряд, —
+        # а сторож при этом честно КРИЧАЛ «железо на пределе» и ничего не
+        # делал: до аварийного порога чуть-чуть не дотягивало. Правило:
+        # предупреждение + разговором правит облако + локальный движок
+        # никем не занят = движок выгружается сам, тихо. Голос и слух
+        # важнее запаски, которой никто не пользуется.
+        try:
+            if CFG.get("llm.backend") == "cloud"                     and CFG.get("guard.auto_free_engine", True):
+                from server.llm import llamacpp as _lcp
+                r = _lcp.unload()
+                if r:
+                    log.warning("VRAM на пределе, разговором правит облако "
+                                "— выгрузила простаивающий llama.cpp: %s", r)
+                    broadcast_event({"type": "problem", "component": "железо",
+                                     "text": "память видеокарты была на "
+                                             "пределе — выгрузила запасной "
+                                             "движок, он никем не был занят"})
+        except Exception as e:
+            log.debug("автовыгрузка движка: %s", e)
     def _guard_crit(g):
         broadcast_event({"type": "guard", "level": "critical",
                          "temp": g.get("temp"),
