@@ -8511,6 +8511,20 @@ eqFrame();
        только в стиле, не трогая сохранённое число: станет просторнее
        (развернул окно, свернул спектр) — любимая высота вернётся сама. */
     const MINMAP = 110;
+    /* ЭТА ПОДГОНКА ЕДВА НЕ СТАЛА ПЕТЛЁЙ (2026-08-15, поймано в тот же час).
+       Первая версия слушала ResizeObserver на самой панели и умела не
+       только срезать карту, но и возвращать её обратно, когда места
+       «снова хватает». Оба решения были ошибкой, и вместе они дают
+       классический layout-thrash: срезали карту -> панель пересчиталась ->
+       наблюдатель разбудил подгонку -> места стало больше -> вернули
+       высоту -> опять тесно -> срезали... шестьдесят раз в секунду, и
+       браузер жрёт процессор на ровном месте. Владелец это увидел сразу:
+       «какого хера у меня проц загружается на 70 и выше», «при разговоре
+       начала подвисать» — при выключенной локальной ЛЛМ.
+       Правила теперь такие: (1) наблюдателя за панелью нет вообще, будим
+       подгонку только по внешним событиям — размер окна и появление новых
+       карточек; (2) высоту только СРЕЗАЕМ, обратно её вернёт двойной клик
+       по грипу; (3) шевелимся, лишь когда разница больше 8 пикселей. */
     let fitting = false;
     const fit = () => {
       if(fitting) return; fitting = true;
@@ -8518,33 +8532,21 @@ eqFrame();
         fitting = false;
         const pane = $id('vp-pane');
         if(!pane || !pane.offsetParent) return;
-        // тесно — включаем компактный режим ДО замеров: он сам освобождает
-        // около сотни пикселей, и карте достаётся больше, чем при простом
-        // срезании
         pane.classList.toggle('short', pane.clientHeight < 740);
         const cur = mp.getBoundingClientRect().height;
-        const others = pane.scrollHeight - cur;
-        const room = pane.clientHeight - others - 6;
-        const want = (() => { try{ return parseInt(localStorage[KEY],10)||0; }
-                              catch(e){ return 0; } })();
-        if(room >= MINMAP && cur > room + 2){
+        const room = pane.clientHeight - (pane.scrollHeight - cur) - 6;
+        if(room >= MINMAP && cur > room + 8){
           wr.style.flex = '0 0 auto';
           mp.style.minHeight = mp.style.height = Math.floor(room) + 'px';
-        }else if(room > cur + 12 && want && want > cur){
-          // места снова хватает — возвращаем то, что человек выставил сам
-          wr.style.flex = '0 0 auto';
-          mp.style.minHeight = mp.style.height =
-            Math.min(want, Math.floor(room)) + 'px';
         }
       });
     };
     addEventListener('resize', fit);
     try{
-      new ResizeObserver(fit).observe($id('vp-pane') || document.body);
       const cards = $id('vp-cards');
       if(cards) new MutationObserver(fit).observe(cards, {childList:true});
     }catch(e){}
-    setTimeout(fit, 120); setTimeout(fit, 600);
+    setTimeout(fit, 150); setTimeout(fit, 700);
   })();
 
   function mark(){
