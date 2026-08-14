@@ -137,6 +137,26 @@
   #sysbar .legend{margin-top:16px;font-size:11px;line-height:1.9;
     border-top:1px solid rgba(255,255,255,.08);padding-top:12px;
     color:rgba(233,233,237,.6)}
+  /* ПЛОТНЫЙ РЕЖИМ КОЛОНКИ (2026-08-15). Владелец: «сделай ты все эти
+     полоски отображаемыми на 100 приближении». Считаем: заголовок,
+     четыре строки с полосками, плашка видеокарты, список процессов на
+     семь строк, легенда в три строки, пять кнопок и блок самочувствия —
+     на 100% масштаба это под 900 пикселей при доступных ~660. Прокрутка
+     тут не ответ: полоски загрузки смотрят мельком, а не листают.
+     Поэтому при низкой колонке ужимаем отступы (они и съедают больше
+     всего: 12-16 пикселей между каждой строкой) и прячем то, что не
+     «полоска»: список процессов и легенду весов — они открываются по
+     клику на плашке видеокарты. Цифры и полоски остаются все. */
+  #sysbar.dense{padding:10px 13px;gap:0}
+  #sysbar.dense .hdr{margin-bottom:6px}
+  #sysbar.dense .row{margin-top:6px}
+  #sysbar.dense .sbar{margin:4px 0 1px}
+  #sysbar.dense .gname{margin:8px 0 1px;padding:6px 9px}
+  #sysbar.dense .legend{margin-top:8px;padding-top:7px;line-height:1.5;
+    font-size:10.5px}
+  #sysbar.dense .procs{display:none}
+  #sysbar.dense .legend.weights{display:none}
+  #sysbar.dense button{padding:7px!important;margin-top:5px!important}
   #panic-unload{border-radius:12px!important;padding:9px!important;
     font:12.5px/1 inherit!important;background:rgba(224,101,95,.12)!important;
     border:1px solid rgba(224,101,95,.4)!important;color:#f0a9a4!important;
@@ -2266,14 +2286,14 @@ async function pollSystem(){
       // раскладка по процессам: одно число «сколько» не отвечает на вопрос
       // «почему» — отвечает список, кто именно ест
       if(g.procs && g.procs.length){
-        h+='<div class="legend" style="margin:2px 0 4px">'+
+        h+='<div class="legend procs" style="margin:2px 0 4px">'+
           g.procs.map(p=>`${esc2(p.who)} — ${(p.mb/1024).toFixed(1)} ГБ`)
                  .join('<br>')+'</div>';
       }
       if(g.util!=null) h+=sbar('GPU', g.util);
       if(g.temp!=null) h+=`<div class="row"><span>Температура</span><span>${g.temp}°C</span></div>`;
     }
-    h+=`<div class="legend">Вес моделей для этого ПК:<br>
+    h+=`<div class="legend weights">Вес моделей для этого ПК:<br>
       <span style="color:var(--ok)">●</span> лёгкая — целиком в VRAM<br>
       <span style="color:var(--warn)">●</span> впритык — может тормозить<br>
       <span style="color:var(--err)">●</span> тяжёлая — уйдёт в ОЗУ, медленно</div>`;
@@ -2286,6 +2306,14 @@ async function pollSystem(){
       title="Выгрузить из памяти ВСЕ модели (слух, голос, LLM). Сайка продолжит работать, нужное подгрузится заново по порядку.">
       🧹 Выгрузить всё из памяти</button>`;
     $('#sysbar').innerHTML=h;
+    // ПЛОТНЫЙ РЕЖИМ — ПО ВЫСОТЕ КОЛОНКИ, А НЕ ПО ЕЁ СОДЕРЖИМОМУ
+    // (2026-08-15). Мерить переполнение и по нему сжимать нельзя: сжатие
+    // убирает переполнение, режим выключается, переполнение возвращается —
+    // и так шестьдесят раз в секунду. На этих граблях я сегодня уже
+    // прокатился с картой голосов и посадил владельцу процессор. Высота
+    // колонки от её содержимого не зависит, петли нет.
+    { const sb=$('#sysbar');
+      if(sb) sb.classList.toggle('dense', sb.clientHeight < 780); }
     const pb=$('#panic-unload');
     if(pb) pb.onclick=async()=>{
       if(!confirm('Выгрузить ВСЕ модели из памяти? Сайка останется работать, но следующая фраза будет ждать загрузку заново.')) return;
