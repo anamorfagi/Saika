@@ -3483,8 +3483,13 @@ async function pollNet(){
       txt.textContent = p+'мс'+(n.hf?'':' · HF✗');
       // показываем ПОИМЁННО, кто ответил и кто нет: «нет сети» на одном
       // упавшем пробнике — это ложная тревога, владелец её уже ловил
+      const diag=(n.diagnosis&&n.diagnosis.human)?'\n\n'+n.diagnosis.human+
+        (n.diagnosis.action?'\n→ '+n.diagnosis.action:''):'';
       $('#net').title='Пинг '+p+'мс · huggingface '+(n.hf?'доступен':'недоступен (модели не качаются)')+
-        '\n'+Object.entries(n.probes||{}).map(([h,v])=>h+': '+(v==null?'не ответил':v+'мс')).join('\n');
+        '\n'+Object.entries(n.probes||{}).map(([h,v])=>h+': '+(v==null?'не ответил':v+'мс')).join('\n')+diag;
+      // часть адресов закрыта провайдером — это не «всё плохо», а жёлтый:
+      // зелёная точка при мёртвом ютубе врала бы не меньше красной
+      if(n.diagnosis&&n.diagnosis.human) dot.style.background='var(--warn)';
     }
   }catch(e){
     const dot=$('#net .nd'); if(dot) dot.style.background='var(--err)';

@@ -530,10 +530,20 @@ def net_status():
     alive = [v for v in pings.values() if v is not None]
     ping = min(alive) if alive else None
     hf = pings.get("huggingface.co") is not None
-    return {"online": bool(alive), "ping_ms": ping, "hf": hf,
-            # кто именно не ответил — чтобы «нет сети» можно было проверить,
-            # а не гадать (видно в подсказке индикатора)
-            "probes": {k: v for k, v in pings.items()}}
+    out = {"online": bool(alive), "ping_ms": ping, "hf": hf,
+           # кто именно не ответил — чтобы «нет сети» можно было проверить,
+           # а не гадать (видно в подсказке индикатора)
+           "probes": {k: v for k, v in pings.items()}}
+    # ПОЛИТИКА СЕТИ (2026-08-15): часть адресов на этом ПК ходит через
+    # обходчик DPI. Без этого знания любой отвал YouTube/Discord Сайка
+    # объясняла «нет интернета» и предлагала чинить не то.
+    try:
+        from server import netpolicy
+        out["bypass"] = netpolicy.state()
+        out["diagnosis"] = netpolicy.explain(out["probes"])
+    except Exception as e:
+        log.debug("политика сети пропущена: %s", e)
+    return out
 
 
 _MD_STRIP_RE = re.compile(r'(\*\*|__|`{1,3}|^\s*#{1,6}\s+|^\s*[-*•]\s+)',

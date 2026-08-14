@@ -206,6 +206,19 @@ _PC_SCHEMAS = [
                       "description": "на сколько изменить, +10 / -10"},
             "mute": {"type": "boolean"}}, "required": []}}},
     {"type": "function", "function": {
+        "name": "net_bypass",
+        "description": ("Состояние обходчика DPI (zapret) и его перезапуск. "
+                        "Зови, когда не открываются YouTube/Discord/"
+                        "huggingface, когда спрашивают «что с сетью», «сеть "
+                        "работает?», «включи/перезапусти запрет». action: "
+                        "status — посмотреть, start — поднять службу, "
+                        "restart — перезапустить. Ставить или настраивать "
+                        "обходчик я не буду: это делает владелец сам."),
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string",
+                       "enum": ["status", "start", "restart"]}},
+            "required": ["action"]}}},
+    {"type": "function", "function": {
         "name": "tab_control",
         "description": ("Вкладки активного окна браузера: open, close, next, "
                         "prev, go (с номером). Работает клавишами, поэтому "
@@ -863,6 +876,10 @@ _MUTATING_INTENT = {
     "volume_set":   r"громк|тише|громче|звук|тихо|погромч|потише|mute|"
                     r"выключи звук|включи звук|убавь|прибавь",
     "tab_control":  r"вкладк|tab|браузер|страниц|перейди на|закрой вкладк",
+    # обходчик DPI: «запрет» тут — имя программы, а не отказ (2026-08-15)
+    "net_bypass":   r"запрет|zapret|обходчик|обход блок|dpi|winws|"
+                    r"что с сетью|сеть работает|не открывается|не грузится|"
+                    r"ютуб|youtube|дискорд|discord|хаггинг|huggingface",
     # ОТКРЫТЬ ПАПКУ — ЭТО ОКНО, А НЕ ПОСЛЕДСТВИЯ (2026-08-14, живой лог:
     # «отказ: пользователь не просил делать это (open_folder)» прилетело
     # посреди её же плана, потому что последней фразой было «закрой
@@ -1799,6 +1816,14 @@ def _call(name: str, arguments) -> str:
             if name == "volume_set":
                 return _pc.volume(percent=a.get("percent"),
                                   delta=a.get("delta"), mute=a.get("mute"))
+            if name == "net_bypass":
+                from server import netpolicy as _np
+                act = str(a.get("action", "status")).lower()
+                if act == "restart":
+                    return _np.restart()
+                if act == "start":
+                    return _np.start()
+                return _np.status_text()
             if name == "tab_control":
                 return _pc.tab(str(a.get("action", "")),
                                int(a.get("index") or 0))
@@ -2026,6 +2051,8 @@ _TOOL_HINTS = {
     "eyes": ("включи глаза", "выключи глаза", "включи зрение", "посмотри"),
     "minimize_all": ("сверни", "убери окна"),
     "volume_set":   ("громк", "звук", "тише", "громче"),
+    "net_bypass":   ("запрет", "zapret", "обходчик", "что с сетью",
+                     "сеть работает", "не открывается ютуб", "дискорд не"),
     "tab_control":  ("вкладк",),
     "web_search":   ("загугли", "найди в интернете", "поищи в", "погугли"),
     # 2026-08-13
