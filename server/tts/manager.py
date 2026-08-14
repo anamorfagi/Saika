@@ -173,18 +173,27 @@ class Qwen3Engine:
                     # впритык — компилируем в default: чуть медленнее на
                     # старте фразы, зато без прожорливых графов и без
                     # «Железо на пределе: VRAM 95%» сразу после загрузки.
-                    _mode = str(cfg.get("compile_mode", "") or "")
-                    if not _mode:
-                        try:
-                            _free = torch.cuda.mem_get_info()[0] / 2 ** 30
-                            _mode = ("reduce-overhead" if _free >= 3.0
-                                     else "default")
-                            if _mode == "default":
-                                log.info("Qwen3-TTS: свободно всего %.1f ГБ "
-                                         "VRAM — компилирую без CUDA-графов "
-                                         "(без пиков памяти)", _free)
-                        except Exception:
-                            _mode = "reduce-overhead"
+                    # CUDA-ГРАФЫ БОЛЬШЕ НЕ ПО УМОЛЧАНИЮ (2026-08-14, живой
+                    # обвал). В логе владельца прямо перед смертью процесса:
+                    #
+                    #   [__cudagraphs] CUDAGraph supports dynamic shapes by
+                    #   recording a new graph for each distinct input size.
+                    #   We have observed 9 distinct sizes.
+                    #   [] Saika crashed (code -1073741819)
+                    #
+                    # -1073741819 — это access violation. Режим
+                    # reduce-overhead включает CUDA-графы, а фразы у живого
+                    # человека каждый раз разной длины: на каждый новый
+                    # размер пишется новый граф, они делят один пул памяти,
+                    # и рано или поздно кто-то пишет в чужое. Выигрыш —
+                    # доли секунды на старте фразы. Цена — падение сервера
+                    # посреди разговора. Обмен невыгодный (PHILOSOPHY §0.5:
+                    # стабильность важнее скорости).
+                    #
+                    # Режим остаётся управляемым: tts.qwen3.compile_mode =
+                    # "reduce-overhead" в config вернёт прежнее поведение
+                    # тому, у кого оно не падает.
+                    _mode = str(cfg.get("compile_mode", "") or "") or "default"
                     self.model.enable_streaming_optimizations(
                         decode_window_frames=cfg.get("decode_window_frames", 80),
                         use_compile=True, use_cuda_graphs=False,
