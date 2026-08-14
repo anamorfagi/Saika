@@ -494,6 +494,41 @@ def crash_guard() -> str:
         return ""
 
 
+def _write_disabled(names) -> None:
+    """Пишем tts.disabled И НА ДИСК, И В СЛЕПОК ПАМЯТИ (2026-08-15).
+    Через CFG.set одного мало: работающая Сайка держит слепок конфига в
+    памяти и при ближайшей записи возвращает старое значение обратно — на
+    этом уже сгорели и положение окна аватара, и правки владельца в
+    tts.disabled, которые «не долетали никогда»."""
+    names = sorted(set(names))
+    try:
+        CFG.set("tts.disabled", list(names))
+    except Exception:
+        pass
+    try:
+        from server.config import CONFIG_PATH as _CP
+        raw = json.loads(_CP.read_text(encoding="utf-8"))
+        raw.setdefault("tts", {})["disabled"] = list(names)
+        _CP.write_text(json.dumps(raw, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+    except Exception as e:
+        log.warning("не смогла записать tts.disabled на диск: %s", e)
+
+
+def forget_strikes(name: str) -> None:
+    """Обнулить счётчик обвалов движка — человек даёт ему новый шанс."""
+    try:
+        st = json.loads(_STRIKES.read_text("utf-8"))
+    except Exception:
+        return
+    if st.pop((name or "").lower(), None) is not None:
+        try:
+            _STRIKES.write_text(json.dumps(st, ensure_ascii=False),
+                                encoding="utf-8")
+        except Exception:
+            pass
+
+
 def note_good(name: str):
     """Движок поднялся — снимаем с него прошлые «страйки»."""
     try:
@@ -573,15 +608,51 @@ class TTSManager:
         return b"".join(chunks), sr
 
     # ---------- ручная загрузка/выгрузка (кнопки в UI) ----------
-    def load_engine(self, name):
+    def load_engine(self, name, by_owner=False):
+        """by_owner=True — это КЛИК ЧЕЛОВЕКА (2026-08-15). Раньше любой
+        путь упирался в tts.disabled одинаково: владелец шесть раз подряд
+        тыкал в qwen3 (лог 20:15-20:23 «прогрев qwen3 после клика:
+        отключён»), Сайка молча отказывала и говорила чужим голосом.
+        Чёрный список ставит автомат — после двух обвалов при загрузке.
+        Это защита от петли автопуска, а не запрет человеку. Явный выбор
+        движка — самое ясное «я хочу этот голос, дай попробовать»: снимаем
+        отключение и страйки и грузим. Автопуск и фолбэк по-прежнему
+        уважают список и мимо отключённого проходят молча."""
         if name not in self.engines:
             raise ValueError(f"Нет такого движка: {name}")
         # отключённый движок (qwen3, роняющий процесс) руками грузить нельзя —
         # иначе нативный краш убьёт сервер
-        if name in set(CFG.get("tts.disabled", [])):
+        # СПИСОК ОТКЛЮЧЁННЫХ ЧИТАЕМ С ДИСКА (2026-08-14, живой тупик:
+        # владелец правит tts.disabled в config.json, чтобы вернуть свой
+        # клон-голос, а работающая Сайка держит слепок конфига в памяти и
+        # при ближайшей записи возвращает его обратно. Правка не долетает
+        # НИКОГДА, пока он не остановит систему — а он про это не знает.
+        # Та же болезнь, что была с положением окна аватара, и лечение то
+        # же: чьё хозяйство, того и правда. Этот список правит человек.)
+        _dis = set(CFG.get("tts.disabled", []) or [])
+        try:
+            import json as _j
+            from server.config import CONFIG_PATH as _CP
+            _raw = _j.loads(_CP.read_text(encoding="utf-8"))
+            _dis = set(((_raw.get("tts") or {}).get("disabled")) or [])
+            _live = CFG.get("tts", {})
+            if isinstance(_live, dict):
+                _live["disabled"] = list(_dis)      # чиним и слепок в памяти
+        except Exception:
+            pass
+        if name in _dis and by_owner:
+            _dis.discard(name)
+            _write_disabled(_dis)
+            forget_strikes(name)
+            log.warning("Голос «%s» был отключён после обвалов, но выбран "
+                        "руками — снимаю отключение и пробую загрузить. "
+                        "Если снова уронит процесс, страж отключит его "
+                        "опять (два обвала подряд).", name)
+        elif name in _dis:
             raise RuntimeError(
                 f"{name} отключён (нативно роняет процесс на этом ПК). "
-                "Убери его из tts.disabled в config.json, если хочешь пробовать.")
+                "Выбери его в списке голосов — по клику я сниму отключение "
+                "и попробую загрузить.")
         try:
             # ЗАГРУЗКА ОЗВУЧКИ — ПОД ТЕМ ЖЕ ЗАМКОМ, ЧТО И ОСТАЛЬНОЙ ТОРЧ
             # (2026-08-14, живой краш: три перезапуска подряд с

@@ -143,12 +143,22 @@ def _synth(text, ref, ref_text, lang, steps):
 @app.post("/tts")
 async def tts(payload: dict):
     if _model is None:
+        # УПАЛА ЗАГРУЗКА — ЭТО НЕ «ЕЩЁ ГРУЖУСЬ» (2026-08-15). Раньше
+        # ответ был один на оба случая: loading=True плюс текст ошибки
+        # сбоку. Сервер смотрел на loading, говорил «OmniVoice ещё
+        # грузит модель» и повторял это вечно — а модель не грузилась
+        # с 13 августа: ImportError HiggsAudioV2TokenizerModel, потому
+        # что transformers подхватывается из основного .venv и он
+        # старее, чем нужно omnivoice. Владелец полтора дня слушал
+        # «греется» вместо «сломано вот здесь, чинится вот так».
+        if _error:
+            return {"error": _error, "loading": False}
         # мгновенный ответ вместо ожидания: сервер уведёт озвучку на
         # следующий движок, а не будет висеть минуты на первой загрузке
         if _loading or not _ready.is_set():
-            if not _loading and _error is None:
+            if not _loading:
                 threading.Thread(target=_load_blocking, daemon=True).start()
-            return {"loading": True, "error": _error}
+            return {"loading": True, "error": None}
     text = str(payload.get("text", "")).strip()
     if not text:
         return {"error": "пустой текст"}

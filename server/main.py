@@ -505,6 +505,7 @@ def baymax():
 def net_status():
     """Пинг/доступность сети для индикатора у имени. Ловит отрубы (в т.ч.
     когда VPN режет соединение): online=false или большой пинг -> сигнал."""
+    import concurrent.futures
     import socket
 
     def probe(host, port=443):
@@ -515,9 +516,24 @@ def net_status():
         except OSError:
             return None
 
-    ping = probe("1.1.1.1")                     # Cloudflare — быстрый общий пинг
-    hf = probe("huggingface.co") is not None    # важно для скачивания моделей
-    return {"online": ping is not None, "ping_ms": ping, "hf": hf}
+    # НЕ ОДИН ПРОБНИК, А НЕСКОЛЬКО (2026-08-15). Раньше вся «сеть» висела
+    # на 1.1.1.1: у российских провайдеров он режется постоянно — и Сайка
+    # рисовала «нет сети» человеку, который в ту же секунду спокойно сидел
+    # на huggingface без всякого VPN. Онлайн — это «дозвонились хоть до
+    # кого-то»; пинг показываем лучший из ответивших, а мимо кого не прошли
+    # — не повод объявлять отсутствие интернета.
+    hosts = ("1.1.1.1", "8.8.8.8", "huggingface.co", "ya.ru")
+    pings = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for host, ms in zip(hosts, pool.map(probe, hosts)):
+            pings[host] = ms
+    alive = [v for v in pings.values() if v is not None]
+    ping = min(alive) if alive else None
+    hf = pings.get("huggingface.co") is not None
+    return {"online": bool(alive), "ping_ms": ping, "hf": hf,
+            # кто именно не ответил — чтобы «нет сети» можно было проверить,
+            # а не гадать (видно в подсказке индикатора)
+            "probes": {k: v for k, v in pings.items()}}
 
 
 _MD_STRIP_RE = re.compile(r'(\*\*|__|`{1,3}|^\s*#{1,6}\s+|^\s*[-*•]\s+)',
@@ -1740,8 +1756,10 @@ async def tts_model(payload: dict):
     action = payload.get("action")
     try:
         if action == "load":
+            # by_owner: кнопка ⬇ — это явная просьба человека, она
+            # снимает автоматическое отключение движка (2026-08-15)
             await asyncio.get_event_loop().run_in_executor(
-                None, tts.load_engine, name)
+                None, lambda: tts.load_engine(name, by_owner=True))
         elif action == "unload":
             tts.unload_engine(name)
         else:
@@ -1819,7 +1837,7 @@ async def select(payload: dict):
                     log.debug("выгрузка %s: %s", _prev, e)
                 try:
                     if _new != "off":
-                        tts.load_engine(_new)
+                        tts.load_engine(_new, by_owner=True)
                 except Exception as e:
                     # ОТКЛЮЧЁННЫЙ ДВИЖОК — ЭТО РЕШЕНИЕ, А НЕ СБОЙ
                     # (2026-08-14). qwen3 сам себя отключил после двух

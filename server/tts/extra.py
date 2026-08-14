@@ -371,7 +371,13 @@ class OmniVoiceEngine:
         import os
         import subprocess
         import time
-        if self._health() is not None:
+        h = self._health()
+        if h is not None:
+            # ЖИВОЙ ВОРКЕР != РАБОЧИЙ ДВИЖОК (2026-08-15). Порт
+            # отвечает, значит «загружено» — так это выглядело, пока
+            # внутри лежал мёртвый импорт. Спрашиваем ещё и модель.
+            if h.get("error"):
+                raise RuntimeError(_omni_cure(str(h["error"])))
             return                      # воркер уже поднят (наш или прошлый)
 
         venv_py = self._venv_python()
@@ -442,10 +448,15 @@ class OmniVoiceEngine:
         r.raise_for_status()
         if r.headers.get("content-type", "").startswith("application/json"):
             j = r.json()
+            # ОШИБКА ГЛАВНЕЕ ФЛАГА ЗАГРУЗКИ: пока проверяли loading
+            # первым, настоящая причина («не собрался импорт») год
+            # молчала под вывеской «ещё греется» (2026-08-15).
+            if j.get("error"):
+                raise RuntimeError(_omni_cure(str(j["error"])))
             if j.get("loading"):
                 raise RuntimeError("OmniVoice ещё грузит модель — "
                                    "озвучиваю другим движком")
-            raise RuntimeError(j.get("error") or "OmniVoice не отдал звук")
+            raise RuntimeError("OmniVoice не отдал звук")
         data, sr = sf.read(io.BytesIO(r.content), dtype="float32")
         if data.ndim > 1:
             data = data.mean(axis=1)
@@ -475,6 +486,30 @@ class OmniVoiceEngine:
     def is_loaded(self):
         h = self._health()
         return bool(h and h.get("model_loaded")) if h else False
+
+
+def _omni_cure(err: str) -> str:
+    """Перевод ошибки воркера на язык, по которому можно чинить.
+
+    Живой случай (13.08.2026, полтора дня «ещё греется»):
+    ImportError: cannot import name 'HiggsAudioV2TokenizerModel' from
+    'transformers' (C:\\AI\\Saika\\.venv\\Lib\\site-packages\\...).
+    Путь в скобках — ОСНОВНОЙ .venv: окружение omni одалживает у него
+    тяжёлые пакеты через main_env.pth, и transformers оттуда старее, чем
+    нужно omnivoice. Лечится установкой своего transformers внутрь
+    .venv_omni — основной venv при этом не трогается (там на нём живут
+    Qwen3-TTS, GigaAM и Voxtral, ломать их нельзя).
+    """
+    e = err or ""
+    if "HiggsAudio" in e or ("transformers" in e and "cannot import name" in e):
+        return ("OmniVoice не собрался: ему нужен более свежий transformers, "
+                "а он берёт его из основного .venv. Лечение — поставить свой "
+                "в окружение движка: "
+                ".venv_omni\\Scripts\\python.exe -m pip install -U "
+                "--target .venv_omni\\Lib\\site-packages transformers "
+                "(основной .venv не трогаем — на нём Qwen3 и слух). "
+                "Исходная ошибка: " + e[:200])
+    return "OmniVoice: " + e[:300]
 
 
 # Что менеджер подмешивает к своим трём движкам.

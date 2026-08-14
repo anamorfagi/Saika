@@ -3475,12 +3475,16 @@ async function pollNet(){
     if(!n.online){
       dot.style.background='var(--err)';
       txt.textContent='нет сети';
-      $('#net').title='Интернет недоступен — возможно, VPN режет соединение';
+      $('#net').title='Не ответил никто из '+Object.keys(n.probes||{}).join(', ')+
+        ' — похоже, интернета нет (или всё режет VPN/фаервол)';
     }else{
       const p=n.ping_ms;
       dot.style.background = p<80?'var(--ok)':p<200?'var(--warn)':'var(--err)';
       txt.textContent = p+'мс'+(n.hf?'':' · HF✗');
-      $('#net').title='Пинг '+p+'мс · huggingface '+(n.hf?'доступен':'недоступен (модели не качаются)');
+      // показываем ПОИМЁННО, кто ответил и кто нет: «нет сети» на одном
+      // упавшем пробнике — это ложная тревога, владелец её уже ловил
+      $('#net').title='Пинг '+p+'мс · huggingface '+(n.hf?'доступен':'недоступен (модели не качаются)')+
+        '\n'+Object.entries(n.probes||{}).map(([h,v])=>h+': '+(v==null?'не ответил':v+'мс')).join('\n');
     }
   }catch(e){
     const dot=$('#net .nd'); if(dot) dot.style.background='var(--err)';
