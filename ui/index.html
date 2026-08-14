@@ -8339,7 +8339,7 @@ eqFrame();
       'placeholder="имя нового голоса" maxlength="32" autocomplete="off" ' +
       'autocorrect="off" spellcheck="false" name="saika-lbl-1" ' +
       'data-lpignore="true" data-1p-ignore data-form-type="other">' +
-      '<button class="vp-btn acc" id="vp-rec">Записать</button></div>' +
+      '<button class="vp-btn acc" id="vp-recmenu">Записать</button></div>' +
     '<div class="vp-bar" id="vp-prog" style="display:none"><i></i></div>' +
     '<div class="vp-list" id="vp-list"></div>' +
     '<div class="vp-row"><button class="vp-btn" id="vp-open" style="flex:1">' +
@@ -8442,7 +8442,9 @@ eqFrame();
       'style="flex:1;min-width:0;background:var(--panel2);color:var(--text);' +
       'border:1px solid var(--border);border-radius:9px;padding:5px 8px;' +
       'font:12px inherit;outline:none">' +
-      '<button class="vp-btn acc" id="vp-rec2">Записать</button></div>' +
+      // кнопки тут нет намеренно: запись включает ДИКТОФОН ниже
+      // («● эталон»), а это поле — просто имя для него
+      '</div>' +
     '<div class="vp-bar" id="vp-prog2" style="display:none"><i></i></div>' +
     // ТРИ РАЗДЕЛА СВЕРНУЛИСЬ В ТРИ КНОПКИ (2026-07-29, владелец: «слух из
     // системы — просто встроенная маленькая фишка, кнопку включить-
@@ -8681,8 +8683,14 @@ eqFrame();
   }
   noAutofill($id('vp-name')); noAutofill($id('vp-name2'));
 
-  $id('vp-rec').onclick = e => { e.stopPropagation(); recClick('vp-name'); };
-  const rec2 = $id('vp-rec2'); if(rec2) rec2.onclick = () => recClick('vp-name2');
+  /* ДВА ЭЛЕМЕНТА С ОДНИМ id — ЭТО НЕ МЕЛОЧЬ (2026-08-15). Кнопка в меню
+     слуха и диктофон в панели оба звались vp-rec, а $id возвращает первый
+     в документе: обработчики и перерисовка садились на кнопку МЕНЮ, а
+     диктофон в панели стоял мёртвый. Плюс тик панели каждую секунду
+     переписывал ему подпись на «Записать» — поэтому вместо «● эталон /
+     ⏸ / ■ стоп» владелец видел две одинаковые кнопки «Записать». */
+  const recMenu = $id('vp-recmenu');
+  if(recMenu) recMenu.onclick = e => { e.stopPropagation(); recClick('vp-name'); };
   $id('vp-name').onclick = e => e.stopPropagation();
   $id('vp-onoff').onclick = async e => {
     e.stopPropagation();
@@ -8990,8 +8998,14 @@ eqFrame();
         loadPoints(); paintPanel();
         return;
       }
-      const nm = (prompt('Чей голос пишем?', '') || '').trim();
+      // БЕЗ ЛИШНИХ ПОДТВЕРЖДЕНИЙ (просьба владельца): имя берём из поля
+      // рядом, а спрашиваем, только если поле пустое. Плюс prompt() —
+      // модальный диалог, он вешает всю страницу.
+      const fld = $id('vp-name2') || $id('vp-name');
+      let nm = ((fld && fld.value) || '').trim();
+      if(!nm) nm = (prompt('Чей голос пишем?', '') || '').trim();
       if(!nm) return;
+      if(fld) fld.value = '';
       await api('/api/voiceprint/enroll', {action: 'start', name: nm});
       REC = {on: true, name: nm, got: 0, need: 24, paused: false};
       paintRec();
@@ -9189,8 +9203,10 @@ eqFrame();
     if(armed.t || drag2.nm) return;
     if(!ST) return;
     const en = ST.enroll || {};
-    [['vp-rec', 'vp-prog'], ['vp-rec2', 'vp-prog2']].forEach(([rid, pid]) => {
-      const rec = $id(rid), bar = $id(pid);
+    // vp-rec СЮДА НЕ ВХОДИТ: диктофон рисует себя сам (paintRec), а этот
+    // тик каждую секунду возвращал ему подпись «Записать» и стирал паузу
+    [['vp-recmenu', 'vp-prog'], [null, 'vp-prog2']].forEach(([rid, pid]) => {
+      const rec = rid ? $id(rid) : null, bar = $id(pid);
       if(rec){ rec.textContent = en.name ? 'Готово' : 'Записать';
                rec.classList.toggle('acc', !en.name); }
       if(bar){ bar.style.display = en.name ? '' : 'none';
