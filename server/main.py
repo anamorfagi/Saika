@@ -3185,7 +3185,19 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # дважды сказал «не работает».
     _mech = (MODEL_FAIL["n"] >= 2
              and time.time() - MODEL_FAIL["ts"] < 600)
-    if ((FAIL_STREAK["n"] >= 2 or _mech) and _route != "cloud"
+    # В РАЗГОВОРЕ МОЗГИ НЕ МЕНЯЮТСЯ (2026-08-15). Живой чат: GigaChat,
+    # mistral, GigaChat, mistral — через реплику, на пустой болтовне. У
+    # каждой модели свой голос и своя манера, и человек разговаривает то с
+    # одной, то с другой: «для начала нормально научиться разговаривать».
+    # Лестница задумана для ЗАДАЧ, где важно дожать результат; в разговоре
+    # менять собеседника посреди фразы — это не помощь, а раздражение.
+    _task_now = False
+    try:
+        from server import workflow as _wf_esc
+        _task_now = bool(_wf_esc.scenario(user_text))
+    except Exception:
+        pass
+    if ((FAIL_STREAK["n"] >= 2 or _mech) and _route != "cloud" and _task_now
             and CFG.get("llm.escalate_on_fail", True)):
         _why = ("не справляется механически: " + MODEL_FAIL["why"]
                 if _mech else "две неудачи подряд")
@@ -4261,6 +4273,17 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         # реплики (стрим, повтор без инструментов, финальный хвост) — жест
         # гарантированно сработает даже у модели без tool-calls
         sentence = _apply_gesture_marks(sentence)
+        # РОД — МЕХАНИЧЕСКИ, НА ВЫХОДЕ (2026-08-15). «Ну ты скажи: поняла
+        # или понял?» — «Понял.» Промптом это не лечится: «понял» самая
+        # частая короткая реплика русского корпуса, она вылетает раньше,
+        # чем модель доберётся до инструкций о характере, а у Сайки
+        # половина ответов ровно такой длины. Правим здесь, где проходят
+        # ВСЕ реплики — и стрим, и повтор, и хвост. См. server/gender.py.
+        try:
+            from server import gender as _gnd
+            sentence = _gnd.feminize(sentence)
+        except Exception:
+            pass
         if sentence:
             remember_said(sentence)   # чтобы узнать себя в эхе из колонок
             # вопрос -> наклон головы у веб-аватара (co-speech, 2026-07-25)
