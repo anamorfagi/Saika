@@ -38,7 +38,30 @@ html,body,canvas{touch-action:none;overscroll-behavior:none}
   background:rgba(20,22,34,.72);border:1px solid rgba(255,255,255,.16);
   color:#e9e9ed;font:16px/1 system-ui,sans-serif;
   backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-#avctl button:active{background:rgba(145,132,217,.4)}
+#avctl button:active{background:rgba(145,132,217,.55);transform:scale(.92)}
+  /* ОТКЛИК НА НАЖАТИЕ (2026-08-14, владелец: «кнопки как-то нежмутся, с
+     задержкой, непонятно нажались они или нет»). Между щелчком и видимым
+     результатом проходит запрос к серверу и опрос окна — до полусекунды.
+     Полсекунды тишины читаются как «не нажалось», и человек жмёт второй
+     раз. Поэтому кнопка отвечает СРАЗУ, ещё до ответа сервера. */
+  #avctl button{transition:transform .07s, background .12s, border-color .12s}
+  #avctl button.pending{background:rgba(145,132,217,.35);
+    border-color:rgba(170,160,255,.9) !important}
+  /* НАСТРОЙКИ ВИДА (2026-08-14): вращение по трём осям и привязка к шагу,
+     как в 3D-редакторах. Живёт рядом с кнопками, открывается шестерёнкой. */
+  #avset{position:fixed;right:56px;bottom:10px;z-index:21;display:none;
+    width:210px;padding:10px;border-radius:12px;color:#e9e9ed;
+    background:rgba(18,20,30,.93);border:1px solid rgba(255,255,255,.14);
+    font:12px system-ui,sans-serif;backdrop-filter:blur(10px)}
+  #avset.on{display:block}
+  #avset .row{display:flex;align-items:center;gap:6px;margin:6px 0}
+  #avset .row b{width:14px;color:#9a93c9;font-weight:600}
+  #avset input[type=range]{flex:1;accent-color:#9184d9}
+  #avset .val{width:38px;text-align:right;color:#b9b6c9}
+  #avset select,#avset button.mini{width:100%;margin-top:4px;padding:4px;
+    border-radius:7px;background:rgba(255,255,255,.06);color:#e9e9ed;
+    border:1px solid rgba(255,255,255,.14);font:inherit;cursor:pointer}
+  #avset .hint{margin-top:7px;color:#8a93a5;font-size:11px;line-height:1.4}
 #flat{position:fixed;inset:0;display:none;align-items:flex-end;
   justify-content:center;pointer-events:none;overflow:hidden}
 #flat.on{display:flex}
@@ -49,6 +72,29 @@ html,body,canvas{touch-action:none;overscroll-behavior:none}
     font:12px system-ui;background:rgba(15,17,21,.55);padding:4px 8px;
     border-radius:6px;transition:opacity .5s}
   #hint.gone{opacity:0}
+  /* РЕЖИМ «НА СТОЛЕ» (2026-08-14): окно без рамки поверх всего, фон
+     прозрачный. Всё, что рисует свои подложки — кнопки, подсказка —
+     прячем: на рабочем столе они выглядят как мусор вокруг модели. */
+  body.desk #avctl, body.desk #hint, body.desk #avset{display:none !important}
+  body.desk{background:transparent !important}
+  /* РАМКА ОКНА (2026-08-14). Прозрачное окно без рамки невозможно ухватить
+     за край — границы не видно, целиться некуда. Рисуем её страницей, а не
+     системой: у окна нет заголовка, и добавить его значило бы вернуть всё
+     то, от чего мы уходили. Углы подсвечены — за них тянется размер. */
+  body.desk.framed::after{content:'';position:fixed;inset:0;pointer-events:none;
+    border:1px dashed rgba(170,160,255,.55);border-radius:10px;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
+  body.desk.framed::before{content:'';position:fixed;inset:0;pointer-events:none;
+    background:
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) left top/16px 2px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) left top/2px 16px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) right top/16px 2px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) right top/2px 16px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) left bottom/16px 2px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) left bottom/2px 16px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) right bottom/16px 2px no-repeat,
+      linear-gradient(rgba(170,160,255,.85),rgba(170,160,255,.85)) right bottom/2px 16px no-repeat;
+    border-radius:10px}
 </style>
 <script type="importmap">
 {"imports":{
@@ -81,14 +127,23 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation';
 
 const qs = new URLSearchParams(location.search);
+if (qs.get('desk')) document.body.classList.add('desk');
 const hint = document.getElementById('hint');
 
 /* ---------- сцена ---------- */
 // preserveDrawingBuffer нужен, чтобы кадр можно было ПРОЧИТАТЬ после
 // отрисовки (2026-08-13, зеркало для Сайки). Без него toDataURL отдаёт
 // пустоту: WebGL по умолчанию сбрасывает буфер сразу после показа.
+// СГЛАЖИВАНИЕ НЕ ТРОГАЕМ (2026-08-14, вторая правка за час). Сначала я
+// выключил его в окне на столе ради плавности — и владелец справедливо
+// спросил: «а про сглаживание мы не слышали? чё она вся лесенкой стала».
+// Урок ровно тот, что записан в PHILOSOPHY.md разделом 0: за скорость
+// нельзя платить тем, о чём не просили. Плавность добираем потолком
+// частоты кадров — он не стоит ни одного пикселя качества.
+const _DESK = new URLSearchParams(location.search).has('desk');
 const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true,
-                                          preserveDrawingBuffer:true});
+                                          preserveDrawingBuffer:true,
+                                          powerPreference:'high-performance'});
 
 // ЗЕРКАЛО (2026-08-13, живой отказ: «посмотри на себя, опиши, как ты
 // выглядишь» — она рассказывала про «зрелую женщину» и глаза, которые
@@ -98,7 +153,7 @@ const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true,
 window.addEventListener('message', (e) => {
   if (!e.data || e.data.type !== 'saika-selfie') return;
   try {
-    renderer.render(scene, camera);       // свежий кадр, а не прошлый
+    renderer.render(scene, activeCam());  // свежий кадр, а не прошлый
     const url = renderer.domElement.toDataURL('image/jpeg', 0.85);
     (e.source || window.parent).postMessage(
       {type: 'saika-selfie-result', url: url}, '*');
@@ -108,6 +163,9 @@ window.addEventListener('message', (e) => {
   }
 });
 renderer.setSize(innerWidth, innerHeight);
+// РАЗРЕШЕНИЕ ТОЖЕ ВОЗВРАЩАЮ: пиксель 1:1 на экране с масштабом 125-150%
+// даёт ту самую «лесенку» по контуру — сглаживание её только смягчает,
+// а причина в вдвое меньшем числе точек. Считаем как везде.
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const bg = qs.get('bg');
 if (bg) renderer.setClearColor(bg.match(/^[0-9a-f]{6}$/i) ? '#'+bg : bg, 1);
@@ -115,26 +173,206 @@ else renderer.setClearAlpha(0);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+/* СОСТОЯНИЕ ВИДА ОБЪЯВЛЯЕМ ДО КАМЕРЫ (2026-08-14, живая ошибка:
+   «Uncaught ReferenceError: Cannot access 'view' before initialization»
+   — экран остался пустым). placeCamera() теперь читает углы облёта из
+   view, а объявлен view был ниже по файлу: у let есть временная мёртвая
+   зона, и обращение до объявления это не undefined, а падение всего
+   модуля. Порядок объявлений — часть кода, а не оформление. */
+//   az, el      — ОБЛЁТ КАМЕРЫ вокруг модели (азимут и высота), как в
+//                  Блендере средней кнопкой: предмет стоит на месте, а ты
+//                  ходишь вокруг него. Это НЕ то же, что повернуть модель;
+//   rx, ry, rz  — поворот САМОЙ модели (ползунки в настройках), как
+//                  вращение объекта в 3D-редакторе;
+//   dist        — расстояние камеры до модели;
+//   snap, ortho — шаг привязки и тип проекции.
+//   ox, oy, oz  — сдвиг ВИДА (камера и её цель едут вместе, сцена
+//                  «съезжает» — так пан работает в 3D-редакторах)
+let view = {x:0, y:0, z:0, zoom:1, rx:0, ry:0, rz:0, snap:0, ortho:false,
+            az:0, el:0, dist:0, ox:0, oy:0, oz:0, lean:0};
+try{ view = Object.assign(view, JSON.parse(localStorage.saika_av_view||'{}')); }catch(e){}
+
 const camera = new THREE.PerspectiveCamera(28, innerWidth/innerHeight, .1, 30);
 const camMode = qs.get('cam') || 'full';
+// точка, вокруг которой ходим: примерно центр фигуры
+const PIVOT = new THREE.Vector3(0, 0.95, 0);
+const BASE_DIST = 2.6;
 function placeCamera(){
-  if (camMode === 'bust'){ camera.position.set(0, 1.35, 1.35); camera.lookAt(0, 1.3, 0); }
-  else { camera.position.set(0, 1.05, 2.6); camera.lookAt(0, 0.95, 0); }
+  if (camMode === 'bust'){ PIVOT.set(0, 1.3, 0); }
+  // ОБЛЁТ ПО СФЕРЕ. Азимут — вокруг вертикальной оси, высота — подъём и
+  // спуск. Высоту ограничиваем ±85°: на полюсе камера смотрит строго
+  // сверху вниз, вектор «вверх» вырождается и картинка кувыркается.
+  const r = (view.dist || (camMode === 'bust' ? 1.35 : BASE_DIST));
+  const a = (view.az || 0) * Math.PI / 180;
+  const el = Math.max(-85, Math.min(85, view.el || 0)) * Math.PI / 180;
+  // ОСЬ ВРАЩЕНИЯ — САМА МОДЕЛЬ, А НЕ НАЧАЛО СЦЕНЫ (2026-08-14: «вращение
+  // какое-то неправильное, такое ощущение, что какой-то невидимый центр
+  // справа от неё»). Так и было: PIVOT стоял в нуле сцены намертво, а
+  // фигуру человек до этого сдвинул мышью (view.x/y/z). Камера послушно
+  // ходила вокруг пустого места, и модель уезжала по дуге — ровно то
+  // ощущение «центра сбоку». Точка облёта теперь едет вместе с фигурой.
+  // ЦЕЛЬ КАМЕРЫ = где стоит модель ПЛЮС сдвиг вида (2026-08-14, «шифт
+  // колесико куда делось?»). Пропало оно из-за моей же предыдущей правки:
+  // я привязал точку облёта к модели, а сдвиг двигал саму модель — камера
+  // послушно ехала следом и держала её ровно по центру, то есть на экране
+  // не происходило НИЧЕГО. Теперь у сдвига свои поля: они двигают камеру
+  // вместе с целью, сцена съезжает, а облёт по-прежнему крутится вокруг
+  // фигуры. Ровно как пан и орбита в любом 3D-редакторе.
+  const px = PIVOT.x + (view.x || 0) + (view.ox || 0);
+  const py = PIVOT.y + (view.y || 0) + (view.oy || 0);
+  const pz = PIVOT.z + (view.z || 0) + (view.oz || 0);
+  camera.position.set(px + r * Math.cos(el) * Math.sin(a),
+                      py + r * Math.sin(el),
+                      pz + r * Math.cos(el) * Math.cos(a));
+  camera.lookAt(px, py, pz);
 }
 placeCamera();
 addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight;
-  camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+  // в окне на столе пропорции меняют мышью постоянно — кадр обязан
+  // успевать за ними, иначе модель режется на каждом растягивании
+  // при растягивании окна кадр пересобираем, но ручной масштаб уже
+  // сохраняется отдельно и переживает это (см. saikaFit — zoom не трогает)
+  if (document.body.classList.contains('desk')) window.saikaFit &&
+    window.saikaFit(); });
 
 /* ---------- позиционирование мышью (2026-07-25) ----------
    ЛКМ-драг — двигать модель (вверх/вниз/в стороны), колесо — приблизить/
    отдалить, ПКМ-драг — вертикаль камеры. Запоминается в localStorage. */
-let view = {x:0, y:0, z:0, zoom:1};
-try{ view = Object.assign(view, JSON.parse(localStorage.saika_av_view||'{}')); }catch(e){}
-function saveView(){ try{ localStorage.saika_av_view=JSON.stringify(view); }catch(e){} }
+// ВРАЩЕНИЕ И ПРОЕКЦИЯ (2026-08-14, просьба владельца: «добавь возможность
+// вращать её во всех осях и вращение с привязками, например по выбранному
+// градусу — ну тип как в блендере, обычный плавный режим и с шагом»; и
+// отдельно: «она в углу окна как будто из угла выглядывает, хотелось бы
+// объёмную, но ровную проекцию»).
+//   rx, ry, rz — наклон/поворот/крен модели в градусах
+//   snap       — шаг привязки в градусах (0 = свободно, как раньше)
+//   ortho      — ровная проекция вместо перспективной
+
+/* ВИД В ОКНЕ НА СТОЛЕ ХРАНИТСЯ НА СЕРВЕРЕ (2026-08-14, просьба владельца
+   «сделай запоминание, как было открыто окно до этого, и её положение в
+   окне, масштабы там всякие»).
+
+   Почему не localStorage, как в панели: окно на столе — отдельный профиль
+   QtWebEngine, и хранилище у него временное. Панель помнила, окно забывало
+   каждый запуск, и человек заново подгонял масштаб. Кладём в config рядом с
+   геометрией самого окна — тогда «как было» восстанавливается целиком:
+   и где окно стояло, и какого размера, и как в нём стояла модель.
+   Панель при этом продолжает жить на localStorage — её трогать незачем. */
+let _viewSaveT = 0;
+function _pushDeskView(){
+  // ОДИН ИСТОЧНИК ПРАВДЫ (2026-08-14: «у тебя буквально управление в этих
+  // окнах отличается»). Так и было: панель читала вид из localStorage,
+  // окно на столе — с сервера. Два хранилища, два разных состояния, и
+  // выглядит это как разное управление. Теперь правда одна — серверная, а
+  // localStorage остаётся запасным вариантом на случай, если сервер молчит.
+  // Шлют оба окна, слушают тоже оба.
+  clearTimeout(_viewSaveT);          // колесо крутят подряд — пишем не каждый щелчок
+  _viewSaveT = setTimeout(() => {
+    fetch('/api/avatar/desk', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({view: view})}).catch(()=>{});
+  }, 400);
+}
+let _viewTouched = 0;              // когда вид меняли ЗДЕСЬ, руками
+function saveView(){
+  _viewTouched = performance.now();
+  try{ localStorage.saika_av_view=JSON.stringify(view); }catch(e){}
+  _pushDeskView();
+}
+// базовый разворот модели (его ставит VRMUtils.rotateVRM0 при загрузке) —
+// пользовательский угол складывается с ним, а не подменяет
+let baseRot = {x: 0, y: 0, z: 0};
+const D2R = Math.PI / 180;
+// угол приводим к -180..180: при шаге гранями азимут иначе уезжает в -870°,
+// и ползунок в настройках (диапазон ±180) начинает показывать неправду
+const norm180 = a => ((((a || 0) + 180) % 360) + 360) % 360 - 180;
 function applyView(){
-  if (vrm) vrm.scene.position.set(view.x, view.y, view.z);
+  placeCamera();                 // облёт камеры — часть вида
+  if (vrm){
+    vrm.scene.position.set(view.x, view.y, view.z);
+    const b = baseRot;
+    vrm.scene.rotation.set(b.x + (view.rx||0)*D2R,
+                           b.y + (view.ry||0)*D2R,
+                           b.z + (view.rz||0)*D2R);
+  }
   camera.zoom = view.zoom; camera.updateProjectionMatrix();
 }
+
+/* РОВНАЯ ПРОЕКЦИЯ (ортографическая).
+
+   Почему «выглядывает из угла»: перспективная камера расходится лучами из
+   одной точки, и всё, что стоит НЕ в центре кадра, она показывает под
+   углом — видно немного сбоку и сверху/снизу. В панели это незаметно,
+   потому что модель по центру. А в окне во весь экран, где фигура стоит
+   сбоку, тот же эффект читается как «повернулась и выглядывает».
+
+   Ортографическая камера лучей не расходит: предмет выглядит одинаково,
+   где бы он ни стоял в кадре. Объём при этом никуда не девается — его
+   даёт свет и тени, а не перспектива. Ровно то, что и просили. */
+let ortho = null;
+function orthoCam(){
+  if (!ortho){
+    ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 30);
+  }
+  const h = 1.9 / Math.max(0.05, view.zoom || 1);   // высота кадра в метрах
+  const w = h * (innerWidth / Math.max(1, innerHeight));
+  ortho.left = -w/2; ortho.right = w/2;
+  ortho.top = h/2;   ortho.bottom = -h/2;
+  ortho.position.copy(camera.position);
+  ortho.quaternion.copy(camera.quaternion);
+  ortho.updateProjectionMatrix();
+  return ortho;
+}
+// какой камерой рисовать этот кадр
+function activeCam(){ return view.ortho ? orthoCam() : camera; }
+
+/* ВПИСАТЬ МОДЕЛЬ В ОКНО ЦЕЛИКОМ (2026-08-14).
+   Владелец про окно на столе: «она обрезанная появляется и редактировать не
+   могу». Причина честная: кадр подобран под панель интерфейса — она почти
+   квадратная. Окно на столе узкое и высокое, при тех же настройках камеры
+   в него не влезают то макушка, то ноги.
+   Считаем настоящие габариты модели и подбираем расстояние камеры так,
+   чтобы она помещалась вся, с небольшим полем по краям. Зовётся при
+   загрузке, при смене размера окна и снаружи — из окна на столе, когда
+   человек его растянул (window.saikaFit). */
+/* Восстановление сохранённого вида. Если он есть — saikaFit не зовём:
+   иначе подгонка перебьёт то, что человек выставил руками. */
+window.saikaRestore = async function(){
+  if (!_DESK) { window.saikaFit(); return; }
+  try{
+    const r = await fetch('/api/avatar/desk').then(x => x.json());
+    const v = r && r.view;
+    if (v && typeof v.zoom === 'number'){
+      view = Object.assign({x:0, y:0, z:0, zoom:1,
+                            rx:0, ry:0, rz:0, snap:0, ortho:false}, v);
+      applyView();
+      return;                       // человек уже всё настроил — не мешаем
+    }
+  }catch(e){}
+  window.saikaFit();                // первый запуск: вписываем целиком
+};
+
+window.saikaFit = function(){
+  if (!vrm) return;
+  const box = new THREE.Box3().setFromObject(vrm.scene);
+  const size = box.getSize(new THREE.Vector3());
+  const mid  = box.getCenter(new THREE.Vector3());
+  if (!isFinite(size.y) || size.y <= 0) return;
+  const vfov = camera.fov * Math.PI / 180;
+  const distH = (size.y / 2) / Math.tan(vfov / 2);
+  const hfov  = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  const distW = (size.x / 2) / Math.tan(hfov / 2);
+  const dist  = Math.max(distH, distW) * 1.12;   // поле по краям
+  // РУЧНОЙ МАСШТАБ НЕ СБРАСЫВАЕМ (2026-08-14): подгонка кадра зовётся на
+  // каждое изменение размера окна, и если обнулять zoom, то человек тянет
+  // край рамки — и теряет то приближение модели, которое сам только что
+  // выставил колесом. Подгоняем расстояние камеры, его настройку не трогаем.
+  view = {x:0, y:0, z:0, zoom: view.zoom || 1};
+  camera.position.set(mid.x, mid.y, mid.z + dist);
+  camera.lookAt(mid.x, mid.y, mid.z);
+  camera.updateProjectionMatrix();
+  applyView();
+};
 /* КАСАНИЯ, А НЕ ТОЛЬКО МЫШЬ (2026-07-26). Было mousedown/mousemove — на
    телефоне таких событий не существует вовсе, поэтому модель нельзя было
    ни подвинуть, ни отмасштабировать: она просто торчала обрезанной по краям.
@@ -149,19 +387,92 @@ function pinchDist(){
   return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
 }
 addEventListener('contextmenu', e=>e.preventDefault());
+addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 addEventListener('pointerdown', e=>{
+  if (e.button === 1) e.preventDefault();   // иначе браузер включит автоскролл
   ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY, b:e.button});
   if (ptrs.size === 2){ pinch0 = pinchDist(); zoom0 = view.zoom; }
   moved = 0;
   try{ e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId); }
   catch(err){}
 });
+/* СРЕДНЯЯ КНОПКА ОДНОЙ ФУНКЦИЕЙ (2026-08-14, «блядь, чё я в окне её
+   сместить не могу»). В панели браузера события мыши приходят странице
+   штатно, а в окне на столе между мышью и страницей стоит Qt со своим
+   веб-движком — и середина туда доезжала не всегда. Гадать, кто именно её
+   съедает (автопрокрутка Chromium, композитор, фильтр событий), можно
+   долго. Поэтому логика вынесена сюда, и зовут её ДВОЕ: обычный
+   pointermove в панели и Qt-окно напрямую через window.saikaNudge —
+   у Qt-то средняя кнопка есть гарантированно, левой ведь окно двигается. */
+function _mid(dx, dy, alt, ctrl, shift, p){
+  _viewTouched = performance.now();
+  const clampZ = v => Math.min(4, Math.max(0.35, v));
+  if (alt){
+    const ry = view.ry || 0, STEP_PX = 55;
+    if (!p.alt){
+      const rel = (view.az || 0) - ry;
+      view.az = norm180(Math.round(rel / 90) * 90 + ry);
+      const el0 = view.el || 0;
+      view.el = [-85, 0, 85].reduce((a, b) =>
+        Math.abs(b - el0) < Math.abs(a - el0) ? b : a);
+      p.alt = {ax: 0, ay: 0};
+    } else {
+      p.alt.ax += dx; p.alt.ay += dy;
+      while (Math.abs(p.alt.ax) >= STEP_PX){
+        const d = p.alt.ax > 0 ? 1 : -1;
+        p.alt.ax -= d * STEP_PX; view.az = norm180((view.az || 0) - d * 90);
+      }
+      while (Math.abs(p.alt.ay) >= STEP_PX){
+        const d = p.alt.ay > 0 ? 1 : -1;
+        p.alt.ay -= d * STEP_PX;
+        const cur = [-85, 0, 85].indexOf(view.el || 0);
+        view.el = [-85, 0, 85][Math.max(0, Math.min(2, (cur < 0 ? 1 : cur) + d))];
+      }
+    }
+  } else if (ctrl){
+    view.zoom = clampZ((view.zoom || 1) * (1 - dy * 0.004));
+  } else if (shift){
+    const kp = 2.2 / (innerHeight * view.zoom);
+    const right = new THREE.Vector3(), up = new THREE.Vector3(),
+          fwd = new THREE.Vector3();
+    camera.updateMatrixWorld();          // базис берём из СВЕЖЕЙ матрицы
+    camera.matrixWorld.extractBasis(right, up, fwd);
+    view.ox -= (right.x * dx - up.x * dy) * kp;
+    view.oy -= (right.y * dx - up.y * dy) * kp;
+    view.oz -= (right.z * dx - up.z * dy) * kp;
+  } else {
+    const st = Number(view.snap || 0);
+    if (!p.orb) p.orb = {az: view.az || 0, el: view.el || 0};
+    p.orb.az -= dx * 0.4;
+    p.orb.el = Math.max(-85, Math.min(85, p.orb.el + dy * 0.4));
+    const fit = v => st ? Math.round(v / st) * st : v;
+    view.az = norm180(fit(p.orb.az));
+    view.el = fit(p.orb.el);
+  }
+  applyView();
+  if (window.__avPaintSet) window.__avPaintSet();
+}
+
+// состояние жеста для Qt-окна: у него нет наших ptrs
+const _qtDrag = {};
+window.saikaNudge = (dx, dy, alt, ctrl, shift, end) => {
+  if (end){ for (const k in _qtDrag) delete _qtDrag[k]; saveView(); return; }
+  _mid(dx, dy, !!alt, !!ctrl, !!shift, _qtDrag);
+};
+
 addEventListener('pointermove', e=>{
   const p = ptrs.get(e.pointerId);
   if (!p) return;
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
   p.x = e.clientX; p.y = e.clientY;
   moved += Math.abs(dx) + Math.abs(dy);
+  // РУКА ВАЖНЕЕ СИНХРОНИЗАЦИИ (2026-08-14: в окне сдвиг «не работал», хотя
+  // код тот же, что в панели). Отметка «трогаю сам» ставилась только в
+  // saveView, то есть при ОТПУСКАНИИ кнопки. А общий вид опрашивается раз
+  // в секунду — и посреди жеста прилетал старый вид с сервера и затирал
+  // всё, что человек только что провёл мышью. Со стороны это выглядит
+  // ровно как «не двигается». Метим на каждом движении.
+  _viewTouched = performance.now();
   if (ptrs.size >= 2){                       // щипок — масштаб
     const d = pinchDist();
     if (pinch0 > 0 && d > 0){
@@ -170,6 +481,38 @@ addEventListener('pointermove', e=>{
     }
     return;
   }
+  // СРЕДНЯЯ КНОПКА — ВРАЩЕНИЕ (2026-08-14, просьба владельца: «добавь
+  // поворот через зажатое колесико» и «при шифте выравнивание по осям, как
+  // блендер»). Взято именно колесо, потому что ЛКМ и ПКМ уже заняты
+  // перемещением и вертикалью камеры — отбирать рабочие жесты нельзя.
+  //   зажал колесо + води     — крутим: по горизонтали Y, по вертикали X
+  //   + Shift                 — ось фиксируется: только та, вдоль которой
+  //                             начал вести. Так поворот остаётся чистым,
+  //                             без «поехало сразу в две стороны».
+  //   шаг привязки из настроек применяется здесь же
+  /* НАВИГАЦИЯ КАК В БЛЕНДЕРЕ (2026-08-14, третий заход — предыдущие два
+     были мимо, и заслуженно). Раскладка один в один с Блендером:
+
+       колесо зажать           — облёт вокруг модели (orbit)
+       Shift + колесо зажать   — сдвиг по плоскости экрана (pan)
+       Ctrl  + колесо зажать   — приблизить/отдалить (dolly)
+       Alt   + колесо зажать   — ВЫРАВНИВАНИЕ ВИДА ПО БЛИЖАЙШЕЙ ОСИ
+       колесо крутить          — приблизить/отдалить
+
+     Alt — это то самое «выравнивание по осям», про которое ты говорил: в
+     Блендере он подтягивает вид к ближайшему ровному ракурсу (спереди,
+     сбоку, сзади, сверху). Отпустил — вид защёлкнулся ровно.
+
+     ОТСТУПЛЕНИЕ ОДНО, СОЗНАТЕЛЬНОЕ: шаг облёта. В Блендере Ctrl+колесо —
+     это зум, и он у нас тоже так работает. Но ты отдельно просил «через
+     зажатый контрол все вращения с шагом», поэтому шаг привязки берётся из
+     настроек ⚙: выбрал там 15° — и облёт идёт ступеньками всегда, без
+     всяких модификаторов. Так обе просьбы выполняются и не спорят. */
+  if (p.b === 1){
+    _mid(dx, dy, e.altKey, e.ctrlKey, e.shiftKey, p);
+    return;
+  }
+  if (!e.shiftKey) p.axis = '';
   const k = 2.2/(innerHeight*view.zoom);      // пиксели -> метры сцены
   if (p.b === 2) camera.position.y += dy*k;   // ПКМ — вертикаль камеры
   else { view.x += dx*k; view.y -= dy*k; }
@@ -186,8 +529,10 @@ function ptrEnd(e){
   if (moved < 12){
     const now = performance.now();
     if (now - lastTap < 340){
-      view = {x:0, y:0, z:0, zoom:1};
+      view = Object.assign(view, {x:0, y:0, z:0, zoom:1,
+                                  rx:0, ry:0, rz:0, ox:0, oy:0, oz:0});
       applyView(); saveView(); flash('вид сброшен', 1200);
+      if (window.__avPaintSet) window.__avPaintSet();
       lastTap = 0;
     } else lastTap = now;
   }
@@ -203,15 +548,280 @@ addEventListener('wheel', e=>{ view.zoom = clampZoom(
 (function(){
   const box = document.createElement('div');
   box.id = 'avctl';
-  box.innerHTML = '<button data-z="1.15">+</button>' +
-                  '<button data-z="0.87">−</button>' +
-                  '<button data-r="1">⟳</button>';
+  // ОТДЕЛЬНОЕ ОКНО — УПРАВЛЕНИЕ ЗДЕСЬ ЖЕ (2026-08-14). Владелец: «добавь
+  // кнопки в окно перса: запуск отдельного окна, кнопку заблокировать
+  // перемещение и полную прозрачность кроме модельки». Место выбрано не
+  // случайно: в колонке «Система» кнопки уезжали за нижний край, стоило
+  // сделать окно браузера пониже, и человек их просто не находил. Рядом с
+  // моделью они всегда на виду и всегда под рукой.
+  box.innerHTML = '<button data-z="1.15" title="Крупнее">+</button>' +
+                  '<button data-z="0.87" title="Мельче">−</button>' +
+                  '<button data-r="1" title="Сбросить вид">⟳</button>' +
+                  '<button id="dsk-on" title="Отдельное окно с моделью ' +
+                    'на рабочем столе">🪟</button>' +
+                  '<button id="dsk-lock" title="Замок: окно перестаёт ' +
+                    'ловить мышь — можно кликать сквозь неё по рабочему ' +
+                    'столу. Снять — этой же кнопкой">🔓</button>' +
+                  '<button id="dsk-frame" title="Рамка окна: видно границы, ' +
+                    'за края можно тянуть размер. Выключить — на столе ' +
+                    'останется только модель">▣</button>' +
+                  '<button id="av-set" title="Поворот по осям, привязка ' +
+                    'к шагу, тип проекции">⚙</button>';
   document.body.appendChild(box);
+
+  /* ── состояние отдельного окна ──
+     avatar.html лежит на том же адресе, что и сервер, поэтому из iframe
+     ходим в API напрямую — никаких postMessage к родителю. */
+  const dsk = {on: false, lock: false, ghost: false, busy: false, step: ''};
+  const $b = id => document.getElementById(id);
+  let watch = null;
+
+  function paintDsk(){
+    const on = $b('dsk-on'), lk = $b('dsk-lock'), fr = $b('dsk-frame');
+    if(on){
+      on.textContent = dsk.busy ? '⏳' : '🪟';
+      on.disabled = !!dsk.busy;
+      on.title = dsk.busy ? (dsk.step || 'ставлю PySide6…')
+               : dsk.on   ? 'Закрыть отдельное окно'
+                          : 'Открыть отдельное окно с моделью на столе';
+      on.style.borderColor = dsk.on ? 'rgba(145,132,217,.75)'
+                                    : 'rgba(255,255,255,.16)';
+    }
+    if(lk){
+      // ОДНА КНОПКА — ОДНО ПОНЯТИЕ (2026-08-14). Сначала я развёл замок и
+      // «сквозной режим» на две, и вышла путаница: при снятом замке окно
+      // не двигалось, потому что был включён второй режим, — владелец
+      // справедливо сказал «блокировка работает наоборот». Замок теперь
+      // означает ровно одно: окно не ловит мышь совсем, сквозь него можно
+      // работать. Значок показывает СОСТОЯНИЕ, не будущее действие.
+      lk.textContent = dsk.lock ? '🔒' : '🔓';
+      lk.title = dsk.lock
+        ? 'Замок стоит: окно не ловит мышь, кликай сквозь неё. Снять — сюда'
+        : 'Поставить замок: окно перестанет ловить мышь, можно будет ' +
+          'кликать сквозь неё по столу';
+      lk.style.opacity = dsk.on ? (dsk.lock ? '1' : '.55') : '.25';
+      lk.disabled = !dsk.on;
+      lk.style.borderColor = dsk.lock ? 'rgba(145,132,217,.75)'
+                                      : 'rgba(255,255,255,.16)';
+    }
+  }
+
+  function paintFrame(){
+    const fr = $b('dsk-frame');
+    if(!fr) return;
+    fr.textContent = dsk.frame ? '▣' : '▢';
+    fr.title = dsk.frame
+      ? 'Рамка видна: тяни за края, чтобы менять размер. Убрать — сюда'
+      : 'Показать рамку окна, чтобы поймать край и растянуть';
+    fr.style.opacity = dsk.on ? (dsk.frame ? '1' : '.55') : '.25';
+    fr.disabled = !dsk.on;
+    fr.style.borderColor = dsk.frame ? 'rgba(145,132,217,.75)'
+                                     : 'rgba(255,255,255,.16)';
+  }
+
+  async function pullDsk(){
+    try{
+      const r = await fetch('/api/avatar/desk').then(x => x.json());
+      Object.assign(dsk, r);
+      paintDsk(); paintFrame();
+      if(r.busy && !watch){
+        watch = setInterval(pullDsk, 1500);
+      }else if(!r.busy && watch){
+        clearInterval(watch); watch = null;
+      }
+    }catch(e){}
+  }
+
+  async function sendDsk(patch, btn){
+    // ОПТИМИСТИЧНО: показываем результат немедленно, а ответ сервера потом
+    // либо подтвердит, либо поправит. Ждать ответа, чтобы перекрасить
+    // кнопку, — значит делать интерфейс медленнее, чем он есть.
+    Object.assign(dsk, patch.on !== undefined ? {} : patch);
+    paintDsk(); paintFrame();
+    if(btn){
+      btn.classList.add('pending');
+      setTimeout(() => btn.classList.remove('pending'), 400);
+    }
+    try{
+      const r = await fetch('/api/avatar/desk', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(patch)}).then(x => x.json());
+      Object.assign(dsk, r);
+      paintDsk(); paintFrame();
+      if(r.busy && !watch) watch = setInterval(pullDsk, 1500);
+    }catch(e){}
+  }
+
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if(!b) return;
+    if(b.id === 'av-set'){
+      setBox.classList.toggle('on');
+      b.style.borderColor = setBox.classList.contains('on')
+        ? 'rgba(145,132,217,.75)' : 'rgba(255,255,255,.16)';
+      if (setBox.classList.contains('on')) paintSet();
+    }
+    if(b.id === 'dsk-on')    sendDsk({on: !dsk.on}, b);
+    if(b.id === 'dsk-lock')  sendDsk({lock: !dsk.lock}, b);
+    if(b.id === 'dsk-frame') sendDsk({frame: !dsk.frame}, b);
+  });
+  if(!document.body.classList.contains('desk')){
+    pullDsk();
+    setInterval(pullDsk, 5000);   // окно могли закрыть крестиком мимо нас
+  }
+
+  /* СИНХРОНИЗАЦИЯ ВИДА — ДЛЯ ОБОИХ ОКОН. Панель и окно на столе живут в
+     разных процессах и друг о друге не знают; общее у них только сервер.
+     Поэтому оба раз в секунду спрашивают «какой сейчас вид» и применяют,
+     если он изменился не ими. Своё не перебиваем: две секунды после
+     собственного движения мышью входящее игнорируем, иначе рука и вторая
+     панель дрались бы за модель. */
+  let _lastSeen = '';
+  const syncView = async () => {
+    try{
+      const r = await fetch('/api/avatar/desk').then(x => x.json());
+      if (_DESK) document.body.classList.toggle('framed', !!r.frame);
+      const v = r && r.view;
+      if (!v) return;
+      const sig = JSON.stringify(v);
+      if (sig === _lastSeen) return;
+      _lastSeen = sig;
+      if (performance.now() - _viewTouched < 2000) return;
+      Object.assign(view, v);
+      applyView();
+      if (window.__avPaintSet) window.__avPaintSet();
+    }catch(e){}
+  };
+  syncView();
+  setInterval(syncView, 1000);
+
+  /* ── панель настроек вида ── */
+  const setBox = document.createElement('div');
+  setBox.id = 'avset';
+  setBox.innerHTML =
+    '<div style="color:#9a93c9;margin-bottom:4px">Поворот модели</div>' +
+    '<div class="row"><b>X</b><input type="range" id="rx" min="-180" ' +
+      'max="180" step="1"><span class="val" id="rxv">0°</span></div>' +
+    '<div class="row"><b>Y</b><input type="range" id="ry" min="-180" ' +
+      'max="180" step="1"><span class="val" id="ryv">0°</span></div>' +
+    '<div class="row"><b>Z</b><input type="range" id="rz" min="-180" ' +
+      'max="180" step="1"><span class="val" id="rzv">0°</span></div>' +
+    '<select id="snap">' +
+      '<option value="0">плавно (без привязки)</option>' +
+      '<option value="5">шаг 5°</option>' +
+      '<option value="15">шаг 15°</option>' +
+      '<option value="30">шаг 30°</option>' +
+      '<option value="45">шаг 45°</option>' +
+      '<option value="90">шаг 90°</option>' +
+    '</select>' +
+    '<select id="proj">' +
+      '<option value="persp">перспектива (как глаз)</option>' +
+      '<option value="ortho">ровная проекция</option>' +
+    '</select>' +
+    '<div style="color:#9a93c9;margin:8px 0 2px">Облёт камеры</div>' +
+    '<div class="row"><b>↔</b><input type="range" id="az" min="-180" ' +
+      'max="180" step="1"><span class="val" id="azv">0°</span></div>' +
+    '<div class="row"><b>↕</b><input type="range" id="el" min="-85" ' +
+      'max="85" step="1"><span class="val" id="elv">0°</span></div>' +
+    '<div class="row" style="gap:4px">' +
+      '<button class="mini" data-v="0" style="margin:0">спереди</button>' +
+      '<button class="mini" data-v="90" style="margin:0">сбоку</button>' +
+      '<button class="mini" data-v="180" style="margin:0">сзади</button>' +
+    '</div>' +
+    '<div class="row"><b>⌇</b><input type="range" id="lean" min="-15" ' +
+      'max="15" step="1"><span class="val" id="leanv">0°</span></div>' +
+    '<button class="mini" id="hfollow">Голова следит за зрителем: вкл</button>' +
+    '<button class="mini" id="rreset">Сбросить поворот и облёт</button>' +
+    '<div class="hint">Как в Блендере: <b>колесо зажать</b> — облёт, ' +
+      '<b>Shift</b>+колесо — сдвиг, <b>Ctrl</b>+колесо — приблизить, ' +
+      '<b>Alt</b>+колесо — выровнять по ближайшей грани, а если вести ' +
+      'дальше — шагать по ракурсам через 90°. ' +
+      'Шаг облёта задаётся списком выше — выбрал 15°, и облёт идёт ' +
+      'ступеньками. ' +
+      'Облёт двигает камеру, поворот — саму модель: это разные вещи, как в ' +
+      '3D-редакторе. ' +
+      'Ровная проекция убирает эффект «выглядывает из угла»: фигура ' +
+      'выглядит одинаково в любой части кадра, а объём даёт свет, ' +
+      'а не перспектива.</div>';
+  document.body.appendChild(setBox);
+  setBox.addEventListener('pointerdown', e => e.stopPropagation());
+
+  const $s = id => setBox.querySelector('#' + id);
+  const AX = ['rx', 'ry', 'rz', 'az', 'el', 'lean'];
+  function paintSet(){
+    for (const a of AX){
+      $s(a).value = Math.round(view[a] || 0);
+      $s(a + 'v').textContent = Math.round(view[a] || 0) + '°';
+    }
+    $s('snap').value = String(view.snap || 0);
+    $s('proj').value = view.ortho ? 'ortho' : 'persp';
+    const hf = $s('hfollow');
+    if (hf) hf.textContent = 'Голова следит за зрителем: '
+      + (view.headFollow === false ? 'выкл' : 'вкл');
+  }
+  // ПРИВЯЗКА К ШАГУ: ползунок ходит плавно, но значение округляется до
+  // выбранного шага — так же ведут себя 3D-редакторы, где Ctrl «щёлкает»
+  // поворот по 15°. Ноль означает прежнее свободное поведение.
+  const snapTo = v => {
+    const st = Number(view.snap || 0);
+    return st ? Math.round(v / st) * st : v;
+  };
+  for (const a of AX){
+    $s(a).addEventListener('input', e => {
+      // осанка к сетке углов не привязывается: это плавная подстройка
+      view[a] = (a === 'lean') ? Number(e.target.value)
+                               : snapTo(Number(e.target.value));
+      applyView(); paintSet(); saveView();
+    });
+  }
+  $s('snap').addEventListener('change', e => {
+    view.snap = Number(e.target.value);
+    for (const a of AX) view[a] = snapTo(view[a] || 0);
+    applyView(); paintSet(); saveView();
+  });
+  $s('proj').addEventListener('change', e => {
+    view.ortho = e.target.value === 'ortho';
+    applyView(); saveView();
+  });
+  $s('hfollow').addEventListener('click', () => {
+    view.headFollow = (view.headFollow === false);
+    $s('hfollow').textContent = 'Голова следит за зрителем: '
+      + (view.headFollow === false ? 'выкл' : 'вкл');
+    applyView(); saveView();
+  });
+  $s('rreset').addEventListener('click', () => {
+    view.rx = view.ry = view.rz = view.az = view.el = 0;
+    view.ox = view.oy = view.oz = 0;
+    applyView(); paintSet(); saveView();
+  });
+  // готовые ракурсы — то же, что цифры на нумпаде в 3D-редакторе
+  setBox.addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    view.az = Number(b.dataset.v); view.el = 0;
+    applyView(); paintSet(); saveView();
+  });
+  paintSet();
+  window.__avPaintSet = paintSet;   // вращение мышью двигает и ползунки
+
   box.addEventListener('pointerdown', e => e.stopPropagation());
   box.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.r){ view = {x:0, y:0, z:0, zoom:1}; }
+    // ЧУЖИЕ КНОПКИ НЕ ТРОГАЕМ (2026-08-14, живой провал: добавил рядом
+    // кнопки окна на столе — и панель погасла при первом же нажатии. У них
+    // нет data-z, parseFloat(undefined) = NaN, зум становится NaN, камера
+    // уезжает в никуда и модель пропадает. Раньше в этом ряду были только
+    // свои три кнопки, и проверять было нечего.)
+    if (!b.dataset.r && !b.dataset.z) return;
+    if (b.dataset.r){
+      // сбрасываем ПОЛЯ, а не подменяем объект целиком: раньше здесь
+      // терялись az/el/rx/ry/rz/snap/ortho, и половина настроек молча
+      // пропадала при каждом нажатии ⟳
+      Object.assign(view, {x:0, y:0, z:0, zoom:1, rx:0, ry:0, rz:0,
+                           az:0, el:0, ox:0, oy:0, oz:0});
+      if (window.__avPaintSet) window.__avPaintSet();
+    }
     else view.zoom = clampZoom(view.zoom * parseFloat(b.dataset.z));
     applyView(); saveView();
   });
@@ -247,6 +857,19 @@ function loadModel(url, label, force){
     VRMUtils.removeUnnecessaryVertices(gltf.scene);
     VRMUtils.removeUnnecessaryJoints(gltf.scene);
     VRMUtils.rotateVRM0(vrm);          // VRM0.0 смотрит в -Z — разворачиваем
+    // БАЗОВЫЙ РАЗВОРОТ ЗАПОМИНАЕМ (2026-08-14, живой провал: «сбросить
+    // позицию — она встаёт спиной к камере»). Строкой выше библиотека
+    // развернула модель на 180°, потому что VRM 0.0 смотрит в -Z. А мой
+    // поворот из настроек делал rotation.set(...) — то есть ЗАТИРАЛ этот
+    // разворот вместе со своим нулём. Формально «сброс в ноль», по факту —
+    // спиной к человеку. Теперь пользовательский угол складывается с
+    // базовым, а не подменяет его.
+    // пишем в СВОЮ переменную, а не в vrm.userData: у объекта VRM такого
+    // поля нет вовсе (оно есть у vrm.scene, это Object3D), и присваивание
+    // роняло всю загрузку — «Cannot set properties of undefined»
+    baseRot = {x: vrm.scene.rotation.x,
+               y: vrm.scene.rotation.y,
+               z: vrm.scene.rotation.z};
     scene.add(vrm.scene);
     mixer = new THREE.AnimationMixer(vrm.scene);
     calibrateArms();                   // куда у ЭТОЙ модели опускаются руки
@@ -803,24 +1426,102 @@ function updateGaze(t, talking, dt){
   // реальная дистанция не меняется. Из-за деления угол компенсации рос вместе
   // с зумом, и на ближнем плане Сайка задирала голову назад.
   const camDist = 2.5;
-  const panYaw   = clamp(Math.atan2(view.x, camDist), -R(35), R(35));
+  // СМОТРИТ НА ЧЕЛОВЕКА, А НЕ ВПЕРЁД (2026-08-14: «она при повороте головой
+  // смотрит куда-то вперёд, а не на меня»). Раньше доворот считался ТОЛЬКО
+  // от сдвига модели по кадру (view.x) — про облёт камеры и разворот самой
+  // фигуры этот расчёт не знал ничего. Стоило встать сбоку, и она честно
+  // глядела «прямо перед собой», то есть мимо.
+  // Считаем настоящий угол между тем, куда она повёрнута, и тем, где
+  // человек: разворот фигуры — это базовый угол VRM плюс её собственный ry,
+  // а зритель — там, где камера.
+  // УГОЛ СЧИТАЕМ ОТ БАЗЫ, А НЕ ОТ АБСОЛЮТНЫХ УГЛОВ (2026-08-14, третий
+  // заход по одному месту — стыдно, но полезно).
+  //   1) я сложил baseRot.y + ry и назвал это «куда она смотрит». baseRot.y
+  //      у VRM 0.0 равен 180° — это разворот, которым библиотека ставит
+  //      модель лицом ВПЕРЁД. В итоге на обычном виде спереди выходило
+  //      расхождение в 180°, то есть максимальный отворот всегда;
+  //   2) следом попробовал взять направление из кватерниона — и снова мимо:
+  //      локальное «вперёд» у VRM 0.0 это -Z, а я брал +Z.
+  // Вывод: чужие соглашения об осях складывать вслепую нельзя. Считаем от
+  // ТОГО, ЧТО УЖЕ РАБОТАЕТ: при ry=0 и камере спереди (az=0) отворота нет —
+  // значит «куда она смотрит» это ровно её собственный поворот ry, а
+  // базовый разворот в этой арифметике не участвует вовсе.
+  //
+  // ЗНАК проверен эквивалентностью со старым случаем: сдвинуть модель
+  // вправо (view.x>0) при неподвижной камере — то же самое, что увести
+  // камеру влево (az<0). Значит вклад облёта входит с минусом, как ниже.
+  const toCam  = Math.atan2(camera.position.x - (view.x || 0),
+                            camera.position.z - (view.z || 0));
+  const facing = (view.ry || 0) * D2R;
+  let relYaw = toCam - facing;
+  relYaw = Math.atan2(Math.sin(relYaw), Math.cos(relYaw));   // в -PI..PI
+  // рамки человеческой шеи: дальше 35° люди доворачивают корпус, а не
+  // выкручивают голову — за пределом она просто смотрит максимально близко
+  // ВЫКЛЮЧАТЕЛЬ ДОВОРОТА ГОЛОВЫ (2026-08-14, предупреждение владельца: «мы
+  // опять сейчас наступим на грабли как UE5? просто пусть смотрит на
+  // зрителя как режим взгляда в Warudo или VRoid»). Он прав дважды.
+  // Во-первых, взгляд глазами и так делает библиотека — vrm.lookAt.target
+  // указывает на камеру, это и есть «режим взгляда» из VRoid, он работал
+  // всё это время. Во-вторых, доворот ГОЛОВЫ поверх него — приятная
+  // добавка, но за три захода она уже съела больше времени, чем стоит.
+  // Ломается — выключается одним флагом, и остаётся чистый VRoid-взгляд.
+  // ВЕРТИКАЛЬ ТОЖЕ (2026-08-14: «не хватает углов подъёма-опускания головы,
+  // поворотов»). Раньше в доворот заходил только горизонтальный угол, а
+  // облёт по высоте не учитывался вовсе: поднимаешь камеру над ней — она
+  // продолжает смотреть прямо перед собой. Считаем настоящий угол подъёма
+  // от её головы до камеры.
+  //   ЗНАК: камера ВЫШЕ (relPitch>0) — то же самое, что модель опущена
+  //   (view.y<0), а этот случай уже даёт положительный panPitch. Значит
+  //   вклад входит с плюсом.
+  const _dh = Math.hypot(camera.position.x - (view.x || 0),
+                         camera.position.z - (view.z || 0));
+  const relPitch = Math.atan2(camera.position.y - (PIVOT.y + (view.y || 0)),
+                              Math.max(0.2, _dh));
+  const follow = view.headFollow !== false;
+  // РАМКИ ШИРЕ, НО ЧЕЛОВЕЧЕСКИЕ: комфортный поворот головы у людей ~45°
+  // вбок и ~25-30° вверх-вниз, дальше идёт корпус. Было 35 и 14 — узко,
+  // отсюда и ощущение, что углов не хватает.
+  const camYaw   = follow ? clamp(relYaw,   -R(45), R(45)) : 0;
+  const camPitch = follow ? clamp(relPitch, -R(28), R(28)) : 0;
+  // ДОВОРОТ К ЗРИТЕЛЮ — ТОЛЬКО ГОЛОВА И ШЕЯ (2026-08-14: «чё она
+  // выгибается назад? и странно наклонена на прямом взгляде»).
+  // Я подмешал угол камеры в ОБЩИЕ panYaw/panPitch, а их ниже потребляют
+  // ещё и spine с chest — компенсация «хочу остаться в кадре», написанная
+  // под сдвиг модели по экрану. В итоге стоило облететь её чуть выше, как
+  // позвоночник прогибался назад, а вбок — заваливал корпус целиком.
+  // Разделяем: корпус живёт на СТАРЫХ значениях и ведёт себя ровно как
+  // раньше, а к зрителю доворачиваются только голова с шеей.
+  const panYaw = clamp(Math.atan2(view.x, camDist), -R(35), R(35));
   // знак: модель ОПУЩЕНА (view.y<0) -> panPitch>0 -> отрицательный rotation.x
   // ниже = лицо ВВЕРХ (проверено владельцем 2026-07-25: было зеркально)
   const panPitch = clamp(Math.atan2(-view.y, camDist), -R(14), R(14));
+  // а это — только для головы и шеи
+  const headYaw   = panYaw   - camYaw;
+  const headPitch = panPitch + camPitch;
   // голова следует за взглядом ЧУТЬ-ЧУТЬ: большие отводы взгляда — работа
   // ГЛАЗ (человек косится, а не крутит шеей); вклад головы клампим узко,
   // глаза доворачивают остаток сами. Всё — через addAx (аддитив поверх
   // сглаженной базы, без накопления).
   const hx = clamp(gs.ox, -0.16, 0.16), hy = clamp(gs.oy, -0.12, 0.12);
-  addAx(bone('neck'), 'y', -hx*0.18 - panYaw*0.4);
-  addAx(bone('neck'), 'x', panPitch*0.2);       // вертикаль: шея тоже работает
+  addAx(bone('neck'), 'y', -hx*0.18 - headYaw*0.4);
+  addAx(bone('neck'), 'x', headPitch*0.35);     // вертикаль: шея тоже работает
   const h = bone('head');
-  addAx(h, 'x', -hy*0.14 + panPitch*0.3);       // подъём лица — умеренный
-  addAx(h, 'y', -hx*0.06 - panYaw*0.3);
+  addAx(h, 'x', -hy*0.14 + headPitch*0.45);     // подъём лица
+  addAx(h, 'y', -hx*0.06 - headYaw*0.3);
   // «ХОЧУ ОСТАТЬСЯ В КАДРЕ» (2026-07-25, просьба владельца): при сильном
   // сдвиге модель подключает КОРПУС — опущена вниз: прогибается и тянет
   // лицо вверх; утащена вбок: чуть наклоняется к центру кадра
-  addAx(bone('spine'), 'x', panPitch*0.18);
+  // ОСАНКА (2026-08-14: «у неё всё равно спина как-то выгнута назад»).
+  // Проверил по числам: из доворота к зрителю спина не получает ничего —
+  // view.x и view.y были нулями, дыхание даёт градус-полтора. Значит
+  // прогиб — собственная стойка модели: у VRoid-моделей грудь вперёд
+  // заложена в позе покоя, и на виде сбоку это читается как выгнутая
+  // спина. Менять чужую модель я не вправе, а спорить с ней вслепую
+  // бессмысленно — поэтому даю ручку: положительный наклон выпрямляет,
+  // отрицательный горбит. Ноль = как задумал автор модели.
+  const lean = (view.lean || 0) * D2R;
+  addAx(bone('spine'), 'x', panPitch*0.18 + lean * 0.6);
+  addAx(bone('chest'), 'x', lean * 0.25);
   addAx(bone('spine'), 'z', -panYaw*0.18);
   addAx(bone('chest'), 'x', panPitch*0.1);
   // ВЕРХНИЕ ПОЗИЦИИ: модель поднята в кадре — милый наклон головы к плечу
@@ -840,8 +1541,21 @@ let nextBlink = 2 + Math.random()*3, blinkT = -1;
 const clock = new THREE.Clock();
 let talkPhase = 0, mouth = 0;
 let beat = {t0:-9, next:0, side:'right'};   // бит-жесты при речи
+// ПОТОЛОК ЧАСТОТЫ КАДРОВ НА СТОЛЕ (2026-08-14). Фигурка, которая просто
+// стоит и дышит, не выигрывает от 60 кадров ничего, а с выключенным
+// GPU-композитингом каждый кадр стоит дорого — отсюда и рывки. 30 кадров
+// глазу неотличимы на такой анимации, зато нагрузка вдвое меньше.
+// Настраивается: ?fps=N в адресе окна.
+const _FPS_CAP = _DESK ? Number(new URLSearchParams(location.search)
+                                 .get('fps') || 30) : 0;
+let _lastFrame = 0;
 function loop(){
   requestAnimationFrame(loop);
+  if (_FPS_CAP){
+    const now = performance.now();
+    if (now - _lastFrame < 1000 / _FPS_CAP) return;
+    _lastFrame = now;
+  }
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
   if (vrm){
@@ -945,7 +1659,7 @@ function loop(){
     vrm.update(dt);            // spring bones: физика волос/юбки — здесь
   }
   flatTick(dt);
-  renderer.render(scene, camera);
+  renderer.render(scene, activeCam());
 }
 loop();
 </script>
