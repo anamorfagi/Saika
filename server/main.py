@@ -1821,7 +1821,15 @@ async def select(payload: dict):
                     if _new != "off":
                         tts.load_engine(_new)
                 except Exception as e:
-                    log.warning("прогрев %s после клика: %s", _new, e)
+                    # ОТКЛЮЧЁННЫЙ ДВИЖОК — ЭТО РЕШЕНИЕ, А НЕ СБОЙ
+                    # (2026-08-14). qwen3 сам себя отключил после двух
+                    # обвалов; ругаться на это при каждом прогреве —
+                    # шум, из-за которого лог читается как поломка.
+                    if "отключён" in str(e):
+                        log.info("прогрев %s пропущен: он отключён "
+                                 "(нативно ронял процесс)", _new)
+                    else:
+                        log.warning("прогрев %s после клика: %s", _new, e)
             threading.Thread(target=_swap_tts, daemon=True).start()
         elif kind == "tts_enabled":
             CFG.set("tts.enabled", bool(value))
