@@ -366,6 +366,10 @@ class SileroEngine:
 
 class EdgeEngine:
     name = "edge"
+    # хост, без которого движок мёртв: перед попыткой синтеза его щупает
+    # быстрый TCP-пробник (1.5с), а не полный вебсокет с 20-секундным
+    # таймаутом (2026-08-15)
+    online_host = "speech.platform.bing.com"
 
     def load(self):
         import edge_tts  # noqa: F401 — просто проверка что установлен
@@ -550,8 +554,16 @@ def mark_sick(name: str, hours: float = 6.0, why: str = "") -> bool:
     умирала с перезапуском. Теперь живёт на диске: больной движок молча
     пропускают все — времянка, цепочка, бенч, — пока срок не выйдет."""
     d = _sick_load()
-    fresh = name not in d or d[name].get("until", 0) < time.time()
-    d[name] = {"until": time.time() + hours * 3600, "why": why[:160]}
+    prev = d.get(name) or {}
+    fresh = not prev or prev.get("until", 0) < time.time()
+    # УЧИМСЯ НА ПОВТОРАХ (2026-08-15, владелец: «сколько раз он уже упал с
+    # одной и той же проблемой — может, стоит понять, что эту ебанину не
+    # нужно проверять каждый раз»). Та же болезнь во второй раз — срок
+    # удваивается: 6ч -> 12ч -> 24ч… потолок неделя. Выздоровел (heal) —
+    # счётчик обнуляется, доверие возвращается сразу.
+    n = int(prev.get("n", 0)) + 1
+    eff = min(hours * (2 ** (n - 1)), 168.0)
+    d[name] = {"until": time.time() + eff * 3600, "why": why[:160], "n": n}
     try:
         _SICK_FILE.parent.mkdir(parents=True, exist_ok=True)
         _SICK_FILE.write_text(json.dumps(d, ensure_ascii=False),
@@ -559,6 +571,28 @@ def mark_sick(name: str, hours: float = 6.0, why: str = "") -> bool:
     except Exception:
         pass
     return fresh
+
+
+_PROBE = {}          # host -> (ts, ok): жизнь хоста, кэш на минуту
+
+
+def host_alive(host: str, port: int = 443, timeout: float = 1.5) -> bool:
+    """Дешёвый TCP-пробник вместо полной попытки синтеза. Владелец: «чё,
+    просто чекнуть подключение долго, чтобы не ебать мозг движку?» — не
+    долго: полторы секунды против двадцатисекундного таймаута вебсокета,
+    и результат минуту помнится."""
+    import socket
+    now = time.time()
+    c = _PROBE.get(host)
+    if c and now - c[0] < 60:
+        return c[1]
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        ok = True
+    except OSError:
+        ok = False
+    _PROBE[host] = (now, ok)
+    return ok
 
 
 def is_sick(name: str) -> bool:
@@ -832,6 +866,16 @@ class TTSManager:
             return
         for name in self._chain():
             engine = self.engines[name]
+            # онлайн-движок сперва щупаем пробником: хост мёртв — молча
+            # мимо, без двадцатисекундного таймаута и криков в чат
+            _host = getattr(engine, "online_host", "")
+            if _host and not host_alive(_host):
+                if mark_sick(name, float(CFG.get("tts.sick_hours", 6.0)),
+                             f"хост {_host} не отвечает") and self.on_problem:
+                    self.on_problem(
+                        "tts." + name, f"{_host} недоступен",
+                        "отложила движок; проверю сама, когда сеть оживёт")
+                continue
             try:
                 yielded = False
                 t0 = time.time()
