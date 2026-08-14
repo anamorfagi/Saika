@@ -47,6 +47,28 @@ class Draft:
         if self.rec is not None or self._tried:
             return self.rec
         self._tried = True
+        # САМОЛЕЧЕНИЕ БЕЗ ДОКТОРА (2026-08-14, живой случай: «завис»).
+        # Беймакс просыпается на ПАДЕНИИ — а тут процесс не упал, а встал
+        # намертво внутри Kaldi на первом же куске звука. Зависание не
+        # ловит никто: retry-цикл ждёт, доктор не зовётся, человек сидит
+        # перед мёртвой консолью. Прервать нативный вызов изнутри питона
+        # нельзя, поэтому лечим единственным доступным способом — НЕ
+        # ВХОДИМ туда второй раз: метка чёрного ящика от прошлого запуска
+        # говорит, что там уже умирали.
+        try:
+            from server import stage
+            last = stage.PATH.read_text(encoding="utf-8") \
+                if stage.PATH.exists() else ""
+            if "vosk" in last.lower():
+                self.ok, self.error = False, "прошлый запуск завис здесь"
+                log.warning("Черновик распознавания ВЫКЛЮЧЕН: прошлый "
+                            "запуск завис внутри Vosk (%s). Точный движок "
+                            "работает как работал — пропадёт только серый "
+                            "текст по ходу фразы. Вернуть: stt.draft = true "
+                            "в config.json.", last.split("\t")[0])
+                return None
+        except Exception:
+            pass
         try:
             from vosk import Model, KaldiRecognizer, SetLogLevel
             # ТИШИНА В КОНСОЛИ (2026-07-29, владелец: «логи странные» —

@@ -186,12 +186,15 @@
         "port": 8766,
         "timeout_s": 45
       }
-    }
+    },
+    "draft": false
   },
   "tts": {
-    "engine": "qwen3",
+    "engine": "piper",
     "enabled": true,
-    "disabled": [],
+    "disabled": [
+      "qwen3"
+    ],
     "output_device": "CABLE Input",
     "output_device_dup": "WH-1000XM4",
     "voice_ref": "voice/ref.wav",
@@ -397,8 +400,8 @@
       "top": true,
       "lock": false,
       "on": true,
-      "x": 1400,
-      "y": 246,
+      "x": 1377,
+      "y": 227,
       "w": 434,
       "h": 918,
       "frame": true,
@@ -424,8 +427,8 @@
       },
       "slots": {
         "saika_v1": {
-          "x": 1400,
-          "y": 246,
+          "x": 1377,
+          "y": 227,
           "w": 434,
           "h": 918,
           "view": {
