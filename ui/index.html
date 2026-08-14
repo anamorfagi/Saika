@@ -8282,6 +8282,18 @@ eqFrame();
   .vp-card .acts button{background:transparent;border:0;color:var(--dim);
     cursor:pointer;font-size:12px;padding:2px 4px;border-radius:7px}
   .vp-card .acts button:hover{background:rgba(255,255,255,.09);color:#fff}
+  /* ТЕСНО ПО ВЫСОТЕ — ЖМЁМСЯ ВСЕ, А НЕ ТОЛЬКО КАРТА (2026-08-15).
+     Владелец: «теперь видно без индикаций только на 50%». Считаем честно:
+     на 100% масштаба панели достаётся ~660 пикселей, а фиксированного
+     содержимого (спектр 74, минута 62, подписи, карточки 118, поле имени,
+     три кнопки, восемь зазоров) — под 620. Карте после этого не остаётся
+     ничего, и ужимать одну её бессмысленно: край всё равно срезает кнопки.
+     Поэтому при низкой панели ужимаются ВСЕ пиксельные куски разом. */
+  #vp-pane.short{gap:4px}
+  #vp-pane.short #vp-spec{height:50px}
+  #vp-pane.short #vp-time{height:40px}
+  #vp-pane.short #vp-cards{min-height:72px}
+  #vp-pane.short .vp-cap{margin-top:2px}
   #vp-pane.narrow #vp-cards,#vp-pane.narrow #vp-time{display:none}`;
   document.head.appendChild(css);
 
@@ -8498,7 +8510,7 @@ eqFrame();
        столбец, и если карте столько не полагается — срезаем. Только ВНИЗ и
        только в стиле, не трогая сохранённое число: станет просторнее
        (развернул окно, свернул спектр) — любимая высота вернётся сама. */
-    const MINMAP = 150;
+    const MINMAP = 110;
     let fitting = false;
     const fit = () => {
       if(fitting) return; fitting = true;
@@ -8506,6 +8518,10 @@ eqFrame();
         fitting = false;
         const pane = $id('vp-pane');
         if(!pane || !pane.offsetParent) return;
+        // тесно — включаем компактный режим ДО замеров: он сам освобождает
+        // около сотни пикселей, и карте достаётся больше, чем при простом
+        // срезании
+        pane.classList.toggle('short', pane.clientHeight < 740);
         const cur = mp.getBoundingClientRect().height;
         const others = pane.scrollHeight - cur;
         const room = pane.clientHeight - others - 6;
