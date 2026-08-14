@@ -2393,8 +2393,8 @@ _SPEED_FIELDS = (
     ("llm.cloud.context_chars", 9000, int),
     ("llm.cloud.context_chars_max", 40000, int),   # потолок при известном окне
     ("tools.trim", True, bool),                    # слать схемы под фразу
-    ("tools.max_chars", 9000, int),                # сколько отдаём схемам
-    ("memory.context_chars", 2000, int),
+    ("tools.max_chars", 12000, int),               # сколько отдаём схемам
+    ("memory.context_chars", 3000, int),
     ("llm.keep_alive", "30m", str),
     ("llm.cache_prompt", True, bool),
     ("llm.target_response_s", 0, float),
@@ -3245,7 +3245,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         try:
             mem_context = memory.build_context(
                 person_id, user_text,
-                limit_chars=int(CFG.get("memory.context_chars", 2000) or 0))
+                limit_chars=int(CFG.get("memory.context_chars", 3000) or 0))
         except Exception as e:
             report_problem("memory", str(e), "продолжаю без контекста памяти")
     t_mem = time.monotonic()  # память (Chroma/SQLite) отработала

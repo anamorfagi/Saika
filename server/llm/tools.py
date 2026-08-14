@@ -317,6 +317,34 @@ _PC_SCHEMAS = [
             "path": {"type": "string", "description": "полный путь"}},
             "required": []}}},
 ]
+# ПАМЯТЬ КАК ИНСТРУМЕНТ (2026-08-15). Долгая память до сих пор только
+# ПОДКЛАДЫВАЛАСЬ в промпт — тем, что похоже на текущий вопрос. Спросить её
+# саму Сайка не могла, и на «а помнишь, мы про озвучку говорили?» отвечала
+# тем, что случайно оказалось рядом. Даём ей ручку: поднять нить целиком и
+# посмотреть, что было за день. Оба инструмента только ЧИТАЮТ.
+_MEM_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "recall_thread",
+        "description": ("Поднять нить разговора целиком по её теме. Зови на "
+                        "«помнишь, мы говорили про…», «что мы решили по…», "
+                        "«вернёмся к теме…». Тема — своими словами человека, "
+                        "точное совпадение не нужно."),
+        "parameters": {"type": "object", "properties": {
+            "topic": {"type": "string", "description": "тема нити"}},
+            "required": ["topic"]}}},
+    {"type": "function", "function": {
+        "name": "day_recall",
+        "description": ("Что было за день: кто приходил и о чём говорили. "
+                        "Зови на «что мы сегодня делали», «что было вчера», "
+                        "«о чём говорили утром». date — YYYY-MM-DD, пусто = "
+                        "сегодня."),
+        "parameters": {"type": "object", "properties": {
+            "date": {"type": "string", "description": "YYYY-MM-DD"}},
+            "required": []}}},
+]
+_MEM_NAMES = {s["function"]["name"] for s in _MEM_SCHEMAS}
+
+
 _PC_NAMES = {s["function"]["name"] for s in _PC_SCHEMAS}
 
 # ───────────── РУКИ ВНУТРИ ОКОН (2026-07-29, server/ui_hands.py) ─────────────
@@ -1170,6 +1198,10 @@ def _schemas_build() -> list:
         local = local + _BROWSER_SCHEMAS
     if CFG.get("idle.allow_self_shutdown", True):
         local = local + [_SHUTDOWN_SCHEMA]
+    # память — всем моделям без исключения: «помнишь, мы говорили про…»
+    # это не привилегия сильной модели, а базовое свойство собеседника
+    if CFG.get("memory.tools", True):
+        local = local + list(_MEM_SCHEMAS)
     # аватар: намеренно БЕЗ gating по tier — даём даже мелким локальным
     # моделям, их же и просили осознавать, что тело у них есть
     if CFG.get("avatar.enabled", False) and CFG.get("avatar.llm_gestures", True):
@@ -1284,10 +1316,11 @@ def _schemas_build() -> list:
 # маркеры сам (_bare_tool_calls в main.py), даже если схему не посылали.
 _CORE_TOOLS = (
     "web_search", "web_list", "open_result",
-    "app_launch", "open_folder", "find_folder",
+    "app_launch", "open_folder", "find_folder", "folder_list",
+    "go_to", "scan_disk", "find_here", "pick_number",
     "window_focus", "window_close", "window_place", "minimize_all",
-    "volume_set", "fs_list", "fs_read", "fs_write",
-    "screen_look", "remember", "recall",
+    "volume_set", "eyes", "fs_list", "fs_read", "fs_write",
+    "recall_thread", "day_recall",
 )
 
 
@@ -1337,7 +1370,7 @@ def schemas_for(text: str, budget_chars: int = 0) -> list:
     all_scs = schemas()
     if not CFG.get("tools.trim", True):
         return all_scs
-    limit = int(budget_chars or CFG.get("tools.max_chars", 9000) or 0)
+    limit = int(budget_chars or CFG.get("tools.max_chars", 12000) or 0)
     full = len(_j.dumps(all_scs, ensure_ascii=False))
     if not limit or full <= limit:
         return all_scs
@@ -1358,26 +1391,30 @@ def schemas_for(text: str, budget_chars: int = 0) -> list:
     grew = [n for n in hits if n in by_name and n not in _PICKED]
     _add(hits, _PICKED)
 
-    def _pack(names):
+    def _pack(names, cap):
         out, used = [], 0
         for n in names:
             sc = by_name.get(n)
             if sc is None:
                 continue
             size = len(_j.dumps(sc, ensure_ascii=False)) + 1
-            if used + size > limit and out:
+            if used + size > cap and out:
                 return out, used, False
             out.append(sc)
             used += size
         return out, used, True
 
-    out, used, fit = _pack(_PICKED)
+    out, used, fit = _pack(_PICKED, limit)
     if not fit:
-        # перебор: собираем заново — ядро плюс то, что нужно прямо сейчас
+        # ПЕРЕСБОРКА С ЗАПАСОМ (2026-08-15). Собирать ровно под потолок —
+        # значит пересобираться каждый ход: следующая же фраза принесёт ещё
+        # один инструмент и снова выбьет за границу, а каждая пересборка =
+        # полный prefill. Оставляем пятую часть бюджета пустой, чтобы набор
+        # успел спокойно подрасти.
         _PICKED.clear()
         _add(hits, _PICKED)
         _add(_CORE_TOOLS, _PICKED)
-        out, used, _ = _pack(_PICKED)
+        out, used, _ = _pack(_PICKED, int(limit * 0.8))
         del _PICKED[len(out):]
         log.info("Набор инструментов пересобран под бюджет %d символов "
                  "(%d схем) — одна полная пережёвка промпта", limit, len(out))
@@ -1669,6 +1706,38 @@ def _call(name: str, arguments) -> str:
         if name == "anim_hints":
             return anim_hub.hints()
         return anim_hub.list_local()
+    if name in _MEM_NAMES:
+        import json as _json
+        a = arguments
+        if isinstance(a, str):
+            try:
+                a = _json.loads(a)
+            except Exception:
+                a = {}
+        a = a or {}
+        try:
+            from server.main import memory as _mem
+        except Exception:
+            return "память сейчас недоступна"
+        if name == "recall_thread":
+            topic = str(a.get("topic", "")).strip()
+            rows = _mem.thread_recall(topic)
+            if not rows:
+                th = ", ".join(t for t, _n, _ts in _mem.threads()) or "пусто"
+                return ("нити «%s» не нашла. Что есть: %s" % (topic, th))
+            import time as _tm
+            out = []
+            for summary, ts in rows:
+                when = _tm.strftime("%d.%m %H:%M", _tm.localtime(ts or 0))
+                out.append("%s — %s" % (when, (summary or "")[:220]))
+            return "нить «%s»:\n" % topic + "\n".join(out)
+        if name == "day_recall":
+            d = str(a.get("date", "")).strip() or None
+            try:
+                txt = _mem.day_digest(d)
+            except Exception as e:
+                return "не смогла собрать день: %s" % e
+            return txt or "за этот день у меня ничего не отложилось"
     if name in _PC_NAMES:
         import json as _json
         from server import pc_control as _pc
@@ -2053,6 +2122,10 @@ _TOOL_HINTS = {
     "volume_set":   ("громк", "звук", "тише", "громче"),
     "net_bypass":   ("запрет", "zapret", "обходчик", "что с сетью",
                      "сеть работает", "не открывается ютуб", "дискорд не"),
+    "recall_thread": ("помнишь", "мы говорили", "что мы решили",
+                      "вернёмся к", "та тема", "о чём мы"),
+    "day_recall":   ("что мы сегодня", "что было сегодня", "что было вчера",
+                     "о чём говорили", "за день", "с утра"),
     "tab_control":  ("вкладк",),
     "web_search":   ("загугли", "найди в интернете", "поищи в", "погугли"),
     # 2026-08-13

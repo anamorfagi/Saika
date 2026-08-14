@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS episodes(
     salience REAL DEFAULT 0.5,
     consolidated INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS days(
+    date TEXT PRIMARY KEY,        -- 2026-08-15
+    digest TEXT,                  -- о чём был день, по людям
+    threads TEXT,                 -- нити, которые в этот день трогали
+    ts REAL
+);
 CREATE TABLE IF NOT EXISTS persons(
     id TEXT PRIMARY KEY,
     name TEXT,
@@ -54,8 +60,13 @@ CREATE TABLE IF NOT EXISTS persons(
 
 SUMMARIZE_PROMPT = """Ты — модуль памяти AI-компаньона Сайки. Сожми диалог в один эпизод памяти.
 Сохрани: суть разговора, эмоцию, важные факты о человеке, решения.
-Ответь строго JSON: {"summary": "...", "emotion": "...", "salience": 0.0-1.0}
+Ответь строго JSON: {"summary": "...", "emotion": "...", "salience": 0.0-1.0,
+"thread": "..."}
 salience — важность: эмоционально сильное, уникальное, важные факты = выше.
+thread — КОРОТКОЕ (2-4 слова) имя темы, к которой относится кусок:
+«запуск Сайки», «голос и озвучка», «поиск игр на диске». Одна и та же тема
+в разные дни должна называться ОДИНАКОВО — по имени человек потом просит
+вспомнить нить целиком. Если тема бытовая и разовая — пиши «разное».
 
 Диалог:
 """
@@ -80,6 +91,15 @@ class Memory:
         self.lock = threading.Lock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.executescript(SCHEMA)
+        # МИГРАЦИЯ ЖИВОЙ БАЗЫ (2026-08-15): у владельца она копится с
+        # июля, дропать её нельзя — досыпаем колонку, если её нет.
+        try:
+            have = {r[1] for r in self._conn.execute(
+                "PRAGMA table_info(episodes)")}
+            if "thread" not in have:
+                self._conn.execute("ALTER TABLE episodes ADD COLUMN thread TEXT")
+        except Exception as e:
+            log.warning("миграция episodes.thread не прошла: %s", e)
         self._conn.commit()
         self._chroma = None
         self._ensure_owner()
@@ -171,7 +191,7 @@ class Memory:
                 self._conn.commit()
 
     def _trim_raw(self):
-        limit = CFG.get("memory.raw_limit_messages", 500)
+        limit = CFG.get("memory.raw_limit_messages", 4000)
         with self.lock:
             self._conn.execute(
                 "DELETE FROM events WHERE compressed=1 AND id NOT IN "
@@ -222,9 +242,11 @@ class Memory:
                 summary = data.get("summary", dialog[:300])
                 emotion = data.get("emotion", "")
                 salience = float(data.get("salience", 0.5))
+                thread = str(data.get("thread") or "").strip()[:60]
             except Exception as e:
                 log.warning("Суммаризация не удалась (%s), сохраняю обрезок", e)
                 summary, emotion, salience = dialog[:300], "", 0.3
+                thread = ""
             cat = self.person(person_id).get("category", "stranger")
             if cat == "stranger":
                 summary = f"[случайный собеседник] {summary[:150]}"
@@ -232,9 +254,9 @@ class Memory:
             with self.lock:
                 cur = self._conn.execute(
                     "INSERT INTO episodes(ts_start,ts_end,person_id,summary,"
-                    "emotion,salience) VALUES(?,?,?,?,?,?)",
+                    "emotion,salience,thread) VALUES(?,?,?,?,?,?,?)",
                     (events[0][1], events[-1][1], person_id, summary,
-                     emotion, salience))
+                     emotion, salience, thread))
                 ep_id = cur.lastrowid
                 self._conn.executemany(
                     "UPDATE events SET compressed=1 WHERE id=?",
@@ -245,7 +267,8 @@ class Memory:
                 try:
                     col.add(ids=[str(ep_id)], documents=[summary],
                             metadatas=[{"person_id": person_id,
-                                        "salience": salience}])
+                                        "salience": salience,
+                                        "thread": thread or "разное"}])
                 except Exception as e:
                     log.warning("Chroma add failed: %s", e)
         self._enforce_caps()
@@ -341,6 +364,115 @@ class Memory:
                 "ORDER BY id DESC LIMIT ?", (person_id, k)).fetchall()
         return [r[0] for r in rows]
 
+    # ---------- день и нити ----------
+    # ЗАЧЕМ ЭТОТ СЛОЙ (2026-08-15, дословная просьба владельца): «я хочу
+    # чтобы она могла за весь день болтовню держать от десятков людей и
+    # могла вспоминать нити разговоров, а ближайшие 4 часа более хорошо в
+    # подробностях».
+    #
+    # Слои уже были: RAW дословно, эпизоды по кускам, CORE про человека.
+    # Не хватало ровно середины — «что было СЕГОДНЯ» и «о чём вообще шла
+    # речь». Эпизод знает свой кусок времени и своего человека, но не
+    # знает, что три эпизода за день — одна и та же тема. Отсюда нить:
+    # короткое имя темы, которое суммаризатор ставит сам, одинаково для
+    # разных дней. По нему потом можно поднять всю ветку разом.
+    #
+    # Дневная сводка складывается ИЗ ЭПИЗОДОВ, а не из сырья: сырьё за
+    # день — это десятки тысяч символов, в промпт оно не поедет никогда.
+
+    DAY_FMT = "%Y-%m-%d"
+
+    def _day_bounds(self, date_str=None):
+        import datetime as _dt
+        d = (_dt.datetime.strptime(date_str, self.DAY_FMT).date()
+             if date_str else _dt.date.today())
+        start = _dt.datetime.combine(d, _dt.time.min).timestamp()
+        return d.strftime(self.DAY_FMT), start, start + 86400
+
+    def day_digest(self, date_str=None, rebuild=False) -> str:
+        """Короткая сводка дня: кто приходил и о чём говорили.
+
+        Кэшируется в таблице days: пересобирать её на каждую фразу — это
+        лишний проход по базе там, где день меняется раз в полчаса.
+        """
+        key, t0, t1 = self._day_bounds(date_str)
+        if not rebuild:
+            with self.lock:
+                row = self._conn.execute(
+                    "SELECT digest,ts FROM days WHERE date=?", (key,)).fetchone()
+            if row and row[0] and (time.time() - (row[1] or 0)
+                                   < CFG.get("memory.day_cache_s", 900)):
+                return row[0]
+        with self.lock:
+            eps = self._conn.execute(
+                "SELECT person_id,summary,thread,salience FROM episodes "
+                "WHERE ts_start>=? AND ts_start<? ORDER BY salience DESC, id",
+                (t0, t1)).fetchall()
+            live = self._conn.execute(
+                "SELECT person_id,COUNT(*) FROM events "
+                "WHERE ts>=? AND ts<? AND compressed=0 GROUP BY person_id",
+                (t0, t1)).fetchall()
+        if not eps and not live:
+            return ""
+        by_person = {}
+        for pid, summary, thread, sal in eps:
+            by_person.setdefault(pid, []).append((thread or "разное", summary))
+        parts = []
+        for pid, items in by_person.items():
+            name = self.person(pid).get("name") or pid
+            seen, lines = set(), []
+            for thread, summary in items[:6]:
+                if thread in seen:
+                    continue
+                seen.add(thread)
+                lines.append("%s — %s" % (thread, (summary or "")[:160]))
+            parts.append("%s: %s" % (name, "; ".join(lines)))
+        for pid, n in live:
+            name = self.person(pid).get("name") or pid
+            parts.append("%s: ещё %d свежих реплик, они целиком в разговоре "
+                         "выше" % (name, n))
+        digest = " | ".join(parts)
+        with self.lock:
+            self._conn.execute(
+                "INSERT INTO days(date,digest,threads,ts) VALUES(?,?,?,?) "
+                "ON CONFLICT(date) DO UPDATE SET digest=excluded.digest,"
+                "threads=excluded.threads,ts=excluded.ts",
+                (key, digest,
+                 json.dumps(sorted({t for _p, _s, t, _x in eps if t}),
+                            ensure_ascii=False),
+                 time.time()))
+            self._conn.commit()
+        return digest
+
+    def threads(self, days: int = 7, limit: int = 12) -> list:
+        """Нити за последние дни: [(имя, сколько эпизодов, когда трогали)]."""
+        since = time.time() - days * 86400
+        with self.lock:
+            rows = self._conn.execute(
+                "SELECT thread,COUNT(*),MAX(ts_end) FROM episodes "
+                "WHERE thread IS NOT NULL AND thread!='' AND thread!='разное' "
+                "AND ts_end>=? GROUP BY thread ORDER BY MAX(ts_end) DESC "
+                "LIMIT ?", (since, limit)).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def thread_recall(self, name: str, limit: int = 12) -> list:
+        """Поднять нить целиком — по имени, а если не совпало точно, то по
+        похожести (человек назовёт её своими словами, не нашими)."""
+        name = (name or "").strip()
+        if not name:
+            return []
+        with self.lock:
+            rows = self._conn.execute(
+                "SELECT summary,ts_start FROM episodes WHERE thread=? "
+                "ORDER BY id DESC LIMIT ?", (name, limit)).fetchall()
+            if not rows:
+                rows = self._conn.execute(
+                    "SELECT summary,ts_start FROM episodes "
+                    "WHERE thread LIKE ? OR summary LIKE ? "
+                    "ORDER BY id DESC LIMIT ?",
+                    ("%" + name + "%", "%" + name + "%", limit)).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
     def build_context(self, person_id, query, limit_chars: int = 0) -> str:
         """CORE-образ + релевантные эпизоды. RAW добавляет main как историю чата.
 
@@ -351,7 +483,7 @@ class Memory:
         жуёт всё заново. Режем самый разговорчивый источник (эпизоды),
         образ собеседника бережём: он короткий и важный.
         """
-        limit = int(limit_chars or CFG.get("memory.context_chars", 2000) or 0)
+        limit = int(limit_chars or CFG.get("memory.context_chars", 3000) or 0)
         parts = []
         p = self.person(person_id)
         core = ""
@@ -362,9 +494,30 @@ class Memory:
             if limit and len(core) > limit // 2:
                 core = core[:limit // 2].rstrip() + "…"
             parts.append(core)
+        # СЕГОДНЯШНИЙ ДЕНЬ ОТДЕЛЬНОЙ СТРОКОЙ. Раньше в промпт ехали только
+        # «релевантные эпизоды» — то есть похожие на текущий вопрос. На
+        # вопрос «что мы сегодня делали» похожего не находилось ничего, и
+        # она честно не помнила день, который сама же и прожила.
+        day_room = int(CFG.get("memory.day_chars", 700))
+        if limit and day_room > limit // 3:
+            day_room = limit // 3
+        try:
+            day = self.day_digest()
+        except Exception as e:
+            log.debug("сводка дня пропущена: %s", e)
+            day = ""
+        if day and day_room > 60:
+            parts.append("Сегодня уже было: " + day[:day_room])
+        try:
+            th = [t for t, _n, _ts in self.threads()][:6]
+        except Exception:
+            th = []
+        if th:
+            parts.append("Открытые нити (могу поднять любую целиком, "
+                         "спроси): " + ", ".join(th))
         eps = self.relevant_episodes(query, person_id)
         if eps:
-            room = (limit - len(core) - 24) if limit else 0
+            room = (limit - sum(len(x) for x in parts) - 24) if limit else 0
             keep = []
             for e in eps:
                 line = "- " + e
@@ -400,7 +553,7 @@ def start_scheduler(memory: Memory, llm_chat_once):
 
     sched = BackgroundScheduler(daemon=True)
     sched.add_job(lambda: memory.compress_raw(llm_chat_once), "interval",
-                  minutes=CFG.get("memory.compress_raw_every_min", 120),
+                  minutes=CFG.get("memory.compress_raw_every_min", 30),
                   id="raw2episodes")
     sched.add_job(lambda: memory.consolidate_core(llm_chat_once), "interval",
                   days=CFG.get("memory.core_update_every_days", 7),
