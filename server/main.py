@@ -2825,6 +2825,8 @@ class _ServerSpeaker:
 
     def __init__(self):
         self._streams = {}   # "primary"/"dup" -> (sd.OutputStream, sr, device)
+        self._q = {}         # то же -> очередь кусков
+        self._th = {}        # то же -> поток-писатель
 
     @staticmethod
     def _resolve_device(name):
@@ -2857,11 +2859,67 @@ class _ServerSpeaker:
             except Exception:
                 pass
         import sounddevice as sd
+        # ЗАПАС В БУФЕРЕ ПРОТИВ МИКРОЗАВИСАНИЙ (2026-08-15). Владелец:
+        # «в голосе появились микрозависания, локалку я не использую».
+        # Поток открывался с настройками по умолчанию — то есть с самым
+        # коротким буфером, какой согласится дать драйвер. Такой буфер
+        # прощает задержку в единицы миллисекунд, а у нас в одном процессе
+        # живут распознавание речи, отпечаток голоса, классификатор звуков
+        # и веб-сервер: стоит ГИЛу задержать поток озвучки на пару десятков
+        # миллисекунд — и в звуке дырка. latency='high' просит у драйвера
+        # буфер побольше: задержка старта вырастает на десятки миллисекунд
+        # (на слух незаметно), зато рывки пропадают.
         stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32",
-                                 device=device)
+                                 device=device,
+                                 latency=CFG.get("tts.out_latency", "high"))
         stream.start()
         self._streams[key] = (stream, sr, device)
         return stream
+
+    def _pump(self, key: str, device_cfg_key: str):
+        """Свой поток на каждое устройство: пишем из очереди, а не по месту.
+
+        Раньше play() писал ПОДРЯД в оба устройства (наушники и CABLE), в
+        одном потоке. write() блокирующий: пока драйвер наушников не примет
+        кусок, кусок для CABLE ждёт, и наоборот — у двух устройств свои
+        часы, и они начинают тормозить друг друга. Плюс сама озвучка не
+        может считать следующий кусок, пока не закончится запись. Очередь
+        разводит их: генератор кладёт и идёт дальше, устройства пишут
+        каждое в своём темпе."""
+        import queue as _q
+        while True:
+            try:
+                item = self._q[key].get()
+            except Exception:
+                return
+            if item is None:
+                return
+            data, sr = item
+            try:
+                self._get_stream(key, device_cfg_key, sr).write(data)
+            except Exception as e:
+                log.debug("вывод озвучки %s: %s", key, e)
+            finally:
+                try:
+                    self._q[key].task_done()
+                except Exception:
+                    pass
+
+    def _send(self, key: str, device_cfg_key: str, data, sr: int):
+        import queue as _q
+        if key not in self._q:
+            self._q[key] = _q.Queue(maxsize=64)
+            t = threading.Thread(target=self._pump, args=(key, device_cfg_key),
+                                 daemon=True, name="speak:" + key)
+            t.start()
+            self._th[key] = t
+        try:
+            self._q[key].put_nowait((data, sr))
+        except Exception:
+            # очередь забита — устройство отстаёт больше чем на секунду.
+            # Лучше уронить кусок, чем копить задержку: голос должен идти
+            # вровень с разговором, а не отставать от него.
+            log.debug("очередь вывода %s переполнена — кусок пропущен", key)
 
     def play(self, pcm: bytes, sr: int):
         try:
@@ -2882,22 +2940,28 @@ class _ServerSpeaker:
             return
         vol = max(0.0, min(1.0, float(CFG.get("tts.server_volume", 0.8))))
         data = np.clip(np.frombuffer(pcm, dtype=np.float32) * vol, -1.0, 1.0)
-        try:
-            self._get_stream("primary", "tts.output_device", sr).write(data)
-        except Exception as e:
-            report_problem("tts", str(e),
-                           "основной серверный вывод озвучки не сработал")
+        self._send("primary", "tts.output_device", data, sr)
         # дубль — как в браузере: второе устройство одновременно (например,
         # CABLE Input для LipSync аватара, пока основное играет в наушники,
         # или наоборот). Пусто в конфиге -> дубль просто не создаётся.
         if CFG.get("tts.output_device_dup"):
-            try:
-                self._get_stream("dup", "tts.output_device_dup", sr).write(data)
-            except Exception as e:
-                report_problem("tts", str(e),
-                               "дубль-вывод озвучки сервера не сработал")
+            self._send("dup", "tts.output_device_dup", data, sr)
 
     def close(self):
+        # сначала гасим писателей, потом сами устройства: иначе поток
+        # успевает дописать в уже закрытый поток и ловит исключение
+        for key, q in list(self._q.items()):
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
+        for key, t in list(self._th.items()):
+            try:
+                t.join(timeout=1.0)
+            except Exception:
+                pass
+        self._q.clear()
+        self._th.clear()
         for key, (stream, _sr, _dev) in list(self._streams.items()):
             try:
                 stream.stop()
