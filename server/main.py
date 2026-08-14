@@ -6294,6 +6294,21 @@ def _autostart_components():
         stt_chain.sort(key=lambda n: -_manual.get(n, 0))
         _try_chain("stt", stt_chain, stt.load_engine)
 
+    # СТРАЖ ПЕТЛИ КРАШЕЙ — ДО ВСЯКОЙ ЗАГРУЗКИ ГОЛОСА (2026-08-14). Смотрим
+    # хлебную крошку: если прошлый старт умер на загрузке движка, второй
+    # раз туда не лезем. Иначе получается ровно то, что было у владельца —
+    # три перезапуска подряд с одним и тем же нативным обвалом.
+    try:
+        # tts здесь — ЭКЗЕМПЛЯР TTSManager, а страж живёт в модуле
+        from server.tts import manager as _ttsmod
+        _tts_note = _ttsmod.crash_guard()
+        if _tts_note:
+            log.warning("%s", _tts_note)
+            broadcast_event({"type": "baymax", "mood": "meh",
+                             "text": "🔇 " + _tts_note})
+    except Exception as _e:
+        log.debug("страж крашей озвучки: %s", _e)
+
     def _boot_tts():
         # то же для голоса: «без озвучки» не должно превращаться в
         # «раз молчит — поднимем следующий по списку»

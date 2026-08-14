@@ -112,7 +112,13 @@ def _load():
     try:
         from panns_inference import AudioTagging, labels
         dev = str(CFG.get("hearing.device", "cpu"))
-        _model = AudioTagging(checkpoint_path=None, device=dev)
+        # ПОД ОБЩИМ ЗАМКОМ ЗАГРУЗКИ (2026-08-14). Уши — тоже торч-модель, и
+        # на старте они въезжают в память ровно тогда же, когда озвучка
+        # компилируется, а слух поднимает GigaAM. Тройное совпадение и дало
+        # три access violation подряд. Замок TORCH_GATE придуман для этого.
+        from server.torch_gate import TORCH_GATE
+        with TORCH_GATE:
+            _model = AudioTagging(checkpoint_path=None, device=dev)
         _labels = list(labels)
         STATE["ready"] = True
         log.info("Уши: PANNs загружены (%s, %d классов)", dev, len(_labels))

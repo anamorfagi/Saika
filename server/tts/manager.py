@@ -5,6 +5,7 @@
 """
 import asyncio
 import io
+import json
 import logging
 import re
 import threading
@@ -12,7 +13,7 @@ import time
 
 import numpy as np
 
-from server.config import CFG, resolve
+from server.config import CFG, ROOT, resolve
 from server import diagnostics
 
 log = logging.getLogger("saika.tts")
@@ -415,6 +416,86 @@ class OffEngine:
         return None    # нечего грузить — UI прячет кнопку загрузки
 
 
+# ═══ ХЛЕБНАЯ КРОШКА ПРОТИВ ПЕТЛИ КРАШЕЙ (2026-08-14) ═══
+# Нативный обвал (0xC0000005) убивает процесс мгновенно — ни try, ни
+# finally питона не срабатывают, лога тоже не остаётся. Единственный
+# способ узнать, на чём умерли, — оставить след НА ДИСКЕ перед опасным
+# местом и убрать его после успеха. Файл пережил перезапуск — значит
+# прошлый старт умер ровно здесь.
+#
+# Зачем это, если Беймакс уже умеет распознать краш по логу: он переводит
+# tts.engine на запасной, но автопуск потом СОРТИРУЕТ цепочку по ручным
+# оценкам владельца — и qwen3 с его высокой палочкой прыгает обратно на
+# первое место. Три перезапуска подряд с одним и тем же крахом. Крошка
+# закрывает петлю: два обвала на загрузке — движок уходит в tts.disabled,
+# который загрузчик уже уважает, и человек видит почему.
+_CRUMB = ROOT / "data" / "tts_loading.txt"
+_STRIKES = ROOT / "data" / "tts_strikes.json"
+_HEAVY = ("qwen3", "omni", "xtts", "f5")     # те, кто умеет ронять процесс
+
+
+def _crumb_set(name: str):
+    if not any(h in name.lower() for h in _HEAVY):
+        return
+    try:
+        _CRUMB.parent.mkdir(parents=True, exist_ok=True)
+        _CRUMB.write_text(name, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _crumb_clear():
+    try:
+        _CRUMB.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def crash_guard() -> str:
+    """Зовётся на старте ДО загрузки голосов. Возвращает пояснение, если
+    пришлось кого-то отключить, иначе пусто."""
+    try:
+        if not _CRUMB.exists():
+            return ""
+        name = (_CRUMB.read_text(encoding="utf-8").strip() or "").lower()
+        _crumb_clear()
+        if not name:
+            return ""
+        try:
+            st = json.loads(_STRIKES.read_text("utf-8"))
+        except Exception:
+            st = {}
+        st[name] = int(st.get(name, 0)) + 1
+        _STRIKES.write_text(json.dumps(st, ensure_ascii=False),
+                            encoding="utf-8")
+        if st[name] < 2:
+            log.warning("Озвучка «%s» уронила процесс при загрузке "
+                        "(попытка %d). Ещё один раз — отключу.", name, st[name])
+            return ""
+        dis = list(CFG.get("tts.disabled", []) or [])
+        if name not in dis:
+            dis.append(name)
+            CFG.set("tts.disabled", dis)
+        return (f"Голос «{name}» дважды подряд обрушил процесс при загрузке "
+                "— отключила его, чтобы система вообще поднялась. Это не "
+                "поломка кода: чаще всего не хватает видеопамяти. Освободи "
+                "VRAM и убери его из tts.disabled в настройках.")
+    except Exception as e:
+        log.debug("страж крашей озвучки: %s", e)
+        return ""
+
+
+def note_good(name: str):
+    """Движок поднялся — снимаем с него прошлые «страйки»."""
+    try:
+        st = json.loads(_STRIKES.read_text("utf-8"))
+        if st.pop((name or "").lower(), None) is not None:
+            _STRIKES.write_text(json.dumps(st, ensure_ascii=False),
+                                encoding="utf-8")
+    except Exception:
+        pass
+
+
 class TTSManager:
     def __init__(self, on_problem=None):
         self.engines = {"off": OffEngine(), "qwen3": Qwen3Engine(),
@@ -493,8 +574,30 @@ class TTSManager:
                 f"{name} отключён (нативно роняет процесс на этом ПК). "
                 "Убери его из tts.disabled в config.json, если хочешь пробовать.")
         try:
-            self.engines[name].load()
+            # ЗАГРУЗКА ОЗВУЧКИ — ПОД ТЕМ ЖЕ ЗАМКОМ, ЧТО И ОСТАЛЬНОЙ ТОРЧ
+            # (2026-08-14, живой краш: три перезапуска подряд с
+            # -1073741819 — это access violation, нативный обвал).
+            #
+            # Замок TORCH_GATE заведён ровно для того, чтобы две модели не
+            # въезжали в память одновременно, и им пользуются слух,
+            # отпечаток голоса и стенограмма. ОЗВУЧКУ сюда забыли — а она
+            # самый тяжёлый загрузчик из всех: qwen3-TTS не просто читает
+            # веса, он компилирует (inductor) и пишет CUDA-графы. Пока это
+            # шло вторым в очереди, обвала не случалось; стоило по просьбе
+            # владельца пустить голос ПЕРВЫМ — компиляция совпала с
+            # загрузкой GigaAM, PANNs и ECAPA, и процесс лёг.
+            #
+            # Порядок «голос первым» при этом сохраняется: замок не меняет
+            # очередь, он лишь запрещает лезть в память вдвоём.
+            from server.torch_gate import TORCH_GATE
+            with TORCH_GATE:
+                _crumb_set(name)
+                try:
+                    self.engines[name].load()
+                finally:
+                    _crumb_clear()
             self.health[name] = "ok"
+            note_good(name)
             self.last_error.pop(name, None)
             self.last_diag.pop(name, None)
         except Exception as e:
