@@ -525,7 +525,10 @@
 
   /* скроллбары */
   ::-webkit-scrollbar{width:9px;height:9px}
-  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:9px;
+  /* ползунок был почти невидим (.13 альфы) — по нему нельзя понять,
+     что панель прокручивается, и половина интерфейса читалась как
+     отсутствующая (2026-08-15) */
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:9px;
     border:2px solid transparent;background-clip:padding-box}
   ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.24);
     background-clip:padding-box;border:2px solid transparent}
@@ -3852,7 +3855,16 @@ eqFrame();
 
   const st2 = document.createElement('style');
   st2.textContent = `
-  #vp-pane{display:none;min-width:0;overflow:hidden;border-radius:26px;
+  /* ПРОКРУТКА, А НЕ ОБРЕЗКА (2026-08-15). Владелец: «почему я на ста
+     процентах нифига не вижу индикации, только если интерфейс уменьшу
+     до 67%». Карта голосов берёт min-height:min(42vh,440px), спектр и
+     минута — фиксированные пиксели, и на 100% всё вместе перестаёт
+     влезать. Панель при этом стояла overflow:hidden — то есть хвост
+     (карточки голосов, поле имени, кнопки «Слушать систему», «Записать»,
+     «Слушать час») просто отрезался НАСОВСЕМ, без всякого признака, что
+     там что-то есть. Уменьшение масштаба «чинило» это только потому,
+     что пиксельные куски становились мельче относительно vh. */
+  #vp-pane{display:none;min-width:0;overflow:hidden auto;border-radius:26px;
     background:radial-gradient(ellipse at 50% 15%,rgba(77,208,225,.10) 0%,
       rgba(255,255,255,.03) 70%);
     border:1px solid var(--tile-bd,rgba(255,255,255,.1))}
@@ -8167,7 +8179,12 @@ eqFrame();
      владелец: «маштабирование верхнее нужно было») */
   #vp-mapwrap{position:relative;flex:1 1 auto;display:flex;
     flex-direction:column;min-height:0}
-  #vp-map{flex:1 1 auto;min-height:min(42vh,440px);width:100%;display:block;
+  /* 42vh были выбраны, когда снизу почти ничего не висело; теперь под
+     картой ещё спектр, минута, карточки голосов, поле имени и три
+     кнопки — на 100% масштаба всё это переставало влезать (2026-08-15).
+     Карта по-прежнему растёт первой и тянется грипом, но НАЧАЛЬНЫЙ
+     аппетит скромнее: лучше меньше карта, чем невидимые кнопки. */
+  #vp-map{flex:1 1 auto;min-height:min(30vh,320px);width:100%;display:block;
     border-radius:16px;border:1px solid rgba(255,255,255,.08);
     background:radial-gradient(130% 120% at 50% 40%,rgba(77,208,225,.05),
       rgba(8,10,18,.60))}
