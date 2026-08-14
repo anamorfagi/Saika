@@ -3625,8 +3625,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                 _lastx = " | ".join(f"{r}: {t[:160]}" for r, t in _tail2)
                 dyn_parts.add("other",
                               "### Последний обмен (короткая реплика человека "
-                              "продолжает ИМЕННО его):
-" + _lastx)
+                              "продолжает ИМЕННО его):\n" + _lastx)
     except Exception as e:
         log.debug("якорь короткой реплики пропущен: %s", e)
     # ЧТО В РУКАХ ПРЯМО СЕЙЧАС. Блок короткий и живёт пять минут, но
