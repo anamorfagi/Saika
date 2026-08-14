@@ -1162,6 +1162,22 @@ def _describe(url: str, question: str) -> str:
                 tries.append((cand["backend"], cand["model"]))
     except Exception as e:
         log.debug("доп. зрячие не нашлись: %s", e)
+    # РЕЗЕРВНЫЕ ЗРЯЧИЕ ПО ЖИВЫМ КЛЮЧАМ (2026-08-15, владелец: «может,
+    # найдём какую-нибудь зрячую облачную, чтобы нормально хоть покадрово
+    # получать контекст»). Нашли, и она уже оплачена: на его Cloudflare-
+    # аккаунте живёт весь каталог, включая llama-3.2-11b-vision — слота в
+    # настройках у неё нет, но cloud_for теперь обслуживает любое @cf/-имя
+    # реквизитами настроенного Cloudflare. Плюс его основная
+    # mistral-medium-3 сама мультимодальная — её из слепых уже выпустили.
+    try:
+        from server.llm.manager import cloud_saved as _csaved
+        if any(e.get("provider") == "cloudflare" for e in _csaved()):
+            for extra in ("@cf/meta/llama-3.2-11b-vision-instruct",
+                          "@cf/llava-hf/llava-1.5-7b-hf"):
+                if ("cloud", extra) not in tries:
+                    tries.append(("cloud", extra))
+    except Exception as e:
+        log.debug("резервные CF-зрячие не подцепились: %s", e)
     errs = []
     for backend, model in tries:
         # У ВЫКЛЮЧЕННОГО ДВИЖКА ГЛАЗА НЕ ОДАЛЖИВАЮТ (2026-08-15, живой

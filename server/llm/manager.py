@@ -150,6 +150,19 @@ def cloud_for(model: str) -> dict:
                 return {"enabled": True, "provider": prov,
                         "base_url": (e.get("base_url") or "").rstrip("/"),
                         "model": want, "key": key}
+        # МОДЕЛЬ ТОГО ЖЕ ПРОВАЙДЕРА, НЕ ЗАПИСАННАЯ В СЛОТЫ (2026-08-15):
+        # у Cloudflare на одном аккаунте живёт весь каталог — в т.ч.
+        # зрячая llama-3.2-11b-vision. Раньше позвать её было нельзя,
+        # пока владелец не заведёт слот руками. Любое имя @cf/… обслужит
+        # уже настроенный Cloudflare с его же адресом и ключом.
+        if want.startswith("@cf/"):
+            for e in cloud_saved():
+                if e.get("provider") == "cloudflare":
+                    key = cloud_key_for("cloudflare")
+                    if key:
+                        return {"enabled": True, "provider": "cloudflare",
+                                "base_url": (e.get("base_url") or "").rstrip("/"),
+                                "model": want, "key": key}
     return c
 
 

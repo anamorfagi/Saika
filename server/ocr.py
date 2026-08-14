@@ -32,12 +32,20 @@ def _winrt_engine():
     try:
         from winsdk.windows.globalization import Language
         from winsdk.windows.media.ocr import OcrEngine
-        eng = OcrEngine.try_create_from_language(Language("ru")) \
-            or OcrEngine.try_create_from_user_profile_languages()
-        _ENG["winrt"] = eng or False
+        eng = OcrEngine.try_create_from_language(Language("ru"))
+        _ENG["ru"] = bool(eng)
         if not eng:
-            _ENG["why"] = ("Windows-OCR не дал движок: поставь русский "
-                          "языковой пакет (Параметры → Время и язык)")
+            # БЕЗ РУССКОГО ДВИЖКА НЕ ЧИТАЕМ ИМ КИРИЛЛИЦУ (2026-08-15,
+            # живой позор: английский движок «прочитал» игровой диалог как
+            # «ABTO Q YavnbA. CTyKN» — транслит вместо текста, и Сайка
+            # выдала эту кашу владельцу. Латиница англ. движком читается
+            # нормально, поэтому не выбрасываем его совсем — но для
+            # кириллицы первым идёт RapidOCR, а лечение говорим прямо.)
+            eng = OcrEngine.try_create_from_user_profile_languages()
+            _ENG["why"] = ("Windows-OCR без русского: Параметры → Время и "
+                           "язык → Язык → Русский → Распознавание текста; "
+                           "или дождись rapidocr (ставится start.bat)")
+        _ENG["winrt"] = eng or False
     except Exception as e:
         _ENG["winrt"] = False
         _ENG["why"] = ("нет пакета winsdk — поставь: .venv\\Scripts\\pip "
@@ -90,7 +98,11 @@ def read_screen(monitor=None) -> str:
     t0 = time.monotonic()
     img = vision.grab_screen(monitor)
     errs = []
-    for fn, tag in ((_winrt_read, "winrt"), (_rapid_read, "rapid")):
+    order = ((_winrt_read, "winrt"), (_rapid_read, "rapid"))
+    _winrt_engine()
+    if _ENG.get("ru") is False:
+        order = ((_rapid_read, "rapid"), (_winrt_read, "winrt"))
+    for fn, tag in order:
         try:
             txt = (fn(img) or "").strip()
             ms = round((time.monotonic() - t0) * 1000)

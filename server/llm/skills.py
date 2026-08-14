@@ -81,8 +81,11 @@ FAMILY = [
                 {"code": 9, "smart": 10, "long": 10, "tools": 9})),
     ("gemini", ("Gemini — зрячая, очень длинный контекст",
                 {"vision": 9, "long": 10, "smart": 8})),
-    ("mistral-medium", ("Mistral Medium — универсал средней руки",
-                        {"russian": 7, "tools": 7})),
+    ("llama-3.2-11b-vision", ("Llama 3.2 Vision (Cloudflare) — зрячая, "
+                              "бесплатная на своём аккаунте CF",
+                              {"vision": 7, "fast": 6})),
+    ("mistral-medium", ("Mistral Medium 3 — универсал, ПОНИМАЕТ КАРТИНКИ",
+                        {"russian": 7, "tools": 7, "vision": 7})),
     ("mistral-small", ("Mistral Small — быстрая, звёзд с неба не хватает",
                        {"fast": 7, "russian": 6})),
     ("mistral", ("Mistral — универсал", {"russian": 6, "tools": 7})),

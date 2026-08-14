@@ -32,7 +32,11 @@ _VISION_HINTS = ("llava", "vision", "-vl", "vl-", "4.6v", "qwen2-vl",
                  "qwen2.5-vl", "minicpm-v", "moondream", "pixtral",
                  "gemma-3", "gemma-4", "glm-4v", "glm-4.6v", "internvl")
 # заведомо БЕЗ зрения
-_TEXT_HINTS = ("llama3.2", "llama-3.2", "llama3.1", "llama-3.1", "mistral",
+# «mistral» убран из слепых (2026-08-15): Mistral Medium 3 мультимодален,
+# а подсказка по подстроке записывала в слепые ВСЁ семейство — и Сайка ни
+# разу не попробовала показать кадр своей же основной модели. Незнание
+# лучше ложного знания: теперь попробует, опыт запишется сам (note()).
+_TEXT_HINTS = ("llama3.2", "llama-3.2", "llama3.1", "llama-3.1",
                "phi-3", "qwen2.5:", "qwen2.5-instruct", "deepseek-r1")
 
 
