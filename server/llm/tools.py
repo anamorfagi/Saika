@@ -862,6 +862,9 @@ _MUTATING_INTENT = {
                     r"перекин|перемест|перестав|перетащ|монитор|перв|втор|"
                     r"основн|главн",
     "eyes": r"глаз|зрен|смотр|посмотр|включи вид|видеть",
+    "look_screen": r"экран|что.{0,8}вид|посмотр|глян|что у меня|что открыт|"
+                   r"что там|покажи что|прочит.{0,6}экран|скрин",
+    "look_camera": r"камер|вебк|на меня|в комнат|как я выгляж",
     # 2026-08-13: вопросы про память — предохранителю мешать не надо
     "memory_recall": r".", "memory_recap": r".", "memory_about": r".",
     "memory_stats": r".", "usage_report": r".", "hearing_now": r".",
@@ -1198,6 +1201,19 @@ def _schemas_build() -> list:
         local = local + _BROWSER_SCHEMAS
     if CFG.get("idle.allow_self_shutdown", True):
         local = local + [_SHUTDOWN_SCHEMA]
+    # ГЛАЗА (2026-08-15). server/vision.py давно умеет look_screen: снять
+    # кадр и описать его — синхронно, в этом же ходу. Схемы там написаны,
+    # ИМЕНА объявлены… и никогда не попадали в набор, который уходит
+    # модели. Полгода она отвечала «я не могу видеть содержимое экрана» и
+    # была права: такого инструмента у неё в руках не было. Живой диалог,
+    # 15.08: «Что ты видишь на экране?» -> она читает дерево элементов
+    # Chrome, потом упирается в игру, потом «не обладаю физическим
+    # зрением» -> «У тебя есть глаза, мать твоя». Есть. Вот они.
+    try:
+        from server import vision as _visch
+        local = local + list(_visch.SCHEMAS)
+    except Exception as e:
+        log.debug("схемы зрения не подцепились: %s", e)
     # память — всем моделям без исключения: «помнишь, мы говорили про…»
     # это не привилегия сильной модели, а базовое свойство собеседника
     if CFG.get("memory.tools", True):
@@ -1319,7 +1335,7 @@ _CORE_TOOLS = (
     "app_launch", "open_folder", "find_folder", "folder_list",
     "go_to", "scan_disk", "find_here", "pick_number",
     "window_focus", "window_close", "window_place", "minimize_all",
-    "volume_set", "eyes", "fs_list", "fs_read", "fs_write",
+    "volume_set", "eyes", "look_screen", "fs_list", "fs_read", "fs_write",
     "recall_thread", "day_recall",
 )
 
@@ -1706,6 +1722,22 @@ def _call(name: str, arguments) -> str:
         if name == "anim_hints":
             return anim_hub.hints()
         return anim_hub.list_local()
+    try:
+        from server import vision as _visc
+        _vis_names = _visc.NAMES
+    except Exception:
+        _vis_names = set()
+    if name in _vis_names:
+        from server import vision as _v
+        # ЯВНАЯ ПРОСЬБА ВКЛЮЧАЕТ ГЛАЗА (2026-08-15). Тумблер 👁 — защита от
+        # подглядывания по своей инициативе, а не запрет смотреть, когда
+        # человек прямо просит. Раньше на «посмотри на экран» приходил
+        # отказ «глаза выключены», модель пересказывала его как «я не умею
+        # видеть», и человек оставался с ощущением, что она сломана.
+        if not _v.enabled():
+            _v.set_enabled(True)
+            log.info("Глаза включены по прямой просьбе (%s)", name)
+        return _v.call(name, arguments)
     if name in _MEM_NAMES:
         import json as _json
         a = arguments
@@ -2117,8 +2149,13 @@ _TOOL_HINTS = {
                      "масштаб", "маштаб", "пол-экрана", "слева", "справа"),
     "window_maximize": ("разверни", "полный экран", "на весь экран",
                         "максимизируй"),
-    "eyes": ("включи глаза", "выключи глаза", "включи зрение", "посмотри",
-             "что ты видишь", "что видишь", "что на экране", "глянь на экран"),
+    "eyes": ("включи глаза", "выключи глаза", "включи зрение"),
+    # смотреть — это look_screen, а не тумблер: тумблер только открывает
+    # глаза, а вопрос был «что ТАМ» (2026-08-15)
+    "look_screen": ("что ты видишь", "что видишь", "что на экране",
+                    "глянь на экран", "посмотри на экран", "что у меня открыт",
+                    "что там на экране", "посмотри что"),
+    "look_camera": ("в камеру", "на меня посмотри", "что в комнате"),
     "minimize_all": ("сверни", "убери окна"),
     "volume_set":   ("громк", "звук", "тише", "громче"),
     "net_bypass":   ("запрет", "zapret", "обходчик", "что с сетью",
