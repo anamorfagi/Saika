@@ -110,6 +110,37 @@ def kill_stale():
             log.info("Прибила окно от прошлого запуска (pid %s)", pid)
     except Exception as e:
         log.debug("старое окно не нашлось (%s)", e)
+    _sweep_strays()
+
+
+def _sweep_strays():
+    """Добить ВСЕ окна модели, сколько бы их ни расплодилось.
+
+    2026-08-15, живое «как нах два окна запустилось, я же уже делал
+    механику». Пид-файл — одноместная память: он помнит ОДНО окно.
+    Стоит серверу упасть на старте (сегодня — мой же сломанный
+    main.py) и подняться снова, как первый заход съедает пид-файл
+    (kill_stale его unlink-ает), спавнит окно, падает — а второй
+    заход уже не находит ни файла, ни окна, и спавнит ВТОРОЕ.
+    Одноместной памяти на многоместную проблему не хватает по
+    построению. Поэтому после пид-файла проходим по списку процессов
+    и гасим ВСЁ, что запущено из tools/desk_avatar.py: перед спавном
+    нового окна живых старых быть не должно ни одного."""
+    try:
+        import psutil
+    except Exception:
+        return
+    me = os.getpid()
+    for pr in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            if pr.info["pid"] == me:
+                continue
+            cmd = " ".join(pr.info.get("cmdline") or [])
+            if "desk_avatar" in cmd and "python" in cmd.lower():
+                pr.terminate()
+                log.info("Смела лишнее окно модели (pid %s)", pr.info["pid"])
+        except Exception:
+            continue
 
 
 def available() -> bool:
