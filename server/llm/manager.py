@@ -1751,6 +1751,9 @@ def _last_user_text(messages) -> str:
     return ""
 
 
+_LAST_OK = {"bm": None}      # (backend, model), который дал прошлый ответ
+
+
 def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 on_model=None, use_tools=True, should_stop=None,
                 prefer=None):
@@ -1799,6 +1802,27 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
             candidates.append((primary, primary_model))
     except Exception as e:
         last_err = e
+    # БОЛЬНОГО НЕ ДЁРГАЕМ, СОБЕСЕДНИКА НЕ МЕНЯЕМ (2026-08-15). Живой вечер:
+    # mistral (выбранная) ловит 429 «Rate limit exceeded», уходит в карантин
+    # на 600с — и через десять секунд снова стоит ПЕРВОЙ, потому что этот
+    # список всегда начинался с выбранной, а карантин смотрела только
+    # лестница. Итог: mistral, GigaChat, mistral, GigaChat — через реплику,
+    # у каждой свой характер, и человек говорит то с одной, то с другой:
+    # «нах она такая тупая и в контекст просто пиздец не может». Плюс
+    # каждый 429 — это секунды ожидания впустую перед фолбэком.
+    # Теперь: больная (по карантину brains) уезжает в конец списка, а тот,
+    # кто РЕАЛЬНО ответил прошлый раз, встаёт первым — разговор держит
+    # один голос, пока выбранная не выздоровеет.
+    try:
+        from server.llm import brains as _br
+        _lastok = _LAST_OK.get("bm")
+        if (_lastok and _lastok not in candidates[:1]
+                and candidates and _br.is_sick(*candidates[0])):
+            candidates.insert(0, _lastok)
+        candidates = ([bm for bm in candidates if not _br.is_sick(*bm)]
+                      + [bm for bm in candidates if _br.is_sick(*bm)])
+    except Exception as e:
+        log.debug("сортировка по здоровью не вышла: %s", e)
     locals_ = []
     try:
         for m in list_models():
@@ -2029,6 +2053,7 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                         msgs.append({"role": "tool",
                                      "tool_call_id": c.get("id", f"call_{i}"),
                                      "content": result})
+            _LAST_OK["bm"] = (backend, model)
             return
         except Exception as e:
             last_err = e
