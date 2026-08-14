@@ -529,6 +529,52 @@ def forget_strikes(name: str) -> None:
             pass
 
 
+_SICK_FILE = ROOT / "data" / "tts_sick.json"
+
+
+def _sick_load() -> dict:
+    try:
+        return json.loads(_SICK_FILE.read_text("utf-8"))
+    except Exception:
+        return {}
+
+
+def mark_sick(name: str, hours: float = 6.0, why: str = "") -> bool:
+    """Записать сетевую болезнь движка НА ДИСК. Возвращает True, если это
+    ПЕРВАЯ запись (тогда о ней стоит сказать вслух; повторные — молча).
+
+    2026-08-15, живой гнев владельца: edge мёртв у провайдера (Microsoft
+    зарезан), но каждый запуск Сайка бралась за него снова — времянкой на
+    автопуске, фолбэком в цепочке — и каждый раз орала в лог и в чат
+    «похоже, что-то с сетью, брат». Память о болезни жила в оперативке и
+    умирала с перезапуском. Теперь живёт на диске: больной движок молча
+    пропускают все — времянка, цепочка, бенч, — пока срок не выйдет."""
+    d = _sick_load()
+    fresh = name not in d or d[name].get("until", 0) < time.time()
+    d[name] = {"until": time.time() + hours * 3600, "why": why[:160]}
+    try:
+        _SICK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SICK_FILE.write_text(json.dumps(d, ensure_ascii=False),
+                              encoding="utf-8")
+    except Exception:
+        pass
+    return fresh
+
+
+def is_sick(name: str) -> bool:
+    return _sick_load().get(name, {}).get("until", 0) > time.time()
+
+
+def heal(name: str) -> None:
+    d = _sick_load()
+    if d.pop(name, None) is not None:
+        try:
+            _SICK_FILE.write_text(json.dumps(d, ensure_ascii=False),
+                                  encoding="utf-8")
+        except Exception:
+            pass
+
+
 def note_good(name: str):
     """Движок поднялся — снимаем с него прошлые «страйки»."""
     try:
@@ -712,6 +758,13 @@ class TTSManager:
         if name not in self.engines:
             raise ValueError(name)
         CFG.set("tts.engine", name)
+        # ВЫБОР ЧЕЛОВЕКА ГЛАВНЕЕ ВРЕМЯНКИ (2026-08-15, живой гнев: «я
+        # нажимаю на квен, он всё равно ебёт этот эдж»). Автопуск ставит
+        # boot_override=edge на время прогрева тяжёлого движка, и пока
+        # автопуск не кончился (бенчи могут идти минуты), current_name
+        # отдавал времянку ДАЖЕ ПОСЛЕ явного клика по qwen3. Клик — это
+        # решение, времянка обязана умереть сейчас же.
+        self.boot_override = None
         # ВЫБРАЛ ДВИЖОК — ЗНАЧИТ ХОЧЕШЬ СЛЫШАТЬ (2026-07-29). Жёсткая
         # разгрузка пишет tts.enabled=False В КОНФИГ, то есть навсегда, а не
         # на сеанс. Владелец жал её несколько раз за день, потом тыкал в
@@ -765,7 +818,8 @@ class TTSManager:
         # нативно роняет процесс на этом ПК) — иначе фоллбэк в него = краш
         disabled = set(CFG.get("tts.disabled", []))
         return [n for n in self._priority()
-                if self.health.get(n) != "broken" and n not in disabled]
+                if self.health.get(n) != "broken" and n not in disabled
+                and not (n != self.current_name and is_sick(n))]
 
     def speak(self, text):
         """Генератор (pcm_f32_bytes, sample_rate). Сам падает на фоллбэк."""
@@ -800,6 +854,7 @@ class TTSManager:
                         pass
                     yield item
                 self.health[name] = "ok"
+                heal(name)
                 if yielded:
                     # рейтинг голоса: скорость синтеза на ЭТОМ железе
                     wall = time.time() - t0
@@ -832,6 +887,15 @@ class TTSManager:
                     log.info("Голос «%s» ещё греется — эту фразу скажу "
                              "другим", name)
                     continue
+                if diag["category"] in ("network", "offline"):
+                    fresh = mark_sick(name, float(CFG.get(
+                        "tts.sick_hours", 6.0)), diag["human"])
+                    if fresh and self.on_problem:
+                        self.on_problem("tts." + name, diag["human"],
+                                        "отложила движок на несколько часов "
+                                        "— возьму сама, когда сеть оживёт",
+                                        diag)
+                    continue      # тихо берём следующий голос
                 if diag["category"] == "space":
                     now = time.time()
                     if self.on_problem and now - self._last_space_report > 60:
@@ -861,7 +925,8 @@ class TTSManager:
             if name == "qwen3" or have.get(name):
                 continue
             engine = self.engines.get(name)
-            if not engine or name in set(CFG.get("tts.disabled", [])):
+            if not engine or name in set(CFG.get("tts.disabled", [])) \
+                    or is_sick(name):
                 continue
             try:
                 t0 = time.time()

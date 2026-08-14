@@ -6671,10 +6671,18 @@ def _autostart_components():
         tts_chain.sort(key=lambda n: -_manual.get(n, 0))
         # времянка: лучший движок тяжёлый (не из FAST) — поднимаем лёгкий
         # и назначаем текущим, пока тяжёлый греется
-        FAST_TTS = ("silero", "edge")
+        # ВРЕМЯНКА — ОФЛАЙН-ПЕРВАЯ И НЕ БОЛЬНАЯ (2026-08-15). Времянкой
+        # брался edge — онлайн-движок, который у российского провайдера
+        # мёртв почти всегда: каждый запуск он честно падал по сети, орал
+        # в чат «что-то с сетью, брат» и лишь потом уступал. Piper офлайн
+        # и поднимается за секунду — ему и быть времянкой; edge последним,
+        # и только если не помечен больным (tts_sick.json).
+        from server.tts.manager import is_sick as _tts_sick
+        FAST_TTS = ("piper", "silero", "edge")
         best = tts_chain[0] if tts_chain else None
         if best and best not in FAST_TTS:
-            fast = next((n for n in tts_chain if n in FAST_TTS), None)
+            fast = next((n for n in FAST_TTS
+                         if n in tts_chain and not _tts_sick(n)), None)
             if fast:
                 try:
                     tts.load_engine(fast)
