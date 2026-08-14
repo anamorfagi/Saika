@@ -26,10 +26,11 @@ llm.cloud. Если этот слот пуст, отвалился по лими
 реально есть ключ, — иначе эскалация упиралась бы в 401 и человек видел бы
 «не смогла» вместо результата.
 """
+import json
 import logging
 import time
 
-from server.config import CFG
+from server.config import CFG, ROOT
 
 log = logging.getLogger("saika.brains")
 
@@ -173,6 +174,66 @@ def rank_of(model: str, backend: str = "") -> int:
     except Exception:
         pass
     return max(1, min(10, base))
+
+
+# ═══ ПАМЯТЬ НА ПОСЛЕДНИЕ МОЗГИ (2026-08-14) ═══
+# Владелец: «я вот нах просил сделать запоминание всех моделей, которые
+# были последние?». Просил. Помнился ровно ОДИН — тот, что в llm.model, —
+# а список из десятка, между которыми он ходит весь день, каждый раз
+# начинался с чистого листа: перезапуск, и порядок опять «как посчиталось».
+#
+# Теперь на диске лежит очередь последних: кем реально отвечали, когда и
+# сколько раз. Это НЕ рейтинг — рейтинг про ум. Это привычка: при равном
+# уме первым берётся тот, с кем работали, а не случайный сосед по таблице.
+RECENT_PATH = ROOT / "data" / "brain_recent.json"
+_RECENT: list | None = None
+RECENT_MAX = 24
+
+
+def recent() -> list:
+    """[{backend, model, ts, hits}] — свежие первыми."""
+    global _RECENT
+    if _RECENT is None:
+        try:
+            _RECENT = json.loads(RECENT_PATH.read_text("utf-8"))
+            if not isinstance(_RECENT, list):
+                _RECENT = []
+        except Exception:
+            _RECENT = []
+    return _RECENT
+
+
+def note_used(backend: str, model: str):
+    """Этой моделью только что отвечали. Зовётся отовсюду, идемпотентно."""
+    if not model:
+        return
+    r = recent()
+    key = (backend or "", model)
+    for e in r:
+        if (e.get("backend", ""), e.get("model", "")) == key:
+            e["ts"] = time.time()
+            e["hits"] = int(e.get("hits", 0)) + 1
+            r.remove(e)
+            r.insert(0, e)
+            break
+    else:
+        r.insert(0, {"backend": backend or "", "model": model,
+                     "ts": time.time(), "hits": 1})
+    del r[RECENT_MAX:]
+    try:
+        RECENT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RECENT_PATH.write_text(json.dumps(r, ensure_ascii=False, indent=1),
+                               encoding="utf-8")
+    except Exception as e:
+        log.debug("память последних мозгов не записалась: %s", e)
+
+
+def recent_pos(backend: str, model: str) -> int:
+    """Насколько давно им отвечали: 0 — последний, 99 — не помним вовсе."""
+    for i, e in enumerate(recent()):
+        if (e.get("backend", ""), e.get("model", "")) == (backend or "", model):
+            return i
+    return 99
 
 
 def note_fail(backend: str, model: str, why: str = ""):

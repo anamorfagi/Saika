@@ -573,6 +573,13 @@ def switch_model(backend: str, model: str) -> dict:
     unload_failed = []
     invalidate_models_cache()   # состав загруженного сейчас изменится
     _LOADED_CACHE["val"] = None
+    # ЗАПОМИНАЕМ, КЕМ РАБОТАЛИ (2026-08-14). Не рейтинг — привычка: при
+    # равном уме первым берётся тот, с кем человек работал последним.
+    try:
+        from server.llm import brains as _br_recent
+        _br_recent.note_used(backend, model)
+    except Exception as _e:
+        log.debug("память последних мозгов: %s", _e)
     if backend != "cloud" and CFG.get("llm.keep_only_one", True):
         unload_failed = unload_others(backend, model)
     ok = warmup(backend, model)

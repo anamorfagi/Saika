@@ -20,6 +20,10 @@ import time
 
 from server.config import CFG, ROOT
 
+import logging
+
+log = logging.getLogger("saika.caps")
+
 PATH = ROOT / "data" / "model_caps.json"
 _lock = threading.Lock()
 
@@ -83,6 +87,20 @@ def tools_ok(model: str) -> bool:
 def pick_vision_model(models: list, loaded=()):
     """Лучшая зрячая модель парка для «одолжить глаза» (OCR и т.п.).
     models: [{'backend':..., 'name':...}]. Предпочитаем уже загруженные."""
+    # ОБЛАЧНЫЕ ЗРЯЧИЕ ТОЖЕ ГОДЯТСЯ (2026-08-14). Список кандидатов был
+    # ограничен домашним парком — а у владельца зрячие модели живут в
+    # облаке (qwen3-vl, gpt-4.1, gemini), и «одолжить глаза» было не у
+    # кого: на просьбу посмотреть картинку она честно отвечала «разобрать
+    # некому», имея под рукой сразу несколько зрячих. Сперва спрашиваем
+    # реестр умений — он смотрит всю лестницу и сортирует по ЗРЕНИЮ, а не
+    # по общему уму; не нашёл — работает старый разбор парка, как было.
+    try:
+        from server.llm import skills as _sk
+        best = _sk.best_for("vision", min_score=6)
+        if best:
+            return best["backend"], best["model"]
+    except Exception as e:
+        log.debug("реестр умений недоступен (%s) — беру из парка", e)
     cands = []
     for m in models:
         if m.get("backend") not in ("ollama", "lmstudio"):

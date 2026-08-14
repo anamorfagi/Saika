@@ -396,7 +396,33 @@ def status():
 @app.get("/api/models")
 def models():
     from server.llm import passport as _passport
-    return {"models": llm.list_models(), "loaded": llm.loaded_models(),
+    _ms = llm.list_models()
+    # РЕЙТИНГ УМА — ИЗ ЛЕСТНИЦЫ, А НЕ ИЗ ЗАМЕРА СКОРОСТИ (2026-08-14).
+    # Владелец: «какого хрена у меня не работает рейтинг и не загружаются
+    # самые первые по рейтингу». Лестница (server/llm/brains.py) со своей
+    # таблицей ума существовала с прошлой недели — но её спрашивали ТОЛЬКО
+    # при эскалации. Список в интерфейсе и автопуск сортировались по
+    # ток/с, и четырёхмиллиардная gemma честно обгоняла llama-70b: она и
+    # правда быстрее. Быстрее — не умнее.
+    try:
+        from server.llm import brains as _b
+        from server.llm import skills as _sk
+        for m in _ms:
+            m["rank"] = _b.rank_of(m.get("name", ""), m.get("backend", ""))
+            m["recent"] = _b.recent_pos(m.get("backend", ""),
+                                        m.get("name", ""))
+            # ЧТО ОНА УМЕЕТ, А НЕ ТОЛЬКО НАСКОЛЬКО УМНАЯ (2026-08-14).
+            # Одно число «ум 8» не говорит, видит ли она картинки и можно
+            # ли доверить ей руки. Карточка отвечает на оба вопроса.
+            try:
+                _c = _sk.card(m.get("name", ""), m.get("backend", ""))
+                m["desc"], m["tags"] = _c["desc"], _c["tags"]
+                m["skills"] = _c["skills"]
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("ранги моделей не собрались: %s", e)
+    return {"models": _ms, "loaded": llm.loaded_models(),
             "ratings": ratings.llm_scores(), "tps": ratings.llm_tps(),
             "manual": ratings.manual_scores(),
             "passports": _passport.all_passports()}
@@ -609,6 +635,61 @@ _STAGE_RE = re.compile(
     re.I)
 
 
+# РАЗМЫШЛЕНИЕ ВСЛУХ (2026-08-14, живой лог: на «Не получилось» модель выдала
+# 284 токена «Задача: … Контекст: … Мой характер: … План действий: 1… 2… 3…
+# Выбранный ответ:», и всё это ушло человеку в чат и в озвучку. Дальше было
+# 333, 417 и 532 токена того же). Это не характер и не ответ — это её
+# черновик. Причина моя: я надобавлял ей блоков-регламентов, и мелкая
+# модель начала им ПОДРАЖАТЬ вместо того, чтобы им следовать.
+#
+# Режем по маркерам черновика. Если после выреза остаётся осмысленный
+# хвост — отдаём его; если черновиком была вся реплика, ответа нет, и
+# честнее показать это, чем читать вслух её мысли.
+_THINK_HEAD = re.compile(
+    r'^\s*(?:\[?(?:thought|thinking|scratchpad|reasoning)\]?\s*:?\s*'
+    r'|(?:задача|анализ|контекст|план(?:\s+ответа|\s+действий)?|'
+    r'разбор|размышлени\w*|интерпретация|стратегия|вывод|'
+    r'the user (?:said|is|wants)|analyz\w+|plan|step \d)\b[^\n]{0,120}:)',
+    re.I)
+_THINK_LINE = re.compile(
+    r'^\s*(?:\*\*)?(?:\d+[.)]\s*)?(?:\*\*)?'
+    r'(?:задача|анализ\w*|контекст|мой характер|моя персона|правило|'
+    r'план(?:\s+\w+)?|выбранный ответ|действие|корректировка|вывод|'
+    r'execution|self-?correction|refinement|strategy|goal|reasoning|'
+    r'analyze the request|context check|previous failure|'
+    r'my persona|my character)\b[^\n]{0,200}$',
+    re.I | re.M)
+
+
+def _strip_thinking(text: str) -> str:
+    """Вырезать черновик модели, оставив собственно ответ."""
+    t = text or ""
+    if not t.strip():
+        return t
+    # весь текст начинается с маркера черновика — ищем, где он кончился:
+    # черновик обычно заканчивается пустой строкой перед живой репликой
+    if _THINK_HEAD.match(t) or _THINK_LINE.search(t):
+        lines = t.split("\n")
+        keep = [ln for ln in lines
+                if not _THINK_LINE.match(ln) and not _THINK_HEAD.match(ln)]
+        # выкидываем и нумерованные пункты плана, и строки со «звёздочками»
+        keep = [ln for ln in keep
+                if not re.match(r'^\s*(?:\*\s*)?\d+[.)]\s+\S', ln)
+                and not re.match(r'^\s*\*+\s*\S.{0,160}\*+\s*$', ln)]
+        out = "\n".join(keep).strip()
+        # черновик бывает одним абзацем без переносов — тогда режем по
+        # последнему маркеру и берём хвост
+        if not out and len(t) > 200:
+            parts = re.split(r'(?:вывод|итог|ответ|execution)\s*:', t,
+                             flags=re.I)
+            out = parts[-1].strip() if len(parts) > 1 else ""
+        if out != t:
+            log.info("Вырезала черновик модели: %d -> %d символов",
+                     len(t), len(out))
+        return out
+    return t
+
+
 def _strip_stage(text: str) -> str:
     out = _STAGE_RE.sub("", text or "")
     # после выреза остаётся осиротевшая точка: «показываю. . Вижу» —
@@ -764,8 +845,8 @@ def _strip_tool_marks(text: str) -> str:
         # [прим: ...] и кириллица остаются текстом
         return " "
     return re.sub(r'[ 	]{2,}', ' ',
-                  _TOOL_MARK_RE.sub(_sub, _strip_stage(_strip_broken_call(
-                      _norm_call_dialect(text))))).strip()
+                  _TOOL_MARK_RE.sub(_sub, _strip_thinking(_strip_stage(_strip_broken_call(
+                      _norm_call_dialect(text)))))).strip()
 
 
 def _diagnose_silence(backend: str, model: str, generated_tokens: int) -> str:
@@ -1262,6 +1343,8 @@ def voiceprint_enroll(payload: dict):
                                        int(payload.get("need", 24)))
     if action == "stop":
         return voiceprint.enroll_finish()
+    if action in ("pause", "resume"):
+        return voiceprint.enroll_pause(action == "pause")
     return voiceprint.enroll_cancel()
 
 
@@ -1442,6 +1525,23 @@ def usage_report(days: int = 7):
     локальные (бесплатно, но показывает, где жуётся контекст)."""
     from server import usage as _u
     return _u.report(days)
+
+
+@app.get("/api/avatar/desk")
+def avatar_desk_get():
+    """Состояние отдельного окна с моделью. Это же читает само окно —
+    опрашивает раз в полсекунды, поэтому кнопка в интерфейсе доходит до
+    уже запущенного окна без всякого IPC."""
+    from server import desk_avatar as _da
+    return _da.state()
+
+
+@app.post("/api/avatar/desk")
+def avatar_desk_set(payload: dict):
+    """Три выключателя: on (открыть/закрыть), top (поверх всех),
+    lock (замок движения). Панель аватара в интерфейсе не трогается."""
+    from server import desk_avatar as _da
+    return _da.apply(payload or {})
 
 
 @app.get("/api/cards")
@@ -3056,15 +3156,51 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # всякого промпта — как спинной мозг, не дожидаясь коры. Модель потом
     # прокомментирует уже сделанное (см. вставку в dyn_parts ниже).
     _reflex_done = ""
+    # уже исполнено мгновенно в handle_text — второй раз не крутим ручку
+    if (EARLY_REFLEX.get("text") == user_text
+            and time.time() - EARLY_REFLEX.get("ts", 0) < 30):
+        _reflex_done = EARLY_REFLEX.get("result", "")
+        EARLY_REFLEX["text"] = ""
     try:
         from server import reflex as _rx
-        _rx_hit = _rx.match(user_text)
+        _rx_hit = None if _reflex_done else _rx.match(user_text)
         if _rx_hit:
             out.put({"type": "tool", "name": "⚡ " + _rx_hit[0],
-                     "args": str(_rx_hit[1])[:60]})
+                     "args": str(_rx_hit[1])[:300]})
             _reflex_done = _rx.execute(_rx_hit, user_text)
+            # ЧТО ИЗ ЭТОГО ВЫШЛО — В ЧАТ, ЦЕЛИКОМ (2026-08-14). Раньше в
+            # чат уходил только ВЫЗОВ, а ответ инструмента («Не нашла окно
+            # «Contacts»», «Открыла C:\, внутри: …») знала одна лишь
+            # модель — и пересказывала как придётся, а то и бодрым
+            # «готово» поверх отказа. Правило «молчаливый отказ запрещён»
+            # (PHILOSOPHY §0.5) начинается ровно здесь.
+            if _reflex_done:
+                out.put({"type": "tool", "name": "⚡ " + _rx_hit[0],
+                         "args": str(_reflex_done)[:900]})
     except Exception as e:
         log.debug("рефлекс пропущен: %s", e)
+    # ═══ АГЕНТНЫЙ ЦИКЛ (2026-08-14, server/agent.py) ═══
+    # Владелец: «за всё время она ни разу не юзала агентности никакой:
+    # просто выполняет запрос и всё, останавливается, не завершив даже
+    # задание». Регламент в промпте этого не лечит — устройство разговора
+    # одноходовое. Цикл живёт ЗДЕСЬ, на сервере, где его не проигнорируешь.
+    # Рефлекс уже всё сделал — цикл не поднимаем: он для того, что
+    # правилом не решается.
+    _agent_note = ""
+    if not _reflex_done:
+        try:
+            from server import agent as _ag
+            if _ag.wanted(user_text):
+                out.put({"type": "tool", "name": "🧠 берусь за задачу",
+                         "args": user_text[:80]})
+
+                def _show(_t, _a, _r):
+                    out.put({"type": "tool", "name": "↳ " + _t,
+                             "args": str(_r)[:300]})
+                _res = _ag.run(user_text, on_step=_show, user_text=user_text)
+                _agent_note = _ag.digest(_res)
+        except Exception as e:
+            log.debug("агентный цикл пропущен: %s", e)
     mem_context = ""
     if not _light:
         try:
@@ -3188,18 +3324,60 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # приложение, и переключила человеку чат в чужой программе. Дело было
     # не в отсутствии запрета, а в отсутствии глаз.
     try:
+        # САМЫЙ ОПАСНЫЙ КУСОК: список окон через Win32 и заголовок страницы
+        # через Playwright. Оба уходят наружу и оба умеют висеть — именно
+        # здесь и встали те 67 секунд.
         from server import situation as _sit
-        _where = _sit.block()
+        _where = _piece("обстановка", _sit.block, 0.8)
         if _where:
             dyn_parts.append(_where)
     except Exception as e:
         log.debug("обстановка пропущена: %s", e)
+    if _agent_note:
+        dyn_parts.append(_agent_note)
+    # ЧТО Я УМЕЮ И ЧЬИМИ РУКАМИ (2026-08-14, владелец: «она должна не
+    # втупую переключать модели, а точно знать, что она может с помощью
+    # какой модели делать»). Без этого блока честное «я не вижу»
+    # превращается в тупик; с ним — в следующий шаг, потому что она знает,
+    # кто видит, и что система подключит его сама.
+    try:
+        from server.llm import skills as _skl
+        _sb = _piece("умения", _skl.block, 0.5)
+        if _sb:
+            dyn_parts.append(_sb)
+    except Exception as e:
+        log.debug("блок умений пропущен: %s", e)
+    # ГДЕ МЫ СЕЙЧАС СТОИМ В ПАПКАХ И ЧТО ПОКАЗАНО СПИСКОМ (2026-08-14).
+    # Без этой строки прогулка теряется между фразами: человек говорит
+    # «третий», а она не знает, что минуту назад показала десять путей, —
+    # и переспрашивает. Строка короткая нарочно: это ориентир, не отчёт.
+    try:
+        from server import explorer as _walk
+        _wn = _piece("прогулка", _walk.note, 0.4)
+        if _wn:
+            dyn_parts.append(
+                "### Прогулка по компьютеру (факт): " + _wn +
+                ". Номер от человека — это pick_number, не переспрашивай.")
+    except Exception as e:
+        log.debug("прогулка пропущена: %s", e)
+    # ЧТО НА СТОЛЕ (2026-08-14, разбор «как понимается контекст»). Идёт
+    # ПЕРВЫМ из всех динамических блоков: сперва «о чём вообще речь», и
+    # только потом «кто я» и «в каком порядке действовать». Без этого
+    # каждая фраза приходила голой, как первая в жизни.
+    try:
+        from server import focus as _focus
+        _focus.note_user(user_text)
+        _st = _focus.block()
+        if _st:
+            dyn_parts.append(_st)
+    except Exception as e:
+        log.debug("состояние разговора пропущено: %s", e)
     # КОСТЮМ (2026-08-13). Идёт ПЕРЕД регламентом рук: сначала «кто я
     # сейчас», потом «как действую». Пусто, когда костюма нет, — обычный
     # разговор промптом о ролевой игре не засоряется.
     try:
         from server import cards as _cards
-        _suit = _cards.block()
+        _suit = _piece("костюм", _cards.block, 0.4)
         if _suit:
             dyn_parts.append(_suit)
     except Exception as e:
@@ -3355,15 +3533,48 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         LAST_IMAGE["data"], LAST_IMAGE["ts"] = image, time.time()
         from server import capabilities as caps
         if caps.vision(CFG.get("llm.model", "")) is False:
-            # модель БЕЗ зрения: картинку ей не даём (иначе 400 или бред),
-            # а учим честно признаться и предложить распознавание — по «да»
-            # сервер одолжит глаза у vision-модели парка (блок ниже)
-            dyn_parts.append(
-                "### Пользователь прислал КАРТИНКУ, но текущая твоя модель "
-                "БЕЗ ЗРЕНИЯ — ты изображение НЕ видишь. Скажи об этом честно "
-                "и по-своему (в духе: «я не вижу, что ты отправил — судя по "
-                "всему, картинка. Вытащить из неё текст?») и предложи "
-                "распознать. СТРОГО запрещено выдумывать содержимое.")
+            # СЛЕПАЯ МОДЕЛЬ — НЕ ПОВОД ПЕРЕСПРАШИВАТЬ (2026-08-14, владелец:
+            # «если какая-то модель не имеет возможности видеть, она должна
+            # знать это о моделях и ПАРАЛЛЕЛЬНО запустить модель, которая
+            # даст ей инфу о картинке»).
+            #
+            # Знание уже есть: capabilities.vision() честно отвечает, кто
+            # умеет смотреть. И механика заимствования глаз тоже написана —
+            # ровно этим занимается auto_look для кадров экрана. Не хватало
+            # одного: здесь, на присланной картинке, она вместо дела
+            # спрашивала «вытащить из неё текст?» и ждала «да». Человек
+            # уже прислал картинку — это и есть его «да».
+            #
+            # Берём чужие глаза сразу и молча. Не вышло — тогда честное «не
+            # вижу», но это запасной путь, а не первый.
+            _seen = ""
+            try:
+                from server import vision as _vis2
+                _seen = _piece(
+                    "чужие глаза",
+                    lambda: _vis2._describe(
+                        image, "Опиши подробно, что на картинке: что "
+                               "изображено, какой текст виден, что "
+                               "бросается в глаза."),
+                    float(CFG.get("vision.borrow_budget_s", 12.0))) or ""
+            except Exception as _e:
+                log.debug("чужие глаза не сложились: %s", _e)
+            if _seen:
+                out.put({"type": "tool", "name": "зрение",
+                         "args": "картинку разобрала vision-модель парка"})
+                dyn_parts.append(
+                    "### Пользователь прислал КАРТИНКУ. Твоя модель без "
+                    "зрения, поэтому кадр разобрала vision-модель из парка "
+                    "— вот что на нём:\n" + _seen[:3000] +
+                    "\n\nГовори так, будто видела сама, своими словами. "
+                    "Не выдумывай того, чего в описании нет, и НЕ "
+                    "спрашивай разрешения посмотреть — ты уже посмотрела.")
+            else:
+                dyn_parts.append(
+                    "### Пользователь прислал КАРТИНКУ, но разобрать её "
+                    "некому: твоя модель без зрения, и ни одна модель в "
+                    "парке сейчас не смотрит. Скажи честно и коротко. "
+                    "СТРОГО запрещено выдумывать содержимое.")
             image = None
         elif not (user_text or "").strip():
             # 2026-07-23: картинка БЕЗ единого слова — раньше модель сама
@@ -3474,6 +3685,21 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             _search_intent = False
     except Exception:
         pass
+    # «НАЙДИ» ПРО ДИСК — НЕ ПОВОД ЛЕЗТЬ В ИНТЕРНЕТ (2026-08-14). Этот путь
+    # ходит в браузер МИМО tools.call, значит и мимо предохранителя, который
+    # уже стоит там (_intent_ok). В живом логе владельца из-за этого
+    # трижды подряд открывался браузер: «зайди, найди мне игры на диске»,
+    # «открой проводник, найди музыку», «короче, найди здесь игры» — и
+    # каждый раз «нахер ты гуглишь». Проверку держим ровно ту же, чтобы
+    # два пути не расходились в поведении.
+    if _search_intent:
+        try:
+            from server.llm import tools as _tls_web
+            _tls_web.LAST_USER["text"] = user_text
+            if not _tls_web._intent_ok("web_research"):
+                _search_intent = False
+        except Exception as e:
+            log.debug("проверка «диск или сеть» пропущена: %s", e)
     try:
         if _search_intent:
             _cur_model = CFG.get("llm.model", "")
@@ -3722,6 +3948,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                     "правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с "
                     "новым окном сам"
                     % (CFG.get("llamacpp", {}) or {}).get("n_ctx", "?"))
+        elif CFG.get("llm.backend") == "cloud":
+            # СОВЕТ ПРО LM STUDIO ОБЛАЧНОЙ МОДЕЛИ — ЭТО МУСОР (2026-08-14,
+            # живой лог: отвечает llama-3.3-70b в Cloudflare, а Сайка
+            # каждый ход советует «подними Context Length в LM Studio».
+            # У облака окно чужое и не правится; там жмут инструменты —
+            # 36 тысяч символов схем в КАЖДОМ запросе. Это и лечим.)
+            cure = ("модель облачная — её окно не правится. Жмут схемы "
+                    "инструментов (%d симв в каждом запросе): выключи "
+                    "лишние в настройках инструментов или возьми модель "
+                    "с окном побольше" % tools_chars)
         else:
             cure = ("подними Context Length у модели в LM Studio и "
                     "перезагрузи её")
@@ -3891,7 +4127,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             except Exception:
                 pass
             out.put({"type": "tool", "name": name,
-                     "args": json.dumps(args, ensure_ascii=False)[:200]})
+                     "args": json.dumps(args, ensure_ascii=False)[:600]})
 
         from server.llm.guard import LoopGuard, RECOVERY_PROMPT
         guard = LoopGuard(
@@ -3957,8 +4193,28 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             # печатают <|tool_call|>call:close_browser{} текстом. Как только
             # в буфере появился зачин такого — прекращаем стримить наружу,
             # хвост дособерём и обработаем после цикла.
-            if "<|" in sentence_buf or "call:" in sentence_buf \
-                    or re.search(r'\{\s*"name"\s*:', sentence_buf) \
+            # ЧЕРНОВИК НЕ СТРИМИМ (2026-08-14): «Задача: … План действий:»
+            # доезжало до человека живьём, буква за буквой, и вырезать это
+            # постфактум уже поздно — он уже прочитал и услышал.
+            # ФИГУРНАЯ СКОБКА В НАЧАЛЕ — УЖЕ ПРИГОВОР (2026-08-14, живой
+            # лог: в чат уехало «{"type": "function» и на этом оборвалось).
+            # Придержка тут была, но искала ЦЕЛЫЕ образцы: «"type":
+            # "function"» с закрывающей кавычкой. А поток идёт по буквам —
+            # в момент показа кавычки ещё нет, образец не совпал, и кусок
+            # ушёл человеку живьём. Вырезать постфактум поздно: он уже
+            # прочитал и услышал.
+            #
+            # Ответ Сайки НИКОГДА не начинается с «{» или «[». Значит одной
+            # первой скобки достаточно, чтобы придержать до конца: если это
+            # окажется настоящий текст, он покажется целиком чуть позже;
+            # если вызов — его исполнят и человек увидит результат, а не
+            # обрубок разметки.
+            if re.match(r'\s*[{\[]', sentence_buf) \
+                    or _THINK_HEAD.match(sentence_buf) or _THINK_LINE.search(sentence_buf) \
+                    or "<|" in sentence_buf or "call:" in sentence_buf \
+                    or re.search(r'"(?:name|type|parameters|arguments)"\s*:',
+                                 sentence_buf) \
+                    or re.search(r'"type"\s*:\s*"func', sentence_buf) \
                     or re.search(r'\bto=[a-z_]+', sentence_buf) \
                     or re.search(r'\b(?:commentary|analysis|final)\s+'
                                 r'[a-z_]{3,}\b', sentence_buf, re.I):
@@ -4028,9 +4284,18 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             r'([a-z_]+?)(?:json)?\s*'
             r'(?:(?:<\|[^|>]*\|>|json)\s*)*(\{.*)',
             _raw, re.I | re.S)
+        # ЛОВИМ ПО ПОЛЮ "name", А НЕ ПО НАЧАЛУ СКОБКИ (2026-08-14, живой
+        # случай: на «Привет» прилетело {"type": "function", "name":
+        # "avatar_action", ...} и уехало человеку в чат сырьём. Старое
+        # условие искало `{"name":` — то есть скобку ВПЛОТНУЮ к полю, а тут
+        # перед ним стоит "type". Формат тот же, детектор мимо.)
+        _bare_calls = _bare_tool_calls(_raw)
         _has_pseudo = ("<|" in _raw or "call:" in _raw
-                       or re.search(r'\{\s*"name"\s*:', _raw)
+                       or re.search(r'"name"\s*:\s*"[a-z_]+"', _raw)
+                       or re.search(r'"type"\s*:\s*"function"', _raw)
+                       or re.search(r'"(?:parameters|arguments)"\s*:', _raw)
                        or re.search(r'\bto=[a-z_]+', _raw)
+                       or _bare_calls
                        or _harmony_m)
         if _has_pseudo:
             # сырьё в лог: если экстрактор снова что-то не поймёт (новый
@@ -4038,6 +4303,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             log.info("Псевдо-вызов сырьём: %r", _raw[:400])
             _names = re.findall(r'(?:call:|"name"\s*:\s*")([a-z_]+)',
                                 _raw, re.I)
+            _names += [n for n, _a in _bare_calls if n not in _names]
             _harmony_args = None
             if _harmony_m:
                 _names.append(_harmony_m.group(1).lower())
@@ -4125,11 +4391,15 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                     from server.llm import tools as _handspc
                     _known = {sc["function"]["name"]
                               for sc in _handspc.schemas()}
-                    for _n, _a in _text_tool_calls(_raw):
+                    for _n, _a in (_text_tool_calls(_raw) or _bare_calls):
                         if _n not in _known:
                             continue
                         _handspc.LAST_USER["text"] = user_text
-                        out.put({"type": "tool", "name": _n, "args": _a})
+                        # args СТРОКОЙ: в интерфейсе объект печатался как
+                        # «[object Object]» и человек не видел, с чем
+                        # вызвано (2026-08-14, живой лог)
+                        out.put({"type": "tool", "name": _n,
+                                 "args": json.dumps(_a, ensure_ascii=False)})
                         _res = str(_handspc.call(_n, _a) or "")
                         log.info("Текстовый вызов исполнен: %s(%s) -> %s",
                                  _n, _a, _res[:120])
@@ -4467,7 +4737,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             _skip = _tool_used.get("names", set())
             for _an, _ar in _run_tool_marks(reply, skip=_skip):
                 out.put({"type": "tool", "name": "⚡ " + _an,
-                         "args": _ar[:80]})
+                         "args": _ar[:300]})
                 PENDING_ACTIONS.append((_an, _ar))
             # в память ответ кладём без маркеров: история не должна учить
             # её, что маркеры это просто текст
@@ -4609,6 +4879,178 @@ def _text_tool_calls(raw: str) -> list:
             out.append((name, args))
     return out
 
+
+# ═════ ВЫЗОВ, СКАЗАННЫЙ ВСЛУХ, — ТОЖЕ ВЫЗОВ (2026-08-14) ═════
+# Живой разговор владельца, двадцать минут подряд:
+#     «перейди просто в диск C»  ->  go_to "диск C"      (в чат, текстом)
+#     «закрой проводник»         ->  window_close "explorer"
+#     «покажи окна»              ->  [window_list]
+#     «зайди в SteamLibrary»     ->  open_folder, SteamLibrary.
+# Она ВСЁ ПОНЯЛА ПРАВИЛЬНО. Она назвала нужный инструмент и нужный
+# аргумент. Просто маленькая модель (gemma-4-e4b, GigaChat-2) не умеет
+# класть вызовы в поле tool_calls и печатает их как умеет — словами.
+# Система ловила только JSON-образные формы, а эти пропускала: человек
+# видел «go_to "диск C"» в чате и ничего больше. Двадцать минут «не
+# получилось» на ровном месте.
+#
+# Это транспортная щель, а не глупость модели. Форма записи — её дело,
+# наше дело — понять. Разбираем любую: имя в кавычках, в скобках, через
+# запятую, в квадратных скобках, просто имя. Защита от случайного
+# срабатывания одна, зато железная: имя должно СОВПАДАТЬ со списком
+# настоящих инструментов, и в нём должно быть подчёркивание (или оно
+# должно стоять в скобках) — обычная русская речь так не выглядит.
+_BARE_CACHE = {"rx": None, "arg": {}, "n": 0}
+
+
+def _tool_arg_map():
+    """{инструмент: имя главного параметра} — из схем, а не руками."""
+    from server.llm import tools as _t
+    scs = _t.schemas()
+    if _BARE_CACHE["rx"] is not None and _BARE_CACHE["n"] == len(scs):
+        return _BARE_CACHE["rx"], _BARE_CACHE["arg"]
+    arg, names, need = {}, [], set()
+    for sc in scs:
+        f = sc.get("function") or {}
+        nm = f.get("name")
+        if not nm:
+            continue
+        names.append(nm)
+        pr = ((f.get("parameters") or {}).get("properties") or {})
+        req = ((f.get("parameters") or {}).get("required") or [])
+        arg[nm] = (req[0] if req else (next(iter(pr), "")))
+        if req:
+            need.add(nm)                  # без аргумента такой вызов пустой
+    _BARE_CACHE["need"] = need
+    names.sort(key=len, reverse=True)
+    rx = re.compile(
+        r"(?<![\w-])(" + "|".join(re.escape(n) for n in names) + r")(?![\w-])"
+        r"\s*(?:\(|\[|,|:|=|->)?\s*"
+        r"(?:\"([^\"\n]{0,90})\"|'([^'\n]{0,90})'"
+        r"|([^\n\"',.;!?()\[\]]{0,90}))?")
+    _BARE_CACHE.update(rx=rx, arg=arg, n=len(scs))
+    return rx, arg
+
+
+_BARE_STOP = re.compile(r"^\s*(?:и|или|а|но|ну|же|бы|то|это|пожалуйста|"
+                        r"сейчас|потом|тоже|также)\b", re.I)
+
+
+def _bare_tool_calls(raw: str) -> list:
+    """Вызовы, НАПЕЧАТАННЫЕ обычными словами -> [(имя, аргументы)]."""
+    if not raw or len(raw) > 4000:
+        return []
+    try:
+        rx, argmap = _tool_arg_map()
+    except Exception as e:
+        log.debug("карта инструментов недоступна: %s", e)
+        return []
+    out = []
+    for m in rx.finditer(raw):
+        name = m.group(1)
+        # «eyes» — единственное имя без подчёркивания, и это обычное
+        # английское слово. Берём его только в явной оболочке вызова.
+        if "_" not in name:
+            around = raw[max(0, m.start() - 1):m.end() + 1]
+            if not re.search(r"[\[\(`]", around):
+                continue
+        # за именем сразу JSON — это работа _text_tool_calls, не наша
+        if raw[m.end(1):m.end(1) + 3].lstrip().startswith("{"):
+            continue
+        val = (m.group(2) or m.group(3) or m.group(4) or "").strip()
+        # двоеточие НЕ срезаем: «C:» — это диск, а не мусор
+        val = val.strip(" .,;!?«»\"'()[]")
+        if _BARE_STOP.match(val):
+            val = ""
+        key = argmap.get(name) or ""
+        if not val and name in (_BARE_CACHE.get("need") or set()):
+            # ПУСТОЙ ВЫЗОВ ХУЖЕ, ЧЕМ НИКАКОЙ (2026-08-14, живой лог:
+            # модель напечатала голое «window_focus» — и получила «не
+            # знаю, какое окно вы имеете в виду», а человек получил
+            # встречный вопрос вместо действия. Инструменту нужен
+            # аргумент, его нет — значит это не вызов, а обрывок мысли.
+            # Пусть договорит.)
+            log.info("Текстовый вызов %s без аргумента — пропускаю", name)
+            continue
+        out.append((name, {key: val} if (key and val) else {}))
+    return out
+
+
+# ═══ НИ ОДИН КУСОК ПРОМПТА НЕ ИМЕЕТ ПРАВА ОСТАНОВИТЬ ОТВЕТ (2026-08-14) ═══
+# Живой лог, из-за которого это написано:
+#
+#   Тайминги ответа: очередь 25219мс | память 156мс | зрение 16мс |
+#   промпт 66906мс | LLM prefill 3844мс | итого до 1-го токена 70938мс
+#
+# Семьдесят секунд до первого звука. Владелец: «и она сломалась». И он
+# прав — с точки зрения человека это не «медленно», это сломано.
+#
+# Виновата не модель и не память: минуту простояла СБОРКА ПРОМПТА. Там
+# десяток кусков, и каждый лезет наружу — за списком окон, за заголовком
+# страницы в браузере, за текущей папкой. Пока всё живо, это миллисекунды.
+# Но браузер только что закрыли, и обращение к его странице повисло — а
+# ждал его весь ответ, потому что сборка идёт в один поток.
+#
+# Правило: обстановка — это СПРАВКА, а не обязательство. Не успела за
+# отведённое время — идём со вчерашней справкой или вовсе без неё.
+# Устаревшая строчка в промпте стоит копейки; минута тишины стоит всего.
+_PIECE: dict = {}
+
+
+def _piece(name: str, fn, budget: float = 0.7) -> str:
+    """Кусок промпта под секундомером. Не уложился — берём прошлый ответ.
+
+    Зависший вызов не бросаем и не убиваем (убить поток в Python нельзя):
+    он доработает сам и положит результат в кэш для следующего хода. Пока
+    он висит, второй такой же не запускаем — иначе на каждом ходу
+    прибавлялся бы ещё один вечный поток."""
+    st = _PIECE.setdefault(name, {"val": "", "busy": False, "ts": 0.0})
+    if st["busy"]:
+        return st["val"]                      # прошлый ещё не отпустил
+    box = {}
+
+    def run():
+        try:
+            box["v"] = fn() or ""
+        except Exception as e:
+            box["v"] = ""
+            log.debug("кусок промпта %s не собрался: %s", name, e)
+        finally:
+            st["busy"] = False
+            if "v" in box:
+                st["val"], st["ts"] = box["v"], time.time()
+
+    st["busy"] = True
+    th = threading.Thread(target=run, daemon=True, name=f"piece-{name}")
+    th.start()
+    th.join(budget)
+    if th.is_alive():
+        log.warning("Кусок промпта «%s» думает дольше %.1fс — иду без него "
+                    "(в промпт пойдёт прошлый вариант, %d симв). Это не "
+                    "ошибка модели: что-то снаружи не отвечает.",
+                    name, budget, len(st["val"]))
+        return st["val"]
+    return box.get("v", "")
+
+
+# ЧТО ИСПОЛНЯЕТСЯ ДО РАЗДУМИЙ (2026-08-14). Только обратимое и мгновенное:
+# ручка громкости, пауза, следующий трек, свернуть/развернуть окно. Ничего,
+# что закрывает окна, пишет файлы или лезет в сеть, — такое пусть проходит
+# обычным путём, там предохранители и обстановка. Правило простое: если
+# человек может отменить это одним движением, ждать разрешения незачем.
+INSTANT_TOOLS = {"volume_set", "media_control", "media", "tab_control",
+                 "window_minimize", "window_focus", "minimize_all",
+                 "window_maximize", "window_restore", "eyes",
+                 # ШАГ ПО ПАПКАМ — ТОЖЕ МГНОВЕННЫЙ (2026-08-14, владелец:
+                 # «она моментально просто переходит по пути, не пиздя
+                 # излишне»). Задержка на шаге читается как «не поняла»:
+                 # человек повторяет команду, а она приходит вторым шагом.
+                 "go_to", "pick_number", "scan_disk", "find_here"}
+
+# когда последний раз ругались, что владелец не отмечен (раз в час, не чаще)
+_GUEST_NAG = {"ts": 0.0}
+
+# результат мгновенного рефлекса — чтобы конвейер не повторил действие
+EARLY_REFLEX = {"text": "", "name": "", "result": "", "ts": 0.0}
 
 MODEL_FAIL = {"n": 0, "ts": 0.0, "why": ""}
 # какие мозги уже пробовали в текущей серии провалов: следующая
@@ -5186,6 +5628,36 @@ async def ws_endpoint(ws: WebSocket):
         # каждая услышанная фраза рождает ответ, и эксперимент превращается
         # в разговор с телевизором. Не то же самое, что выгрузка из памяти:
         # модель остаётся загруженной и готова, её просто не зовут.
+        # СПИННОЙ МОЗГ РАБОТАЕТ ДО ГОЛОВНОГО (2026-08-14, просьба владельца:
+        # «некоторые команды срабатывают, по типу громкости, но с задержкой,
+        # если она думает — нужно, чтобы такие базовые вещи выполнялись
+        # моментально, вне зависимости от её ответа»).
+        #
+        # Рефлекс и раньше шёл «до промпта», но ВНУТРИ диалогового
+        # конвейера: сперва очередь, живой контекст, маршрутизатор, выбор
+        # мозга, память, лорбук, кадр экрана — и только потом громкость.
+        # Секунда-две набегали до того, как палец нажмёт на регулятор.
+        # У человека рука на громкости не ждёт, пока он додумает фразу.
+        # Теперь рефлекс исполняется ПЕРВОЙ строкой, ещё до всех проверок:
+        # звук меняется мгновенно, а модель потом прокомментирует уже
+        # сделанное (результат уезжает в EARLY_REFLEX и оттуда в промпт).
+        try:
+            from server import reflex as _rx0
+            _hit0 = _rx0.match(user_text)
+            if _hit0 and _hit0[0] in INSTANT_TOOLS:
+                broadcast_event({"type": "tool", "name": "⚡ " + _hit0[0],
+                                 "args": str(_hit0[1])[:300]})
+                _res0 = _rx0.execute(_hit0, user_text)
+                if _res0:
+                    broadcast_event({"type": "tool",
+                                     "name": "⚡ " + _hit0[0],
+                                     "args": str(_res0)[:900]})
+                EARLY_REFLEX.update(text=user_text, name=_hit0[0],
+                                    result=_res0, ts=time.time())
+                log.info("Мгновенный рефлекс: %s -> %s", _hit0[0],
+                         str(_res0)[:80])
+        except Exception as e:
+            log.debug("мгновенный рефлекс пропущен: %s", e)
         if CFG.get("llm.off", False):
             log.info("Мозги выключены — реплику не рождаю: %r",
                      str(user_text)[:60])
@@ -5452,19 +5924,63 @@ async def ws_endpoint(ws: WebSocket):
         if CFG.get("owner.only_owner", True) and not r.get("speaker_owner"):
             _sp_name = r.get("speaker") or ""
             _sp_conf = float(r.get("speaker_conf") or 0)
-            _has_owner = False
             try:
-                _has_owner = any(
-                    v.get("owner") for v in
-                    (voiceprint.S.reg.speakers or {}).values())
+                _has_owner = voiceprint.owner_marked()
             except Exception:
-                pass
-            if (_has_owner and _sp_name
-                    and _sp_conf >= float(CFG.get("owner.min_conf", 0.55))):
-                log.info("Чужой голос «%s» (%.0f%%) — записала, не отвечаю",
-                         _sp_name, _sp_conf * 100)
-                out.put({"type": "stt", **r, "ignored_guest": True})
-                return
+                _has_owner = False
+            # ТИХАЯ ЗАЩИТА — НЕ ЗАЩИТА (2026-08-14). Владелец не отмечен в
+            # реестре — весь фильтр не работает вообще, и об этом никто не
+            # знает: снаружи это выглядит как «система тупая, пускает в
+            # разговор посторонних». Говорим прямо и один раз в час, а не
+            # молчим.
+            if not _has_owner:
+                if time.time() - _GUEST_NAG["ts"] > 3600:
+                    _GUEST_NAG["ts"] = time.time()
+                    log.warning("Владелец не отмечен в реестре голосов — "
+                                "отвечаю ВСЕМ, включая посторонних. Отметь "
+                                "свой голос золотом в панели «Твой голос».")
+                    broadcast_event({"type": "baymax", "mood": "meh",
+                                     "text": "🎙 Твой голос не отмечен как "
+                                     "хозяйский — я отвечаю всем подряд, "
+                                     "включая разговоры рядом. Отметь себя "
+                                     "в панели «Твой голос»."})
+            else:
+                # ЛИДЕР СРАВНЕНИЯ, А НЕ ТОЛЬКО ВЗЯТЫЙ ПОРОГ (2026-08-14,
+                # живой лог: рядом шёл чужой разговор про аренду и Юлю,
+                # метка стояла «Голос 3 (26%)» — до порога 55% не дотянуло,
+                # и всё уехало Сайке в контекст, а она послушно отвечала.
+                # «Не уверена, кто это» и «это точно не владелец» — разные
+                # вещи. Если ближе всего ЧУЖОЙ голос и он не еле-еле
+                # похож — это чужая речь, и в разговор ей не надо.
+                _near, _sim = "", 0.0
+                try:
+                    _near, _sim = voiceprint.near_now()
+                except Exception:
+                    pass
+                _near_owner = False
+                try:
+                    _near_owner = bool((voiceprint.S.reg.speakers.get(_near)
+                                        or {}).get("owner"))
+                except Exception:
+                    pass
+                # ремень поверх подтяжек: если узнанный голос — сам
+                # владелец, чужим он не бывает ни при каких цифрах
+                _sp_owner = False
+                try:
+                    _sp_owner = bool((voiceprint.S.reg.speakers.get(_sp_name)
+                                      or {}).get("owner"))
+                except Exception:
+                    pass
+                _guest = (not _sp_owner and _sp_name
+                          and _sp_conf >= float(CFG.get("owner.min_conf", 0.55)))
+                if not _guest and _near and not _near_owner:
+                    _guest = _sim >= float(CFG.get("owner.guest_sim", 0.45))
+                if _guest:
+                    log.info("Рядом говорит «%s» (уверенность %.0f%%, "
+                             "похожесть %.2f) — записала, в разговор не "
+                             "беру", _sp_name or _near, _sp_conf * 100, _sim)
+                    out.put({"type": "stt", **r, "ignored_guest": True})
+                    return
         # «стоп/хватит/молчи» — глушим генерацию и озвучку, в LLM не отправляем
         if _is_stop(r["text"]):
             _user_activity()
@@ -5694,6 +6210,15 @@ def _autostart_components():
     Работает фоном, старту сервера не мешает."""
     time.sleep(2)  # даём uvicorn подняться, потом греем тяжёлое
 
+    # ВЕРНУТЬ ОКНО (2026-08-14): если человек оставил окно с моделью
+    # открытым, после перезапуска оно должно открыться снова — вместе с
+    # тем положением, размером и замком, что он выставил.
+    try:
+        from server import desk_avatar as _da
+        _da.autostart()
+    except Exception as e:
+        log.debug("окно на столе не поднялось: %s", e)
+
     # ПОДКЛЮЧИТЬ ВСЁ, ПОД ЧТО ЕСТЬ КЛЮЧ (2026-08-13, владелец: «все
     # подключай, всё познаётся в сравнении — главный принцип этой
     # системы»). Ключ в secrets.json больше не лежит мёртвым грузом в
@@ -5714,14 +6239,20 @@ def _autostart_components():
     # портом, и он уже управляемый, человек ничего не заметил. Запущен без
     # порта — молча перезапускать чужие вкладки нельзя, это его решение:
     # Сайка скажет словами и дождётся согласия.
-    try:
-        from server import browser_hands as _bh
-        _note = _bh.autoattach()
-        if _note:
-            broadcast_event({"type": "baymax", "mood": "meh",
-                             "text": "🌐 " + _note})
-    except Exception as _e:
-        log.debug("автоподключение к Chrome: %s", _e)
+    # …И ДЕЛАЕМ ЭТО В ФОНЕ (2026-08-14, владелец: «давай ускорим до предела
+    # запуск»). Запуск Chrome с отладочным портом — это секунды, а к первому
+    # слову он не нужен вообще: ни голосу, ни слуху, ни мозгам. Всё, что не
+    # нужно для первой фразы, обязано уйти с дороги.
+    def _chrome_bg():
+        try:
+            from server import browser_hands as _bh
+            _note = _bh.autoattach()
+            if _note:
+                broadcast_event({"type": "baymax", "mood": "meh",
+                                 "text": "🌐 " + _note})
+        except Exception as _e:
+            log.debug("автоподключение к Chrome: %s", _e)
+    threading.Thread(target=_chrome_bg, daemon=True, name="chrome").start()
 
     def _try_chain(kind, names, loader):
         for name in names:
@@ -5811,11 +6342,29 @@ def _autostart_components():
         except Exception as e:
             log.debug("справочник не записался: %s", e)
     threading.Thread(target=_write_guide, daemon=True).start()
+    # ═══ ПОРЯДОК ЗАПУСКА (2026-08-14, слова владельца) ═══
+    # «стартуй визуал параллельно сразу; ттс запускай [первым], т.к. квен
+    #  дольше всего раздупляет; слух у неё очень быстро запускается, так
+    #  что это следующим; и ставим в ответ первую ллм, которая в рейтинге —
+    #  она онлайн, должно всё достаточно быстро получиться»
+    #
+    # Отсюда ровно три правила:
+    #   1. Ничто не ждёт друг друга. Голос, слух и мозги — три независимых
+    #      потока, и ни один не держит остальные.
+    #   2. ГОЛОС ПЕРВЫМ. qwen3-TTS компилируется дольше всех, значит и
+    #      очередь занимает первым — пока он греется, лёгкая времянка уже
+    #      отвечает. Слух встаёт за секунды, ему очередь не нужна.
+    #   3. Мозги — тоже отдельным потоком. Раньше они грузились В ЭТОМ
+    #      потоке, и любая заминка (перебор локальных моделей, прогрев,
+    #      таймаут провайдера) держала весь автопуск. Первой берётся
+    #      верхняя по рейтингу; если она облачная — переключение стоит
+    #      миллисекунды, и Сайка готова отвечать раньше, чем догрелся голос.
+    _t_boot = time.monotonic()
     threads = [threading.Thread(target=f, daemon=True, name=f.__name__)
-               for f in (_boot_stt, _boot_tts)]
+               for f in (_boot_tts, _boot_stt)]
     for t in threads:
         t.start()
-    # мозги грузим в ЭТОМ потоке параллельно слуху/голосу — код ниже
+        time.sleep(0.05)          # только чтобы порядок в логе был читаем
 
     # мозги: ПО РЕЙТИНГУ, лучшая — первая (решение владельца 2026-07-23:
     # «модель, которая по рейтингу выше всего, должна быть самой первой на
@@ -5831,45 +6380,116 @@ def _autostart_components():
     # отдельной команды руками для него не нужно, он участвует в общем
     # отборе по рейтингу наравне с остальными.
     BACKENDS_AUTOSTART = ("ollama", "lmstudio", "locallm", "llamacpp")
-    try:
-        tps = ratings.llm_tps()
-        manual = ratings.manual_scores()
-        cands = [(m["backend"], m["name"]) for m in llm.list_models()
-                 if m["backend"] in BACKENDS_AUTOSTART
-                 and "embed" not in m["name"].lower()]
-        cfg_pick = (CFG.get("llm.backend", "ollama"), CFG.get("llm.model", ""))
 
-        def _eff(name):  # та же семантика, что effScore в ui/index.html
-            return manual.get(name, ratings.score_of(tps.get(name, 0)))
+    def _boot_llm():
+      try:
+          tps = ratings.llm_tps()
+          manual = ratings.manual_scores()
+          cands = [(m["backend"], m["name"]) for m in llm.list_models()
+                   if m["backend"] in BACKENDS_AUTOSTART
+                   and "embed" not in m["name"].lower()]
+          cfg_pick = (CFG.get("llm.backend", "ollama"), CFG.get("llm.model", ""))
 
-        cands.sort(key=lambda c: (-_eff(c[1]), -tps.get(c[1], 0),
-                                  0 if c == cfg_pick else 1))
-        for backend, model in cands:
-            try:
-                if not llm.switch_model(backend, model)["ok"]:
-                    raise RuntimeError("прогрев не удался")
-                CFG.set("llm.backend", backend)
-                CFG.set("llm.model", model)
-                log.info("Автопуск: мозги — %s/%s (%.1f ток/с в рейтинге)",
-                         backend, model, tps.get(model, 0))
-                # прогрев KV-кэша боевой персоной в фоне: первый реальный
-                # ответ докатывает только хвост промпта, а не все ~7КБ
-                try:
-                    from server.persona import SAIKA_SYSTEM
-                    threading.Thread(
-                        target=llm.prewarm_context,
-                        args=(backend, model, SAIKA_SYSTEM),
-                        daemon=True).start()
-                except Exception:
-                    pass
-                break
-            except Exception as e:
-                report_problem("llm", f"{model}: {e}",
-                               "автопуск пробует следующую модель")
-    except Exception as e:
-        report_problem("llm", str(e), "автопуск мозгов не удался")
-    for t in threads:  # дождаться слух/голос (сам автопуск — фоновый поток)
+          # ОБЛАКО ТОЖЕ УЧАСТВУЕТ (2026-08-14). Раньше в отборе были только
+          # локальные бэкенды — а у владельца полтора десятка облачных
+          # моделей с живыми ключами, и все они при старте не
+          # рассматривались вовсе. «Самые первые по рейтингу» просто не
+          # могли загрузиться: их не было в списке кандидатов.
+          try:
+              from server.llm import brains as _bb
+              for _c in _bb._cloud_candidates():
+                  _pair = ("cloud", _c["model"])
+                  if _pair not in cands:
+                      cands.append(_pair)
+          except Exception as _e:
+              log.debug("облачные мозги в автопуск не попали: %s", _e)
+
+          def _eff(backend, name):
+              """Ум: ручная оценка владельца → таблица лестницы → скорость.
+
+              Скорость СТОИТ ПОСЛЕДНЕЙ и только как запасной вариант для
+              модели, которой нет в таблице. Быстрая четырёхмиллиардная
+              модель не умнее медленной семидесятимиллиардной, а до
+              2026-08-14 отбор считал ровно наоборот."""
+              if name in manual:
+                  return int(manual[name])
+              try:
+                  from server.llm import brains as _b2
+                  return _b2.rank_of(name, backend)
+              except Exception:
+                  return ratings.score_of(tps.get(name, 0))
+
+          def _recent(backend, name):
+              try:
+                  from server.llm import brains as _b3
+                  return _b3.recent_pos(backend, name)
+              except Exception:
+                  return 99
+
+          # при РАВНОМ уме первым берём того, с кем работали последним:
+          # это привычка владельца, а не случайный сосед по таблице
+          cands.sort(key=lambda c: (-_eff(c[0], c[1]), _recent(c[0], c[1]),
+                                    -tps.get(c[1], 0),
+                                    0 if c == cfg_pick else 1))
+          log.info("Автопуск, порядок по уму: %s", ", ".join(
+              f"{b}/{m}({_eff(b, m)})" for b, m in cands[:6]))
+          for backend, model in cands:
+              try:
+                  # ОБЛАЧНАЯ ПЕРВОЙ — И ЭТО МГНОВЕННО (2026-08-14, владелец:
+                  # «ставим в ответ первую ллм, которая в рейтинге, она
+                  # онлайн — должно всё достаточно быстро получиться»).
+                  # У каждой облачной модели свой адрес и свой ключ, поэтому
+                  # переезжаем целиком, ровно как при клике в интерфейсе, —
+                  # иначе Groq пошёл бы по адресу Mistral с чужим ключом.
+                  # Ничего не грузится в память: готова отвечать сразу.
+                  if backend == "cloud":
+                      if not llm.use_cloud(model, None):
+                          raise RuntimeError("нет ключа или адреса")
+                      CFG.set("llm.backend", "cloud")
+                      CFG.set("llm.model", model)
+                      try:
+                          from server.llm import brains as _b4
+                          _b4.note_used("cloud", model)
+                      except Exception:
+                          pass
+                      log.info("Автопуск: мозги — облако/%s (ум %s/10), "
+                               "греть нечего, отвечаю сразу",
+                               model, _eff("cloud", model))
+                      break
+                  if not llm.switch_model(backend, model)["ok"]:
+                      raise RuntimeError("прогрев не удался")
+                  CFG.set("llm.backend", backend)
+                  CFG.set("llm.model", model)
+                  log.info("Автопуск: мозги — %s/%s (ум %s/10, %.1f ток/с)",
+                           backend, model, _eff(backend, model),
+                           tps.get(model, 0))
+                  # прогрев KV-кэша боевой персоной в фоне: первый реальный
+                  # ответ докатывает только хвост промпта, а не все ~7КБ
+                  try:
+                      from server.persona import SAIKA_SYSTEM
+                      threading.Thread(
+                          target=llm.prewarm_context,
+                          args=(backend, model, SAIKA_SYSTEM),
+                          daemon=True).start()
+                  except Exception:
+                      pass
+                  break
+              except Exception as e:
+                  report_problem("llm", f"{model}: {e}",
+                                 "автопуск пробует следующую модель")
+      except Exception as e:
+          report_problem("llm", str(e), "автопуск мозгов не удался")
+
+    threads.append(threading.Thread(target=_boot_llm, daemon=True,
+                                    name="_boot_llm"))
+    threads[-1].start()
+
+    # ждём все три и говорим ЧЕСТНОЕ ВРЕМЯ: без числа «ускорили» проверить
+    # нечем, а глазами старт всегда кажется одинаково долгим
+    for t in threads:
         t.join(timeout=600)
+    log.info("Автопуск завершён за %.1fс (голос, слух и мозги грелись "
+             "параллельно)", time.monotonic() - _t_boot)
 
 
 def main():
@@ -6050,12 +6670,18 @@ def main():
         # вкладка хоть раз объявилась — значит, она есть, дубль не открываем
         # никогда; за все 8с никого — вкладки правда нет, открываем.
         def _open_if_no_tab():
-            for _ in range(32):  # 32 × 0.25с = 8с
+            # ВОСЕМЬ СЕКУНД ТИШИНЫ НА ХОЛОДНОМ СТАРТЕ (2026-08-14,
+            # владелец: «стартуй визуал параллельно сразу»). Защёлка нужна
+            # только при ПЕРЕзапуске, когда старая вкладка переподключается
+            # за 1-2 секунды. На первом запуске ждать некого — а ждали
+            # всё равно, и человек восемь секунд смотрел в пустоту.
+            # Полторы секунды покрывают переподключение с запасом.
+            for _ in range(15):  # 15 × 0.1с = 1.5с
                 if EVENT_CLIENTS:
                     log.info("Вкладка уже открыта (переподключилась) — "
                              "новую не открываю")
                     return
-                time.sleep(0.25)
+                time.sleep(0.1)
             # 0.0.0.0 — это «слушать на всех интерфейсах», а НЕ адрес, по
             # которому можно зайти: браузер отвечает ERR_ADDRESS_INVALID
             # (живой случай 2026-07-26, сразу после включения доступа с
