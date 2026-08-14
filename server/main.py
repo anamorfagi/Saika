@@ -2818,6 +2818,11 @@ def force_compress():
 
 
 # ---------------------- REST-чат для нативных клиентов (UE5 и т.п.) --------
+# все живые плееры: «стоп» должен доставать до звука, который уже играет,
+# а плеер создаётся на каждый REST-ответ и глобальной переменной не был
+SPEAKERS = set()
+
+
 class _ServerSpeaker:
     """Играет PCM (int16 mono) через колонки ЭТОГО ПК — для клиентов без
     своего аудио (нативный UE-интерфейс). Ленивая инициализация sounddevice:
@@ -2827,6 +2832,7 @@ class _ServerSpeaker:
         self._streams = {}   # "primary"/"dup" -> (sd.OutputStream, sr, device)
         self._q = {}         # то же -> очередь кусков
         self._th = {}        # то же -> поток-писатель
+        SPEAKERS.add(self)
 
     @staticmethod
     def _resolve_device(name):
@@ -2947,7 +2953,19 @@ class _ServerSpeaker:
         if CFG.get("tts.output_device_dup"):
             self._send("dup", "tts.output_device_dup", data, sr)
 
+    def drop(self):
+        """Выбросить всё, что ещё не прозвучало. Устройства не закрываем —
+        следующая фраза заиграет без паузы на переоткрытие."""
+        for q in list(self._q.values()):
+            try:
+                while True:
+                    q.get_nowait()
+                    q.task_done()
+            except Exception:
+                pass
+
     def close(self):
+        SPEAKERS.discard(self)
         # сначала гасим писателей, потом сами устройства: иначе поток
         # успевает дописать в уже закрытый поток и ловит исключение
         for key, q in list(self._q.items()):
@@ -5955,6 +5973,31 @@ async def ws_endpoint(ws: WebSocket):
         dist = _edit_distance(word[:len(name)], name)
         return dist <= CFG.get("attention.fuzzy_max_edits", 1)
 
+    QUIET = {"on": False, "since": 0.0}
+
+    def _wants_quiet(text: str) -> bool:
+        """«Замолчи» это не то же, что «стоп». «Стоп» — прекрати ЭТО;
+        «замолчи/помолчи/не мешай» — прекрати ВСЁ, пока не позову."""
+        t = (text or "").lower()
+        return bool(re.search(r"замолч|помолч|\bмолчи\b|заткнис|не\s+мешай|"
+                              r"отвали|не\s+лезь|тихий\s+режим", t))
+
+    def _silence_now():
+        """Оборвать ЗВУК, который уже наговорен и играет.
+
+        Одного stop_event мало: он останавливает генерацию, а куски,
+        которые уже ушли в устройства вывода и в браузер, продолжают
+        звучать секундами. «Стоп» должен слышаться сразу."""
+        for sp in list(SPEAKERS):
+            try:
+                sp.drop()
+            except Exception as e:
+                log.debug("серверный вывод не заглушился: %s", e)
+        try:
+            broadcast_event({"type": "shutup"})
+        except Exception as e:
+            log.debug("браузеру не сказалось замолчать: %s", e)
+
     def _is_stop(text: str) -> bool:
         """Короткая команда «замолчи». НЕ уходит в LLM — просто глушим
         генерацию и озвучку (иначе маленькая модель начинает рассуждать, как
@@ -6036,6 +6079,30 @@ async def ws_endpoint(ws: WebSocket):
     def voice_phrase(r):
         now = time.time()
         heard_mono = r.pop("_heard_mono", None)  # внутреннее, не шлём в UI
+        # ═══ «СТОП» ВЫШЕ ВСЕГО ОСТАЛЬНОГО (2026-08-15, просьба владельца:
+        # «сделай команду остановить выше всех процессов, чтобы он мог
+        # остановить процесс в любой момент без очередей, чисто на основе
+        # системы и распознавателя»). Стоп-слово и раньше не уходило в
+        # LLM, но проверялось ПОСЛЕ отпечатка голоса, проверки на гостя,
+        # эхо-защиты и хоткеев — то есть после доброй половины конвейера.
+        # Пока всё это считается, она продолжает говорить. Теперь это
+        # первое, что случается с распознанной фразой, и глушим не только
+        # генерацию, но и уже наговоренное: очередь фраз, серверные
+        # устройства вывода и звук в браузере. ═══
+        if _is_stop(r.get("text", "")):
+            _user_activity()
+            stop_event.set()
+            with pending_lock:
+                pending.clear()
+            _silence_now()
+            quiet = _wants_quiet(r.get("text", ""))
+            if quiet:
+                QUIET["on"] = True
+                QUIET["since"] = now
+                log.info("Тихий режим: слушаю, но не отвечаю, пока не "
+                         "позовут по имени")
+            out.put({"type": "stt_stop", **r, "quiet": quiet})
+            return
         # МЕТКА ГОВОРЯЩЕГО (2026-07-28). Появляется только когда тембр уже
         # узнаётся устойчиво — до этого честнее не писать ничего, чем писать
         # наугад. Она же уходит в модуль имён: если во фразе прозвучало имя,
@@ -6172,14 +6239,8 @@ async def ws_endpoint(ws: WebSocket):
                              "беру", _sp_name or _near, _sp_conf * 100, _sim)
                     out.put({"type": "stt", **r, "ignored_guest": True})
                     return
-        # «стоп/хватит/молчи» — глушим генерацию и озвучку, в LLM не отправляем
-        if _is_stop(r["text"]):
-            _user_activity()
-            stop_event.set()
-            with pending_lock:
-                pending.clear()   # и копившиеся фразы тоже — «стоп» значит стоп
-            out.put({"type": "stt_stop", **r})
-            return
+        # «стоп» уже отработал первой строкой voice_phrase (2026-08-15) —
+        # здесь он был бы вторым и лишним
         # ГОЛОСОВОЙ ХОТКЕЙ: слово-триггер срабатывает МГНОВЕННО, мимо LLM
         if _fire_voice_hotkey(r["text"]):
             _user_activity()
@@ -6187,6 +6248,18 @@ async def ws_endpoint(ws: WebSocket):
         # режим «слушать всё»: отвечает на любую распознанную речь, без имени
         # и без окна (умный режим внимания остаётся дефолтом — см. UI-тумблер)
         always = CFG.get("attention.always", False)
+        # ТИХИЙ РЕЖИМ (2026-08-15, просьба владельца: «команда „замолчи“
+        # чтобы переводила её слух в умный режим, пока я её не позову по
+        # имени»). Слух, отпечаток голоса и журнал продолжают работать —
+        # молчит только ответ. Выходит из него ровно одно: имя.
+        if QUIET["on"]:
+            if _addressed(r["text"]):
+                QUIET["on"] = False
+                log.info("Тихий режим снят — позвали по имени")
+                out.put({"type": "quiet", "on": False})
+            else:
+                out.put({"type": "stt_ignored", **r, "quiet": True})
+                return
         if (always or not CFG.get("attention.enabled", True)
                 or _addressed(r["text"]) or now < attn["until"]):
             _user_activity()

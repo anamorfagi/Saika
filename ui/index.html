@@ -1616,9 +1616,17 @@ function handleJson(m){
     if(typeof bargeIn==='function'){ try{bargeIn();}catch(e){} }
     const d=document.createElement('div');
     d.style.cssText='align-self:center;font-size:11px;color:var(--dim);padding:2px 6px';
-    d.textContent='⏹ остановлена: «'+m.text+'»';
+    d.textContent = m.quiet
+      ? '🤫 замолчала: «'+m.text+'» — слушает, но не отвечает, пока не позовёшь по имени'
+      : '⏹ остановлена: «'+m.text+'»';
     $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
     curSaikaMsg=null;
+  }
+  else if(m.type==='quiet'){
+    const d=document.createElement('div');
+    d.style.cssText='align-self:center;font-size:11px;color:var(--ok);padding:2px 6px';
+    d.textContent='🔔 снова слушает — позвали по имени';
+    $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
   }
   else if(m.type==='stt_ignored'){
     // услышала, но это фон (не обращались) — показываем серым, не отвечает
