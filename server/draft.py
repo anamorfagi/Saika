@@ -74,6 +74,8 @@ class Draft:
         return self.rec
 
     def feed(self, pcm16):
+        # черновик держит СВОЙ нативный распознаватель (Kaldi внутри Vosk)
+        # и работает по тому же звуку, что и основной движок
         """-> строка черновика, если она изменилась, иначе пусто.
 
         Зовётся из того же потока слуха, что и основной движок, — сразу
@@ -86,7 +88,11 @@ class Draft:
             return ""
         try:
             t0 = time.monotonic()
-            if rec.AcceptWaveform(pcm16.tobytes()):
+            from server import stage
+            stage.mark("черновик: vosk.AcceptWaveform")
+            _acc = rec.AcceptWaveform(pcm16.tobytes())
+            stage.clear()
+            if _acc:
                 # кусок закрылся — черновик обнуляем: дальше слово скажет
                 # точный движок, и спорить с ним черновику незачем
                 self.last = ""

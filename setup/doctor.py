@@ -306,6 +306,56 @@ def _qwen_tts_ok():
                    f"(по рейтингу)")
 
 
+def _from_black_box(fix) -> bool:
+    """ЧТО СКАЗАЛ ЧЁРНЫЙ ЯЩИК (2026-08-14).
+
+    Владелец, справедливо: «Беймакс хоть раз справится с починкой? какой
+    смысл от него, если я тебе постоянно скидываю логи, чтобы
+    ремонтировать». Смысла и правда не было: он проверял, установлен ли
+    пакет, — а падал не пакет. Нативный обвал не оставляет ни исключения,
+    ни строчки в логе, и по «последней записи» доктор чинил не то.
+
+    Теперь опасные участки помечают себя на диске (server/stage.py).
+    Метка пережила падение — значит умерли ровно там, и это ФАКТ, а не
+    догадка по хвосту лога. Отсюда и лечение: точечное и по адресу."""
+    try:
+        sys.path.insert(0, str(ROOT))
+        from server import stage
+        where = stage.crashed_at()
+    except Exception:
+        return False
+    if not where:
+        return False
+    name = where.split("\t")[0]
+    print(f"[!] Прошлый запуск умер здесь: {name}")
+    if not fix:
+        return True
+    from server.config import CFG
+    if "vosk" in name.lower() or "черновик" in name.lower():
+        CFG.set("stt.draft", False)
+        print("[fix] Это черновик распознавания (Vosk/Kaldi) — он роняет "
+              "процесс нативно. Выключил его: stt.draft = false. Точный "
+              "движок работает как работал, пропадёт только серый текст "
+              "по ходу фразы. Вернуть: stt.draft = true.")
+        return True
+    if name.startswith("слух:"):
+        eng = name.split(":", 1)[1].strip().split(".")[0]
+        chain = [n for n in (CFG.get("stt.fallback_order", []) or [])
+                 if n != eng]
+        if chain:
+            CFG.set("stt.engine", chain[0])
+            print(f"[fix] Умерли внутри движка слуха «{eng}» — перевёл слух "
+                  f"на {chain[0]}, чтобы система поднялась.")
+        return True
+    if name.startswith("голос:") or "tts" in name.lower():
+        print("[fix] Умерли в озвучке — этим занимается страж крашей "
+              "голоса, он отключит движок сам.")
+        return True
+    print("[!] Точечного лечения для этого места пока нет — напиши, что "
+          "делал перед падением, это прямая наводка.")
+    return True
+
+
 def _recover_from_crash(fix):
     """После нативного краша (0xC0000005) процесс умирает мгновенно — Python
     это не ловит. Но в saika.log последней строкой остаётся то, на чём он
@@ -339,7 +389,10 @@ def _recover_from_crash(fix):
 
 def run_checks(fix=False):
     print("\n── Беймакс: осмотр системы ───────────────────")
-    _recover_from_crash(fix)
+    # СНАЧАЛА ФАКТ, ПОТОМ ДОГАДКИ. Чёрный ящик знает точное место смерти;
+    # разбор лога — эвристика и зовётся, только если метки не было.
+    if not _from_black_box(fix):
+        _recover_from_crash(fix)
     report = []
     for mod, pkg in PKG_FIX.items():
         checker = _import_ok_sub(mod) if mod in HEAVY_MODS else _import_ok(mod)

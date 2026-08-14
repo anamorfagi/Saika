@@ -366,16 +366,23 @@ class STTManager:
             return []
         sr = CFG.get("stt.sample_rate", 16000)
         results = []
+        from server import stage
         for name in self._healthy_chain():
             engine = self._get(name)
             try:
+                # МЕТКИ ЧЁРНОГО ЯЩИКА (2026-08-14). Тут живут чужие
+                # C-библиотеки (Vosk/Kaldi, torch у GigaAM), и обвал внутри
+                # них питон не ловит вообще. Метка на диске — единственный
+                # способ узнать, кто именно умер: файл пережил падение,
+                # значит вышли не отсюда.
                 if engine.kind == "streaming":
-                    for text in engine.feed(pcm16, sr):
-                        results.append({"text": text, "engine": name})
+                    with stage.step(f"слух: {name}.feed"):
+                        for text in engine.feed(pcm16, sr):
+                            results.append({"text": text, "engine": name})
                 else:
                     segment = self.vad.push(pcm16)
                     if segment is not None:
-                        with self.lock:
+                        with self.lock, stage.step(f"слух: {name}.transcribe"):
                             text = engine.transcribe(segment, sr)
                         if text:
                             results.append({"text": text, "engine": name})
