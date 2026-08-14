@@ -2596,6 +2596,19 @@ async function fillModelPop(){
     el.innerHTML=scoreBar(m.name, score, tps?('~'+tps+' ток/с'):'ещё не замеряла')+
       tag+weightDot(m)+
       '<span class="mname" title="'+nameEsc+'">🧠 '+m.name+'</span>'+
+      // ЗНАЧКИ УМЕНИЙ КАК В LM STUDIO (2026-08-15, владелец: «где глазик,
+      // мозги? почему плюшки не прописываются каждой модели автоматом?»).
+      // Прописываются — реестр пород (skills.card) заполняет их каждой
+      // модели с рождения, /api/models их отдаёт — их просто не рисовали.
+      (m.skills?('<span style="flex:none;font-size:10.5px;letter-spacing:1px" title="'+
+        [m.skills.vision>=6?'видит картинки и экран':null,
+         m.skills.tools>=7?'уверенные руки-инструменты':null,
+         m.skills.code>=8?'сильна в коде':null,
+         m.skills.long>=9?'длинный контекст':null,
+         m.skills.fast>=7?'быстрая':null].filter(Boolean).join(' · ')+'">'+
+        (m.skills.vision>=6?'👁':'')+(m.skills.tools>=7?'🛠':'')+
+        (m.skills.code>=8?'⌨':'')+(m.skills.long>=9?'📜':'')+
+        (m.skills.fast>=7?'⚡':'')+'</span>'):'')+
       capsBadges(m)+dot+btn+delBtn;
     const mb=el.querySelector('.mini:not(.del)');
     if(mb) mb.onclick=async(e)=>{
