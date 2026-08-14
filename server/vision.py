@@ -1129,6 +1129,9 @@ SCHEMAS = [
 NAMES = {"look_screen", "look_camera"}
 
 
+LAST_ERR = {"why": ""}       # почему не вышло посмотреть — для честного ответа
+
+
 def _describe(url: str, question: str) -> str:
     """Описать кадр. Сначала пробуем текущую модель (если она зрячая),
     иначе одалживаем глаза у vision-модели парка — механизм уже есть в
@@ -1143,14 +1146,35 @@ def _describe(url: str, question: str) -> str:
     pick = caps.pick_vision_model(llm.list_models(), llm.loaded_models())
     if pick and tuple(pick) not in tries:
         tries.append(tuple(pick))
+    # НЕ ОДИН ЗРЯЧИЙ, А ВСЕ (2026-08-15). Живой случай: gpt-4.1 в парке
+    # есть и зрение у него 9 из 10, но у GitHub Models потолок 8000
+    # входных токенов на запрос и 50 запросов в день — кадр туда не влез,
+    # попытка кончилась, и Сайка сказала «ни одна модель в парке не умеет
+    # смотреть на картинки». Это неправда: умеют, просто эта не приняла
+    # ЭТОТ кадр. Идём по всем зрячим подряд и, если не вышло ни у кого,
+    # называем ПРИЧИНУ, а не выдуманное неумение.
+    try:
+        from server.llm import skills as _sk
+        for cand in (_sk.best_for("vision", min_score=6, exclude=tries),
+                     _sk.best_for("vision", min_score=6,
+                                  exclude=tries + [(pick or ("", ""))])):
+            if cand and (cand["backend"], cand["model"]) not in tries:
+                tries.append((cand["backend"], cand["model"]))
+    except Exception as e:
+        log.debug("доп. зрячие не нашлись: %s", e)
+    errs = []
     for backend, model in tries:
         try:
             txt = llm.ask_specific(backend, model,
                                    [{"role": "user", "content": q}], image=url)
             if txt.strip():
                 return txt.strip()
+            errs.append(f"{model}: ответила пусто")
         except Exception as e:
-            log.debug("описание кадра через %s/%s: %s", backend, model, e)
+            log.info("описание кадра через %s/%s не вышло: %s",
+                     backend, model, e)
+            errs.append(f"{model}: {str(e)[:120]}")
+    LAST_ERR["why"] = "; ".join(errs[-3:])
     return ""
 
 
@@ -1188,7 +1212,13 @@ def call(name: str, arguments) -> str:
         return f"не получилось открыть глаза: {e}"
     txt = _describe(url, str(arguments.get("question", ""))[:300])
     if not txt:
-        return ("кадр сделан, но описать некому: ни текущая модель, ни одна "
-                "модель в парке не умеет смотреть на картинки. Скажи честно.")
+        why = LAST_ERR.get("why") or ""
+        if why:
+            return ("кадр сделан, но разобрать его не вышло: " + why[:300] +
+                    ". Скажи это человеку ПРЯМО (какая модель и почему "
+                    "отказала) — он поймёт и переключит. Картинку НЕ "
+                    "выдумывай.")
+        return ("кадр сделан, но описать некому: ни у текущей модели, ни у "
+                "кого в парке сейчас нет зрения. Скажи честно.")
     where = "на экране" if name == "look_screen" else "в камере"
     return f"я посмотрела {where} и вижу: {txt}"

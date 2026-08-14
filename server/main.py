@@ -4228,6 +4228,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
 
     full_reply = []
     sentence_buf = ""
+    _shown = 0            # сколько символов буфера уже ушло в чат
     n_tokens = 0
     t_first = None
 
@@ -4286,7 +4287,7 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     tts_thread = threading.Thread(target=tts_worker, daemon=True)
     tts_thread.start()
 
-    def speak(sentence):
+    def speak(sentence, show=False):
         # текстовые жест-маркеры исполняем здесь: через speak() проходят ВСЕ
         # реплики (стрим, повтор без инструментов, финальный хвост) — жест
         # гарантированно сработает даже у модели без tool-calls
@@ -4303,6 +4304,16 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         except Exception:
             pass
         if sentence:
+            # ПРИДЕРЖАННОЕ ТОЖЕ НАДО ПОКАЗАТЬ (2026-08-15). Владелец: «на
+            # свои реплики почему-то перестала полностью прописывать?» —
+            # не кажется. Стрим придерживает буфер, если тот начинается с
+            # «[» (защита от псевдо-вызовов), а модель начала ставить в
+            # начало жест-маркер [жест:shaking]. Значит вся ПЕРВАЯ фраза
+            # придерживалась и в чат не уходила никогда, а показываться
+            # начинало со второй — с середины мысли. Озвучка при этом шла
+            # целиком, потому что говорит speak(), а не поток.
+            if show:
+                out.put({"type": "token", "text": sentence + " "})
             remember_said(sentence)   # чтобы узнать себя в эхе из колонок
             # вопрос -> наклон головы у веб-аватара (co-speech, 2026-07-25)
             if sentence.rstrip().endswith("?"):
@@ -4418,6 +4429,8 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             # окажется настоящий текст, он покажется целиком чуть позже;
             # если вызов — его исполнят и человек увидит результат, а не
             # обрубок разметки.
+            # сколько символов буфера уже показано человеку — чтобы
+            # понять, показывали ли эту фразу вообще
             if re.match(r'\s*[{\[]', sentence_buf) \
                     or _THINK_HEAD.match(sentence_buf) or _THINK_LINE.search(sentence_buf) \
                     or "<|" in sentence_buf or "call:" in sentence_buf \
@@ -4429,7 +4442,14 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                                 r'[a-z_]{3,}\b', sentence_buf, re.I):
                 pass  # придержали — не эхо-каем спецтокены в чат
             else:
-                out.put({"type": "token", "text": token})
+                # отдаём ВСЁ, что накопилось с прошлой отдачи: если раньше
+                # придерживали (буфер начинался со скобки), хвост уже
+                # доказал, что это обычный текст — и он должен доехать
+                # целиком, а не с того места, где придержка отпустила
+                _tail = sentence_buf[_shown:]
+                if _tail:
+                    out.put({"type": "token", "text": _tail})
+                _shown = len(sentence_buf)
             looped = guard.feed(token)
             if looped:
                 # обрыв стрима закрывает соединение — бэкенд гасит генерацию
@@ -4440,9 +4460,12 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             done = split_sentences(sentence_buf)
             # озвучиваем законченные предложения, остаток держим в буфере
             if len(done) > 1:
+                _cut = len(sentence_buf) - len(done[-1])
                 for s in done[:-1]:
-                    speak(s)
+                    # эту фразу человек не видел (её придержали) — покажем
+                    speak(s, show=_shown < _cut)
                 sentence_buf = done[-1]
+                _shown = max(0, _shown - _cut)
         _first_tok_evt.set()  # стрим завершён (даже без токенов) — будить некого
         log.info("LLM стрим завершён: %d токенов, прерван stop_event=%s",
                  n_tokens, stop_event.is_set())
