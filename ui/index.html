@@ -2265,10 +2265,38 @@ function fillSttEngines(){
 /* ---------- панель системы слева ---------- */
 let sysinfo=null;
 const GB=b=>(b/2**30).toFixed(1)+' ГБ';
-function sbar(label,pct,extra){
-  const c=pct<60?'var(--ok)':pct<85?'var(--warn)':'var(--err)';
-  return `<div class="row"><span>${label}</span><span>${extra??Math.round(pct)+'%'}</span></div>
-    <div class="sbar"><i style="width:${Math.min(100,pct)}%;background:${c}"></i></div>`;
+function sbarColor(pct){
+  return pct<60?'var(--ok)':pct<85?'var(--warn)':'var(--err)';
+}
+/* КЛЮЧ У КАЖДОЙ ПОЛОСКИ (2026-08-15) — чтобы обновлять ЧИСЛА, а не
+   пересобирать колонку целиком. Полная пересборка раз в секунду сносит
+   поддерево и строит заново: отсюда мерцание внизу и уезжающая прокрутка
+   («столбик кручу вниз, он мерцает и скролл улетает»). */
+function sbar(label,pct,extra,key){
+  const c=sbarColor(pct), k=key||label;
+  return `<div class="row" data-k="${k}"><span>${label}</span><span class="v">${extra??Math.round(pct)+'%'}</span></div>
+    <div class="sbar" data-k="${k}"><i style="width:${Math.min(100,pct)}%;background:${c}"></i></div>`;
+}
+/* Обновление на месте: DOM остаётся тем же, меняются только текст и
+   ширина. Возвращает false, если структура другая — тогда зовущий
+   пересоберёт колонку честно (это бывает редко: появилась видеокарта,
+   изменился список процессов). */
+function sysPatch(sb, vals, sig){
+  if(!sb || sb.dataset.sig !== sig) return false;
+  for(const [k, v] of Object.entries(vals)){
+    const row = sb.querySelector(`.row[data-k="${k}"] .v`);
+    if(row && row.textContent !== v.text) row.textContent = v.text;
+    if(v.pct != null){
+      const bar = sb.querySelector(`.sbar[data-k="${k}"] i`);
+      if(bar){
+        const w = Math.min(100, v.pct).toFixed(1) + '%';
+        if(bar.style.width !== w) bar.style.width = w;
+        const c = sbarColor(v.pct);
+        if(bar.style.background !== c) bar.style.background = c;
+      }
+    }
+  }
+  return true;
 }
 async function pollSystem(){
   try{
@@ -2276,13 +2304,13 @@ async function pollSystem(){
     const esc2 = t => String(t).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
     let h='<div class="hdr">Система</div>';
     const c=sysinfo.cpu||{};
-    if(c.percent!=null) h+=sbar(`ЦП${c.cores?' · '+c.cores+' пот.':''}`, c.percent);
+    if(c.percent!=null) h+=sbar(`ЦП${c.cores?' · '+c.cores+' пот.':''}`, c.percent, null, 'cpu');
     const r=sysinfo.ram||{};
-    if(r.total) h+=sbar('ОЗУ', r.percent, GB(r.used)+' / '+GB(r.total));
+    if(r.total) h+=sbar('ОЗУ', r.percent, GB(r.used)+' / '+GB(r.total), 'ram');
     const g=sysinfo.gpu;
     if(g){
       h+=`<div class="gname">${g.name}</div>`;
-      h+=sbar('VRAM', g.vram_used/g.vram_total*100, GB(g.vram_used)+' / '+GB(g.vram_total));
+      h+=sbar('VRAM', g.vram_used/g.vram_total*100, GB(g.vram_used)+' / '+GB(g.vram_total), 'vram');
       // раскладка по процессам: одно число «сколько» не отвечает на вопрос
       // «почему» — отвечает список, кто именно ест
       if(g.procs && g.procs.length){
@@ -2290,8 +2318,8 @@ async function pollSystem(){
           g.procs.map(p=>`${esc2(p.who)} — ${(p.mb/1024).toFixed(1)} ГБ`)
                  .join('<br>')+'</div>';
       }
-      if(g.util!=null) h+=sbar('GPU', g.util);
-      if(g.temp!=null) h+=`<div class="row"><span>Температура</span><span>${g.temp}°C</span></div>`;
+      if(g.util!=null) h+=sbar('GPU', g.util, null, 'gpu');
+      if(g.temp!=null) h+=`<div class="row" data-k="temp"><span>Температура</span><span class="v">${g.temp}°C</span></div>`;
     }
     h+=`<div class="legend weights">Вес моделей для этого ПК:<br>
       <span style="color:var(--ok)">●</span> лёгкая — целиком в VRAM<br>
@@ -2305,15 +2333,40 @@ async function pollSystem(){
       border-radius:8px;padding:6px;cursor:pointer"
       title="Выгрузить из памяти ВСЕ модели (слух, голос, LLM). Сайка продолжит работать, нужное подгрузится заново по порядку.">
       🧹 Выгрузить всё из памяти</button>`;
-    $('#sysbar').innerHTML=h;
-    // ПЛОТНЫЙ РЕЖИМ — ПО ВЫСОТЕ КОЛОНКИ, А НЕ ПО ЕЁ СОДЕРЖИМОМУ
-    // (2026-08-15). Мерить переполнение и по нему сжимать нельзя: сжатие
-    // убирает переполнение, режим выключается, переполнение возвращается —
-    // и так шестьдесят раз в секунду. На этих граблях я сегодня уже
-    // прокатился с картой голосов и посадил владельцу процессор. Высота
-    // колонки от её содержимого не зависит, петли нет.
+    // ПЕРЕСОБИРАЕМ ТОЛЬКО КОГДА ЕСТЬ ЧТО МЕНЯТЬ (2026-08-15). Колонка
+    // перерисовывалась целиком каждую секунду, даже если ни одна цифра не
+    // сдвинулась: innerHTML сносит поддерево, браузер строит его заново —
+    // отсюда и мерцание внизу, и уезжающая прокрутка (у нового поддерева
+    // scrollTop нулевой). Сравниваем строку: совпала — не трогаем DOM
+    // вообще. Плюс на всякий случай возвращаем прокрутку на место.
     { const sb=$('#sysbar');
-      if(sb) sb.classList.toggle('dense', sb.clientHeight < 780); }
+      if(sb){
+        // класс ставим ДО вставки, иначе первый кадр рисуется в полный
+        // рост и только потом схлопывается — это и есть «окошко на долю
+        // секунды». Высота колонки от содержимого не зависит, петли нет.
+        sb.classList.toggle('dense', sb.clientHeight < 780);
+        // подпись структуры: пересобираем, только если изменился СОСТАВ
+        // (появилась видеокарта, другой список процессов). Цифры и полоски
+        // обновляются на месте — DOM не трогаем, прокрутка стоит где стояла
+        const sig = [c.percent!=null, r.total?1:0, g?g.name:'', g&&g.util!=null,
+                     g&&g.temp!=null,
+                     (g&&g.procs?g.procs.map(x=>x.who).join(','):'')].join('|');
+        const vals = {};
+        if(c.percent!=null) vals.cpu = {text: Math.round(c.percent)+'%', pct: c.percent};
+        if(r.total) vals.ram = {text: GB(r.used)+' / '+GB(r.total), pct: r.percent};
+        if(g){
+          vals.vram = {text: GB(g.vram_used)+' / '+GB(g.vram_total),
+                       pct: g.vram_used/g.vram_total*100};
+          if(g.util!=null) vals.gpu = {text: Math.round(g.util)+'%', pct: g.util};
+          if(g.temp!=null) vals.temp = {text: g.temp+'°C'};
+        }
+        if(!sysPatch(sb, vals, sig)){
+          const top = sb.scrollTop;
+          sb.innerHTML = h;
+          sb.dataset.sig = sig;
+          if(top) sb.scrollTop = top;
+        }
+      } }
     const pb=$('#panic-unload');
     if(pb) pb.onclick=async()=>{
       if(!confirm('Выгрузить ВСЕ модели из памяти? Сайка останется работать, но следующая фраза будет ждать загрузку заново.')) return;
