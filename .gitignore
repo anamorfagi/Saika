@@ -46,3 +46,6 @@ Saika_package_skipped.txt
 HandsPC/.venv/
 HandsPC/logs/
 HandsPC/__pycache__/
+
+# рабочая свалка ассистента (переносим сюда то, что нельзя удалить с диска)
+_to_delete/
