@@ -1250,6 +1250,146 @@ def _schemas_build() -> list:
     return local + hands
 
 
+# ---------------------------------------------------------------- выбор
+# ИНСТРУМЕНТЫ ПОД ФРАЗУ, А НЕ ВСЕ РАЗОМ (2026-08-15).
+#
+# Живой замер владельца: система 14 479 символов + СХЕМЫ 36 275 = 50 тысяч
+# на каждый ход, при бюджете окна 9 000. Считалка честно вычитала одно из
+# другого и оставляла разговору 1 062 символа — три реплики. Снаружи это
+# ровно то, на что он жаловался: «она не помнит нить», «окно маленькое».
+# Схемы росли полгода (51 инструмент), а вычитались из бюджета целиком,
+# и каждый новый инструмент отъедал у Сайки память.
+#
+# Отдаём модели ядро (то, чем она пользуется постоянно), плюс то, что
+# подсказала сама фраза, плюс её недавние привычки. Остальные не
+# исчезают: их имена уходят одной строкой-указателем, и любой из них
+# по-прежнему исполняется маркером [имя:параметр="…"] — сервер ловит
+# маркеры сам (_bare_tool_calls в main.py), даже если схему не посылали.
+_CORE_TOOLS = (
+    "web_search", "web_list", "open_result",
+    "app_launch", "open_folder", "find_folder",
+    "window_focus", "window_close", "window_place", "minimize_all",
+    "volume_set", "fs_list", "fs_read", "fs_write",
+    "screen_look", "remember", "recall",
+)
+
+
+def _last_used(n: int = 6) -> list:
+    """Чем она реально пользовалась в последнее время — привычка дороже
+    догадки: если человек весь вечер лазит по папкам, эти инструменты
+    должны быть под рукой и на фразе, где ключевых слов нет.
+
+    Источник — удачные рецепты (server/recipes.py): там лежат ЗАВЕРШЁННЫЕ
+    цепочки, а не просто попытки вызова. Свежие идут первыми."""
+    try:
+        from server import recipes as _rc
+        out, seen = [], set()
+        for rec in (_rc._load() or []):
+            for st in (rec.get("chain") or []):
+                nm = st.get("tool") or st.get("name")
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    out.append(nm)
+            if len(out) >= n:
+                break
+        return out[:n]
+    except Exception:
+        return []
+
+
+_PICKED = []          # имена в порядке ПЕРВОЙ надобности — префикс промпта
+
+
+def picked_reset():
+    """Начать набор заново (новый диалог, смена модели)."""
+    _PICKED.clear()
+
+
+def schemas_for(text: str, budget_chars: int = 0) -> list:
+    """Подмножество схем под фразу — НАБОР, КОТОРЫЙ ТОЛЬКО РАСТЁТ.
+
+    Порядок здесь не косметика, а деньги и секунды. Схемы шаблон рендерит
+    в САМОЕ НАЧАЛО промпта: стоит переставить в них хоть один байт — и
+    весь KV-кэш (локальный) или префикс-кэш провайдера (облако) идёт
+    насмарку, а это полный prefill на каждый ход. Поэтому набор ведём как
+    якорь истории: что однажды попало — остаётся на своём месте, новое
+    ДОПИСЫВАЕТСЯ в хвост. Пересобираем целиком только когда вылезли за
+    бюджет — одна дорогая пережёвка за сеанс вместо ежеходной.
+    """
+    import json as _j
+    all_scs = schemas()
+    if not CFG.get("tools.trim", True):
+        return all_scs
+    limit = int(budget_chars or CFG.get("tools.max_chars", 9000) or 0)
+    full = len(_j.dumps(all_scs, ensure_ascii=False))
+    if not limit or full <= limit:
+        return all_scs
+    t = (text or "").lower()
+    by_name = {}
+    for sc in all_scs:
+        by_name[(sc.get("function") or {}).get("name") or "?"] = sc
+
+    def _add(names, into):
+        for n in names:
+            if n in by_name and n not in into:
+                into.append(n)
+
+    if not _PICKED:
+        _add(_CORE_TOOLS, _PICKED)
+        _add(_last_used(), _PICKED)
+    hits = [n for n, keys in _TOOL_HINTS.items() if any(k in t for k in keys)]
+    grew = [n for n in hits if n in by_name and n not in _PICKED]
+    _add(hits, _PICKED)
+
+    def _pack(names):
+        out, used = [], 0
+        for n in names:
+            sc = by_name.get(n)
+            if sc is None:
+                continue
+            size = len(_j.dumps(sc, ensure_ascii=False)) + 1
+            if used + size > limit and out:
+                return out, used, False
+            out.append(sc)
+            used += size
+        return out, used, True
+
+    out, used, fit = _pack(_PICKED)
+    if not fit:
+        # перебор: собираем заново — ядро плюс то, что нужно прямо сейчас
+        _PICKED.clear()
+        _add(hits, _PICKED)
+        _add(_CORE_TOOLS, _PICKED)
+        out, used, _ = _pack(_PICKED)
+        del _PICKED[len(out):]
+        log.info("Набор инструментов пересобран под бюджет %d символов "
+                 "(%d схем) — одна полная пережёвка промпта", limit, len(out))
+    elif grew:
+        log.info("Инструменты: добавила %s — теперь %d из %d схем (%d из %d "
+                 "символов), остальное место отдано памяти разговора",
+                 ", ".join(grew), len(out), len(all_scs), used, full)
+    return out
+
+
+def names_index(sent: list) -> str:
+    """Строка-указатель на инструменты, схемы которых в этот раз не поехали.
+    Стоит копейки (имена), а модель знает, что они есть, и может позвать
+    маркером — сервер исполнит."""
+    if not CFG.get("tools.trim", True):
+        return ""
+    try:
+        have = {(sc.get("function") or {}).get("name") for sc in sent}
+        rest = [(sc.get("function") or {}).get("name") for sc in schemas()
+                if (sc.get("function") or {}).get("name") not in have]
+    except Exception:
+        return ""
+    if not rest:
+        return ""
+    return ("Ещё умею (схем сейчас не прислала, зови маркером "
+            "[имя:параметр=\"значение\"] — сервер исполнит): "
+            + ", ".join(sorted(n for n in rest if n)))
+
+
 def _local_call(name: str, arguments) -> str:
     import json as _json
     from server import devboard

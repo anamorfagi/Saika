@@ -2381,6 +2381,9 @@ _SPEED_FIELDS = (
     ("llm.temperature", 0.8, float),
     ("llm.context_chars", 0, int),          # 0 = считать от окна модели
     ("llm.cloud.context_chars", 9000, int),
+    ("llm.cloud.context_chars_max", 40000, int),   # потолок при известном окне
+    ("tools.trim", True, bool),                    # слать схемы под фразу
+    ("tools.max_chars", 9000, int),                # сколько отдаём схемам
     ("memory.context_chars", 2000, int),
     ("llm.keep_alive", "30m", str),
     ("llm.cache_prompt", True, bool),
@@ -3485,6 +3488,13 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         _cards = _tuc.usage_cards(user_text)
         if _cards:
             dyn_parts.add("tools", _cards)
+        # УКАЗАТЕЛЬ НА ОСТАЛЬНЫЕ (2026-08-15): схемы теперь едут не все, и
+        # без этой строки модель считала бы, что умеет только присланное —
+        # то есть «не могу» на ровном месте. Имена стоят копейки, а вызвать
+        # по маркеру можно любой: сервер ловит маркеры сам.
+        _idx = _tuc.names_index(_tuc.schemas_for(user_text))
+        if _idx:
+            dyn_parts.add("tools", _idx)
     except Exception as e:
         log.debug("карточки инструментов пропущены: %s", e)
     try:
@@ -3931,14 +3941,40 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # (llm.cloud.context_chars, дефолт 9000 ≈ 6к токенов) — длинную память
     # всё равно держит RAG, а не хвост чата.
     if CFG.get("llm.backend") == "cloud" or _route == "cloud":
-        budget = min(budget, int(CFG.get("llm.cloud.context_chars", 9000)))
+        # ПОТОЛОК ПО МОДЕЛИ, А НЕ ОДИН НА ВСЕХ (2026-08-15). 9000 символов
+        # выбирались под kimi-k3, который жевал 30к по 16-25 секунд. Но
+        # владелец сидит на GigaChat-2-Pro со 128 тысячами токенов окна и
+        # СВОИМ префикс-кэшем (в ответах видно precached_prompt_tokens) —
+        # для него этот потолок означал «помню три реплики» на ровном
+        # месте. Просьба владельца дословно: «я хочу чтобы она могла за
+        # весь день болтовню держать от десятков людей… а ближайшие 4 часа
+        # более хорошо в подробностях». Даём столько, сколько модель
+        # честно держит, но не больше разумного (платим-то за токены).
+        _cap = int(CFG.get("llm.cloud.context_chars", 9000))
+        try:
+            from server.llm import brains as _br
+            _win = _br.window_chars_of(CFG.get("llm.model", ""))
+            if _win:
+                # 70% окна — остальное системе провайдера, инструментам и
+                # самому ответу. Занять окно целиком = получить молчаливую
+                # подрезку начала промпта, ту же, на которой уже горели с
+                # LM Studio.
+                _cap = max(_cap, min(int(_win * 0.7), int(CFG.get(
+                    "llm.cloud.context_chars_max", 40000))))
+        except Exception:
+            pass
+        budget = min(budget, _cap)
     # размер схем инструментов (шаблон впишет их в промпт помимо system)
     tools_chars = 0
     try:
         if CFG.get("llm.model") not in set(CFG.get("llm.tools_broken", [])):
             from server.llm import tools as _hp
             import json as _json
-            tools_chars = len(_json.dumps(_hp.schemas(), ensure_ascii=False))
+            # СЧИТАЕМ ТО, ЧТО РЕАЛЬНО УЕДЕТ (2026-08-15): менеджер шлёт
+            # подмножество схем под фразу, а бюджет вычитал полный набор —
+            # и сам же душил историю тем, чего в запросе нет.
+            tools_chars = len(_json.dumps(_hp.schemas_for(user_text),
+                                          ensure_ascii=False))
     except Exception:
         pass
     # паспорт модели: если пробы выяснили молчаливое переполнение окна —

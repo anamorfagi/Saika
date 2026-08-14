@@ -643,7 +643,9 @@ def prewarm_next(messages: list, reply_text: str):
         # Цена ошибки: 8200 токенов полного prefill КАЖДЫЙ ход, ~1.6с.
         try:
             from server.llm import tools as handspc
-            _tools = handspc.schemas()
+            # ТОТ ЖЕ ОТБОР, ЧТО И В БОЮ: прогрев с другим набором схем
+            # не греет, а вытирает кэш — на этом уже горели (см. ниже)
+            _tools = handspc.schemas_for(_last_user_text(messages))
             # модели с нечитаемым tool_calls инструментов не получают и в
             # бою (см. chat_stream) — прогрев обязан повторять это решение,
             # иначе он снова разойдётся с боевым промптом
@@ -1736,6 +1738,19 @@ def _can_see(backend: str, model: str) -> bool:
     return backend != "cloud"
 
 
+def _last_user_text(messages) -> str:
+    """Последняя реплика человека — по ней выбираются схемы инструментов."""
+    for m in reversed(list(messages or [])):
+        if (m or {}).get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            c = " ".join(x.get("text", "") for x in c
+                         if isinstance(x, dict) and x.get("type") == "text")
+        return str(c or "")[:600]
+    return ""
+
+
 def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                 on_model=None, use_tools=True, should_stop=None,
                 prefer=None):
@@ -1843,7 +1858,12 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
             # же неудобоваримый запрос и падал так же.
             _img = image if _can_see(backend, model) else None
             _msgs0 = messages if _img else _flatten_content(messages)
-            tools = handspc.schemas() if use_tools else []
+            # СХЕМЫ ПОД ФРАЗУ, А НЕ ВСЕ 51 ШТУКА (2026-08-15): полный
+            # набор — 36 тысяч символов, он вычитался из окна и
+            # оставлял разговору полторы тысячи. Набор растёт с хвоста,
+            # чтобы префикс промпта (и кэш) не рвался каждый ход.
+            tools = (handspc.schemas_for(_last_user_text(messages))
+                     if use_tools else [])
             _T["t_tools"] = time.monotonic()
             # модели с нечитаемым форматом tool_calls (ловятся автоматически
             # ниже и запоминаются в конфиге) — инструменты не даём вообще
