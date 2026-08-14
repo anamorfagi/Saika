@@ -1,0 +1,164 @@
+"""Кто это умеет: от просьбы — к умению, от умения — к модели и рукам.
+
+ПОЧЕМУ ЭТОТ ФАЙЛ ПОЯВИЛСЯ (15.08.2026). Владелец, дословно: «бля, в
+смысле модели его не давали? система Анаморф должна определять, какая
+модель, где, что и когда юзать должна».
+
+Повод — стыдный. server/vision.py полгода умел look_screen (снять кадр и
+описать), схемы были написаны, имена объявлены — и ни разу не попали в
+набор, который уходит модели. Сайка честно отвечала «я не могу видеть
+содержимое экрана», потому что со своей стороны была права. Ошибка в одну
+строку жила месяцами, потому что ПРОВЕРЯТЬ ЕЁ БЫЛО НЕКОМУ: реестр умений
+(llm/skills.py) знал, что зрение бывает; vision.py знал, как смотреть; а
+что между ними разорвано — не знал никто.
+
+Здесь две вещи, и вторая важнее первой.
+
+1. МАРШРУТ. По фразе понять, какое умение нужно, посмотреть, есть ли оно
+   у отвечающей модели, и если нет — назвать того, кто умеет. Не «модель
+   сама догадается», а решение системы.
+
+2. РЕВИЗИЯ (audit). Для каждого умения записано, ЧЕМ оно делается —
+   какими инструментами. На старте мы проверяем, что эти руки реально
+   лежат в наборе схем. Не лежат — это поломка, о ней кричим вслух, как о
+   любой другой. Именно эта проверка ловит случай look_screen, и ловит
+   его в первую секунду запуска, а не через полгода и мат в чат.
+"""
+import logging
+import re
+
+log = logging.getLogger("saika.routing")
+
+# Умение -> чем оно делается. Имена инструментов должны быть в schemas().
+# Пусто = умение чисто модельное (руки не нужны), проверять нечего.
+HANDS = {
+    "vision":  ["look_screen", "look_camera"],
+    "tools":   [],
+    "code":    [],
+    "russian": [],
+    "long":    [],
+    "fast":    [],
+    "smart":   [],
+}
+
+# Что в живой речи означает «нужно вот это умение».
+NEED = {
+    "vision": re.compile(
+        r"на экране|что.{0,6}видишь|посмотри|глянь|скрин|картинк|"
+        r"в камер|вебк|как я выгляж|что открыт", re.I),
+    "code": re.compile(
+        r"код|скрипт|функци|питон|python|javascript|напиши програм|"
+        r"ошибка в коде|traceback|стек вызов", re.I),
+    "long": re.compile(
+        r"весь документ|целиком|длинн\w+ текст|многостранич|"
+        r"прочитай файл|разбери книг", re.I),
+    "smart": re.compile(
+        r"разберись|продумай|спланируй|почему так|объясни причин|"
+        r"составь план|проанализируй", re.I),
+}
+
+MIN_OK = 6          # ниже этого считаем, что умения у модели нет
+
+
+def need(user_text: str) -> list:
+    """Какие умения нужны для этой фразы. Пусто — обычный разговор."""
+    t = (user_text or "")
+    return [cap for cap, rx in NEED.items() if rx.search(t)]
+
+
+def plan(user_text: str) -> list:
+    """[{cap, own, helper}] — что нужно, что есть у своей модели, кто
+    поможет. helper=None и own<MIN_OK — значит не умеет НИКТО, и об этом
+    надо сказать человеку прямо, а не изображать занятость."""
+    caps = need(user_text)
+    if not caps:
+        return []
+    try:
+        from server.config import CFG
+        from server.llm import skills
+    except Exception as e:
+        log.debug("реестр умений недоступен: %s", e)
+        return []
+    model = CFG.get("llm.model", "")
+    backend = CFG.get("llm.backend", "")
+    own_card = skills.card(model, backend)
+    out = []
+    for cap in caps:
+        own = int(own_card.get("skills", {}).get(cap, 0))
+        helper = None
+        if own < MIN_OK:
+            try:
+                helper = skills.best_for(cap, min_score=MIN_OK,
+                                         exclude=[(backend, model)])
+            except Exception as e:
+                log.debug("помощник для %s не нашёлся: %s", cap, e)
+        out.append({"cap": cap, "own": own, "helper": helper})
+    return out
+
+
+def block(user_text: str) -> str:
+    """Кусок промпта: чем эта задача делается и чьими силами.
+
+    Без него модель решает по своим представлениям о себе — а они у неё
+    из обучения, а не из этого компьютера. GigaChat совершенно искренне
+    считает, что зрения у него нет; ему надо СКАЗАТЬ, что кадр разберут.
+    """
+    p = plan(user_text)
+    if not p:
+        return ""
+    from server.llm import skills
+    lines = []
+    for item in p:
+        name = skills.SKILLS.get(item["cap"], item["cap"])
+        if item["own"] >= MIN_OK:
+            lines.append("• %s — умеешь сама (%d из 10), делай."
+                         % (name, item["own"]))
+        elif item["helper"]:
+            lines.append("• %s — сама слабовата (%d из 10), но в парке есть "
+                         "%s (%d из 10). Инструмент сам её и позовёт: зови "
+                         "инструмент и говори по результату, НЕ отказывайся."
+                         % (name, item["own"], item["helper"]["model"],
+                            item["helper"].get("skill_score", 0)))
+        else:
+            lines.append("• %s — этого сейчас не может ни одна модель в "
+                         "парке. Скажи прямо и коротко, без выдумок."
+                         % name)
+    return "### Что нужно для этой просьбы:\n" + "\n".join(lines)
+
+
+def audit() -> list:
+    """Проверка связности: объявленные умения против реальных рук.
+
+    Возвращает список поломок [{cap, missing, human, cure}]. Пусто —
+    всё, что мы про себя утверждаем, действительно доступно модели.
+    """
+    try:
+        from server.llm import tools
+        have = {(s.get("function") or {}).get("name")
+                for s in tools.schemas()}
+    except Exception as e:
+        log.warning("ревизия умений не прошла: %s", e)
+        return []
+    bad = []
+    for cap, hands in HANDS.items():
+        missing = [h for h in hands if h not in have]
+        if not missing:
+            continue
+        bad.append({
+            "cap": cap,
+            "missing": missing,
+            "human": ("умение «%s» объявлено, но инструментов %s нет в "
+                      "наборе, который уходит модели — она про них не "
+                      "знает и будет отвечать «я не умею»"
+                      % (cap, ", ".join(missing))),
+            "cure": ("подключить схемы в server/llm/tools.py "
+                     "(_schemas_build) и исполнение в call()"),
+        })
+    return bad
+
+
+def audit_text() -> str:
+    bad = audit()
+    if not bad:
+        return ""
+    return "; ".join(b["human"] for b in bad)

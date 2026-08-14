@@ -3507,6 +3507,17 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             dyn_parts.add("tools", _idx)
     except Exception as e:
         log.debug("карточки инструментов пропущены: %s", e)
+    # КТО ЭТО УМЕЕТ (2026-08-15). Модель судит о своих возможностях по
+    # обучению, а не по этому компьютеру: GigaChat совершенно искренне
+    # уверен, что зрения у него нет. Поэтому решает не она, а система —
+    # и прямо говорит ей, чем задача делается и чьими силами.
+    try:
+        from server import routing as _rt
+        _rtb = _rt.block(user_text)
+        if _rtb:
+            dyn_parts.add("models", _rtb)
+    except Exception as e:
+        log.debug("маршрут умений пропущен: %s", e)
     # ЧТО В РУКАХ ПРЯМО СЕЙЧАС. Блок короткий и живёт пять минут, но
     # именно он превращает «Извини, я не поняла» в ответ по существу,
     # когда человек уточняет предыдущий ход одним словом.
@@ -6396,6 +6407,22 @@ def _autostart_components():
                              "text": "🔇 " + _tts_note})
     except Exception as _e:
         log.debug("страж крашей озвучки: %s", _e)
+
+    # РЕВИЗИЯ СВЯЗНОСТИ (2026-08-15). Умение объявлено в реестре, руки для
+    # него написаны — а в набор схем не попали: ровно так look_screen
+    # пролежал невидимым полгода, и Сайка честно отвечала «я не могу
+    # видеть экран». Проверка стоит миллисекунды и снимает целый класс
+    # тихих поломок: «умею на бумаге, не умею на деле».
+    def _boot_audit():
+        try:
+            from server import routing as _rt
+            for bad in _rt.audit():
+                log.error("РЕВИЗИЯ: %s", bad["human"])
+                report_problem("умения", bad["human"], bad["cure"])
+        except Exception as e:
+            log.debug("ревизия умений пропущена: %s", e)
+    threading.Thread(target=_boot_audit, daemon=True,
+                     name="caps_audit").start()
 
     def _boot_tts():
         # то же для голоса: «без озвучки» не должно превращаться в
