@@ -339,6 +339,7 @@ class _NoiseReduce(_Base):
     def __init__(self):
         super().__init__()
         self._retry_after = 0.0
+        self._short_told = False   # про no-op на коротком куске говорим раз
         try:
             import noisereduce as nr
             self.nr = nr
@@ -370,7 +371,30 @@ class _NoiseReduce(_Base):
                              "гонка импорта scipy рассосалась")
                 except Exception as e:
                     self.error = str(e)[:160]
-        if not self.ok or len(x) < SR // 8:
+        # МОЛЧАЛИВЫЙ NO-OP — ХУЖЕ ОТКЛЮЧЁННОГО ДВИЖКА (2026-08-15, найдено
+        # по живому логу владельца). Браузерный воркер шлёт куски по 1600
+        # сэмплов (100мс), а порог входа здесь — 2000 (SR//8). То есть
+        # noisereduce, выбранный в панели и числившийся рабочим, не обработал
+        # НИ ОДНОГО куска: звук проходил насквозь, панель показывала «всё
+        # хорошо», а человек искал причину каши в распознавании. Отказ обязан
+        # быть слышен: пишем причину в error (её видит панель) и один раз в
+        # лог. Настоящее место этого движка — не поток, а собранная фраза,
+        # см. SEGMENT в конце файла.
+        if self.ok and len(x) < SR // 8:
+            if not getattr(self, "_short_told", False):
+                self._short_told = True
+                log.warning(
+                    "Шумодав noisereduce: кусок %dмс короче его рабочего "
+                    "минимума 125мс — В ПОТОКЕ ОН НЕ ДЕЛАЕТ НИЧЕГО. Для "
+                    "потока бери wiener/spectral, а noisereduce ставь на "
+                    "фразу: denoise.segment_engine",
+                    round(len(x) * 1000 / SR))
+            self.error = (f"в потоке не работает: кусок "
+                          f"{round(len(x) * 1000 / SR)}мс короче минимума "
+                          f"125мс — его место на фразе "
+                          f"(denoise.segment_engine)")
+            return x
+        if not self.ok:
             return x
         try:
             return self.nr.reduce_noise(
@@ -511,7 +535,15 @@ def make(name: str):
 class Denoiser:
     """Один экземпляр на процесс, зовётся из конвейера слуха."""
 
-    def __init__(self):
+    # ДВА МЕСТА, ГДЕ ЧИСТИТЬ ЗВУК, И ОНИ РАЗНЫЕ (2026-08-15).
+    # Поток (100мс куски) — дёшево и непрерывно, годится для гейта и
+    # спектральных движков с перекрытием. Фраза (собранный сегмент перед
+    # распознаванием) — там, где нестационарная оценка шума наконец имеет с
+    # чем работать: у неё есть и речь, и тишина вокруг неё. Один и тот же
+    # класс обслуживает оба, отличается только ключ конфига.
+    def __init__(self, key: str = "denoise.engine", label: str = "Шумодав"):
+        self.key = key
+        self.label = label
         self._lock = threading.Lock()
         self._eng = None
         self._name = ""
@@ -546,7 +578,7 @@ class Denoiser:
             return self._ensure_locked()
 
     def _ensure_locked(self):
-        want = str(CFG.get("denoise.engine", "off"))
+        want = str(CFG.get(self.key, "off"))
         if want not in ENGINES:
             want = "off"
         self.wanted = want
@@ -554,9 +586,9 @@ class Denoiser:
             self._want_seen = want
             self._eng, self._name = make(want), want
             if self._eng.ok:
-                log.info("Шумодав: движок «%s»", want)
+                log.info("%s: движок «%s»", self.label, want)
             else:
-                log.warning("Шумодав «%s» не встал: %s (%s)", want,
+                log.warning("%s «%s» не встал: %s (%s)", self.label, want,
                             self._eng.error, self._eng.needs)
                 self.blocked = f"{want}: {self._eng.error}"
                 # спускаемся по списку начиная СТРОГО ниже выбранного, чтобы
@@ -569,8 +601,8 @@ class Denoiser:
                     e = make(alt)
                     if e.ok:
                         self._eng, self._name = e, alt
-                        log.info("Шумодав: вместо «%s» работает «%s»",
-                                 want, alt)
+                        log.info("%s: вместо «%s» работает «%s»",
+                                 self.label, want, alt)
                         break
         if self._eng.ok:
             self.blocked = "" if self._name == self.wanted else self.blocked
@@ -605,6 +637,61 @@ class Denoiser:
             return np.clip(y[-len(x):] * 32768.0, -32768, 32767).astype(np.int16)
         except Exception as e:
             log.warning("Шумодав споткнулся (%s) — пропускаю звук как есть", e)
+            eng.ok = False
+            eng.error = str(e)[:160]
+            return pcm16
+
+    def process_whole(self, pcm16: np.ndarray) -> np.ndarray:
+        """ЦЕЛАЯ ФРАЗА, а не кусок потока (2026-08-15).
+
+        Отличий от process() два, и оба существенные:
+        1. движок получает сегмент ЦЕЛИКОМ — нестационарной оценке шума
+           наконец есть с чем работать, у неё в руках и речь, и тишина
+           вокруг неё. Ради этого второй проход и заведён;
+        2. никакого дополнения нулями слева: у сегмента нет «разгона», и
+           если движок вернул короче — это его беда, берём вход как есть.
+           В потоке левый паддинг спасает непрерывность, здесь он вставил
+           бы тишину в начало фразы, то есть съел бы первое слово.
+
+        Потоковые движки перед фразой сбрасываются: их внутренний хвост
+        принадлежит предыдущему куску и к этой фразе отношения не имеет."""
+        eng = self._ensure()
+        if eng.name == "off" or not eng.ok:
+            return pcm16
+        try:
+            x = np.asarray(pcm16, np.float32) / 32768.0
+            with self._lock:
+                try:
+                    eng.reset()
+                except Exception:
+                    pass
+                y = np.asarray(eng.process(x), np.float32)
+            if len(y) < len(x) * 0.8:
+                # движок отдал заметно меньше, чем взял (разгон окна,
+                # внутренняя задержка) — честнее вернуть исходную фразу,
+                # чем обрезанную: обрезанное начало это потерянное слово
+                log.debug("%s: вернул %d из %d сэмплов — беру фразу как есть",
+                          self.label, len(y), len(x))
+                return pcm16
+            if len(y) < len(x):
+                # спектральный движок держит одно окно (32мс) в хвосте.
+                # Дописываем недостающее ИЗ ОРИГИНАЛА, а не нулями: на конце
+                # фразы живёт последний согласный, и тишина вместо него —
+                # это съеденное слово, ровно то, что мы тут и чиним.
+                y = np.concatenate([y, x[len(y):]])
+            self.frames += 1
+            try:
+                a = float(np.sqrt(np.mean(x ** 2)))
+                b = float(np.sqrt(np.mean(y ** 2)))
+                if a > 1e-5:
+                    d = 20.0 * np.log10(max(b, 1e-9) / a)
+                    self.cut_db = round(self.cut_db * 0.8 + d * 0.2, 2)
+            except Exception:
+                pass
+            return np.clip(y[:len(x)] * 32768.0, -32768, 32767).astype(np.int16)
+        except Exception as e:
+            log.warning("%s споткнулся на фразе (%s) — беру звук как есть",
+                        self.label, e)
             eng.ok = False
             eng.error = str(e)[:160]
             return pcm16
@@ -648,7 +735,7 @@ class Denoiser:
     def set_engine(self, name: str):
         if name not in ENGINES:
             return {"ok": False, "error": "неизвестный движок"}
-        CFG.set("denoise.engine", name)
+        CFG.set(self.key, name)
         with self._lock:
             self._eng = None
             self._name = ""
@@ -681,3 +768,13 @@ class Denoiser:
 
 
 DENOISE = Denoiser()
+
+# ВТОРОЙ ПРОХОД — НА ФРАЗЕ, РЯДОМ С ПЕРВЫМ, А НЕ ВМЕСТО НЕГО (2026-08-15).
+# Потоковый шумодав остаётся ровно таким, каким был: он кормит отпечаток
+# голоса, VAD и уши, и трогать его нельзя. А перед самим распознаванием
+# добавлен отдельный, необязательный проход по СОБРАННОЙ фразе — там дорогие
+# и точные движки (noisereduce, deepfilter) работают так, как задуманы их
+# авторами, и стоят они раз в фразу, а не сто раз в секунду.
+# По умолчанию «off»: пока не измерено стендом (server/hear_bench.py), что
+# он помогает распознаванию, включать его нечестно.
+SEGMENT = Denoiser(key="denoise.segment_engine", label="Шумодав фразы")

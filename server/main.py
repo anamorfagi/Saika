@@ -43,7 +43,9 @@ from server.stt.manager import STTManager
 from server.tts.manager import TTSManager, split_sentences
 from server import hearing
 from server import voiceprint
-from server.denoise import DENOISE
+from server.denoise import DENOISE, SEGMENT as SEGMENT_DENOISE
+from server import hear_bench          # стенд «волна ↔ текст» (2026-08-15)
+from server import misheard            # ремонт написания и метка «шатко»
 from server.draft import DRAFT
 from server.earlog import EARLOG
 from server.transcript import TRANSCRIPT, mood_of
@@ -141,6 +143,25 @@ DIALOG_CUTOFF = {"ts": 0.0}         # «новый диалог»: контек�
 HISTORY_ANCHOR = {"ts": 0.0}        # якорь окна истории: стабильный префикс промпта => живой KV-кэш
 _SILENCE_REPORTED = {"ts": 0.0}     # троттлинг жалоб на молчание модели
 DIALOG_STATE = {"active_since": 0.0, "first_token_ts": 0.0}   # идёт ли сейчас ответ + успела ли выдать первый токен (для импульсов и живого контекста)
+# КОГДА В ПОСЛЕДНИЙ РАЗ ЖИВОЙ КОНТЕКСТ ПЕРЕБИЛ ГЕНЕРАЦИЮ (2026-08-15).
+# Нужен, чтобы четыре фразы, распознанные за 0.7 секунды, не перезапустили
+# ответ четыре раза подряд — разбор живого случая в handle_text.
+LIVE_CTX = {"ts": 0.0, "n": 0}
+EARS_REACT = {"ts": 0.0}
+# кто РЕАЛЬНО говорил последнюю минуту (уверенные подписи фраз) — для
+# социального такта; карта голосов дробит одного человека на осколки
+SPEAKERS_RECENT: "deque" = None   # кулдаун реакции на чих (уши -> «будь здоров»)
+
+# ЧТО ИМЕННО СЕЙЧАС ГРЕЕТСЯ (2026-08-15, просьба владельца: «в момент
+# инициализации у слуха, глаз, голоса, мозгов — контурная подсветка по
+# кругу; как только запуск произошёл, контур становится постоянным»).
+# Раньше единственным признаком готовности была яркая заливка кнопки
+# микрофона, и означала она «слух включён», а не «слух может слышать» —
+# человек минуту говорил в готовую на вид систему и не получал ни слова.
+# Состояние подсистемы это ТРИ разных ответа, а не два: выключено (человек
+# так решил), греется (ждать) и готово (можно говорить). Плюс «сломано» —
+# его тоже нельзя показывать как готовность.
+BOOT = {"hear": "off", "voice": "off", "brain": "off", "eyes": "off"}
 
 # СКОЛЬКО РАЗ ПОДРЯД МОДЕЛЬ ПРОМОЛЧАЛА С ИНСТРУМЕНТАМИ (2026-07-26).
 # Инцидент: gemma-4-e4b-it на КАЖДУЮ фразу отдавала 0 токенов, срабатывал
@@ -730,6 +751,44 @@ def _strip_broken_call(text: str) -> str:
 
 # результат исполненных маркеров — для следующего хода (см. run_dialog)
 PENDING_ACTIONS: list = []
+
+# пометка «реплика оборвана живым контекстом»: пишется В ПАМЯТЬ (журналу
+# нужен факт обрыва), но в промпт дословно не попадает и из эха модели
+# вырезается — см. _hist_text и чистку в конце run_dialog (2026-08-15)
+_CUT_NOTE = " …(прервана — собеседник добавил уточнение)"
+
+# ═══ «ПОНЯЛА» ДЕСЯТЬ РАЗ ПОДРЯД — ЭТО НЕ ОТВЕТ (2026-08-15) ═══
+# Живой вечер владельца: «Поняла.» / «Поняла. Постараюсь быть менее
+# навязчивым.» / «Поняла окончательно.» — на каждую фразу, включая те,
+# что он говорил не ей, а в игру. Он дважды сказал «стоп» и написал
+# «десять раз поняла». Промптом это не лечится: короткое подтверждение —
+# самый вероятный ответ языковой модели на реплику, в которой нет
+# вопроса, и она будет выдавать его вечно.
+# Лечим правилом. Пустое подтверждение — строка, в которой не осталось
+# НИ ОДНОГО содержательного слова после вычёркивания служебных: она не
+# несёт информации по определению. Первое такое пропускаем (иногда
+# «Хорошо» — нормальный ответ), а вот ВТОРОЕ подряд — уже мусор:
+# молчим и говорим об этом честно серой строкой, а не выдаём пустышку.
+_ACK_WORDS = set("""
+поняла понял понятно ясно хорошо окей ок принято ладно угу ага конечно
+да нет буду постараюсь стараюсь быть менее более навязчивой навязчивым
+внимательнее внимательной аккуратнее лучше учту учла приму принимаю
+сведению работаю над этим окончательно исправлюсь поправлюсь отдыхаю
+отступаю проверяю порядке всё уже сейчас теперь это то я ты мы вы он
+она и а но же ну так вот как что чтобы к в на с у о по за из для не
+твоим твоих твоей твоего ощущениям словам просьбе мыслям делаю сделаю
+поправлю замечание замечания извини извините прости простите спасибо
+""".split())
+_ACK_STREAK = {"n": 0, "ts": 0.0}
+
+
+def _is_bare_ack(text: str) -> bool:
+    """Осталось ли в реплике хоть что-то, кроме поддакивания."""
+    words = re.findall(r"[А-Яа-яЁёA-Za-z]+", (text or "").lower())
+    if not words or len(words) > 12:
+        return False
+    meaty = [w for w in words if w not in _ACK_WORDS]
+    return len(meaty) < 2
 
 
 def _marker_args(name: str, raw: str, schemas: list) -> dict:
@@ -1423,6 +1482,237 @@ def hear_stat():
     except Exception as e:
         log.debug("статистика отпечатка не собралась: %s", e)
     return out
+
+
+@app.get("/api/ready")
+def ready_state():
+    """ГОТОВА ЛИ ПОДСИСТЕМА — одним лёгким роутом (2026-08-15).
+
+    ПОВОД, дословно: «я уже запустил и минуту говорю "привет, здравствуй",
+    микро подсвечен, в спектре видно, что он слышит голос — но транскриб ни
+    одного слова так и не написал». Подсветка микрофона означала «слух
+    ВКЛЮЧЁН», то есть «браузер шлёт звук». Готов ли на том конце движок —
+    она не значила никогда, и человек минуту говорил в стену.
+
+    Состояний четыре, а не два, и путать их нельзя:
+      off     — человек сам так решил, это не поломка;
+      loading — веса едут или движок компилируется: ЖДАТЬ, не говорить;
+      ready   — можно говорить прямо сейчас;
+      broken  — не поднялся, и молчать об этом нельзя.
+
+    Роут нарочно дешёвый: интерфейс дёргает его часто, чтобы крутить контур
+    загрузки на кнопках, поэтому здесь только чтение уже посчитанных полей —
+    ни одного обращения к бэкендам."""
+    def _hear():
+        n = stt.current_name
+        if n in stt.OFF:
+            return {"state": "off", "who": ""}
+        if stt.health.get(n) == "broken":
+            return {"state": "broken", "who": n,
+                    "why": stt.last_error.get(n, "")}
+        try:
+            eng = stt.instances.get(n)
+            ok = bool(eng and eng.is_loaded())
+        except Exception:
+            ok = False
+        lag = int(HEAR_STAT.get("lag", 0) or 0)
+        try:
+            from server.stt import neuro_vad as _nv
+            _vadst = _nv.status()
+        except Exception:
+            _vadst = {}
+        if ok and lag >= 3:
+            # движок жив, но очередь фраз копится — говорить-то можно, но
+            # ответы придут с опозданием; честнее показать «догоняю»
+            return {"state": "loading", "who": n,
+                    "why": f"догоняю очередь ({lag} фраз)", "vad": _vadst}
+        return {"state": "ready" if ok else BOOT.get("hear", "loading"),
+                "who": n, "vad": _vadst}
+
+    def _voice():
+        if not CFG.get("tts.enabled", True):
+            return {"state": "off", "who": ""}
+        n = str(CFG.get("tts.engine", "qwen3"))
+        if n in ("", "off", "none"):
+            return {"state": "off", "who": ""}
+        eng = tts.engines.get(n)
+        if eng is None:
+            return {"state": "broken", "who": n, "why": "нет такого движка"}
+        if tts.health.get(n) == "broken":
+            return {"state": "broken", "who": n,
+                    "why": tts.last_error.get(n, "")}
+        try:
+            if hasattr(eng, "is_warming") and eng.is_warming():
+                # веса легли, но идёт компиляция — это самое обидное
+                # состояние: панель раньше писала «в памяти», а голоса нет
+                return {"state": "loading", "who": n, "why": "прогрев"}
+        except Exception:
+            pass
+        try:
+            ld = eng.is_loaded()
+        except Exception:
+            ld = False
+        if ld is None:            # онлайн-движок, грузить нечего
+            return {"state": "ready", "who": n}
+        return {"state": "ready" if ld else BOOT.get("voice", "loading"),
+                "who": n,
+                # времянка автопуска: если она ещё говорит, человек слышит
+                # НЕ свой голос, и это надо называть вслух
+                "stub": tts.boot_override or ""}
+
+    def _brain():
+        if CFG.get("llm.off", False):
+            return {"state": "off", "who": ""}
+        return {"state": BOOT.get("brain", "loading"),
+                "who": CFG.get("llm.model", "")}
+
+    def _eyes():
+        # глаза — это способность посмотреть на экран. Отдельной загрузки у
+        # неё нет (кадр берётся по запросу), поэтому честных состояний два
+        try:
+            from server import vision as _vs
+            on = bool(getattr(_vs, "enabled", lambda: True)())
+        except Exception:
+            on = False
+        return {"state": "ready" if on else "off", "who": ""}
+
+    return {"hear": _hear(), "voice": _voice(),
+            "brain": _brain(), "eyes": _eyes()}
+
+
+@app.get("/api/mic")
+def mic_report():
+    """Паспорт микрофона: кто он и чем болеет, с советами по чистому
+    звуку (2026-08-15, владелец: «система должна идентифицировать микро,
+    какая плата, какие дефекты, что сделать для чистого звука»)."""
+    from server import mic_passport
+    return mic_passport.report()
+
+
+@app.post("/api/mic/device")
+def mic_device(payload: dict):
+    from server import mic_passport
+    mic_passport.set_device(str(payload.get("label", "")))
+    return {"ok": True}
+
+
+@app.get("/api/soundmap")
+def soundmap_status(rename_old: str = "", rename_new: str = "",
+                    forget: str = ""):
+    """Карта ЗВУКОВ — источники дома, скластеризованные по отпечатку PANNs.
+    ?rename_old=стук?&rename_new=дверь шкафа — закрепить имя;
+    ?forget=имя — забыть источник."""
+    from server import sound_map
+    if rename_old and rename_new:
+        return sound_map.rename(rename_old, rename_new)
+    if forget:
+        return sound_map.forget(forget)
+    return sound_map.status()
+
+
+@app.get("/api/cortex")
+def cortex_status():
+    """Слуховая кора: лента восприятия с баллами важности и список того,
+    к чему она уже привыкла. Одно место правды о том, что Сайка слышит."""
+    from server import cortex
+    return cortex.status()
+
+
+@app.get("/api/hear/bench")
+def hear_bench_route(on: int = -1, report: int = 0, clear: int = 0):
+    """СТЕНД СЛУХА одним адресом в браузере (2026-08-15).
+
+    Отдельного экрана он пока не заслужил — это инструмент отладки, а не
+    часть интерфейса. Зато открывается прямо из адресной строки:
+      /api/hear/bench?on=1     — начать копить звук и текст
+      /api/hear/bench?report=1 — собрать html: волна, текст, «послушать»
+      /api/hear/bench?on=0     — перестать копить
+      /api/hear/bench?clear=1  — стереть накопленное
+    """
+    if clear:
+        return hear_bench.clear()
+    if on in (0, 1):
+        hear_bench.set_on(bool(on))
+    if report:
+        return hear_bench.report(int(CFG.get("stt.bench_report_n", 40)))
+    return hear_bench.status()
+
+
+@app.get("/api/hear/segment_denoise")
+def hear_segment_denoise(engine: str = ""):
+    """ВТОРОЙ ПРОХОД ШУМОДАВА — НА ФРАЗЕ (2026-08-15), тоже из адресной строки.
+
+      /api/hear/segment_denoise?engine=noisereduce
+      /api/hear/segment_denoise?engine=off
+
+    Отдельно от /api/denoise/set намеренно: тот POST и живёт в панели, где
+    настраивается ПОТОКОВЫЙ шумодав. Здесь другой вопрос — чем чистить уже
+    собранную фразу перед распознаванием, — и переключать его нужно часто и
+    быстро, сравнивая на стенде слуха. Ответ на «стало лучше или хуже» даёт
+    не ухо, а пара «волна ↔ текст» в /api/hear/bench?report=1."""
+    if engine:
+        r = SEGMENT_DENOISE.set_engine(str(engine))
+        if not r.get("ok", True):
+            return r
+        log.info("Шумодав фразы: выбран «%s»", engine)
+    return SEGMENT_DENOISE.status()
+
+
+@app.get("/api/hear/neuro_vad")
+def hear_neuro_vad(engine: str = ""):
+    """Чем режется речь: silero (нейронка) или energy (громкость).
+    /api/hear/neuro_vad?engine=energy — откатиться одним запросом."""
+    if engine in ("silero", "energy"):
+        CFG.set("stt.vad.engine", engine)
+        log.info("Нарезка речи: выбран режим «%s»", engine)
+    from server.stt import neuro_vad as _nv
+    if engine == "silero":
+        _nv.STATE["off"] = False
+        _nv.warm()
+    return _nv.status()
+
+
+@app.get("/api/hear/vad")
+def hear_vad(silence_ms: int = 0, rms_threshold: float = 0.0,
+             min_speech_ms: int = 0, preroll_ms: int = 0,
+             max_segment_s: float = 0.0):
+    """НАРЕЗКА РЕЧИ — КРУТИТСЯ ЖИВЬЁМ, без перезапуска сервера (2026-08-15).
+
+    Раньше эти четыре числа читались один раз при создании VadSegmenter, то
+    есть проверить «а если хвост тишины короче» можно было только правкой
+    config.json и полным перезапуском — минуты на одну гипотезу. Настройка,
+    которую нельзя быстро проверить, не настраивается никогда.
+
+    Главное из них — silence_ms: столько тишины ждём, прежде чем считать
+    фразу законченной. Это и есть та задержка, которая ощущается как
+    «она долго думает», хотя движок к тому моменту ещё даже не начинал.
+    Значения сохраняются через CFG.set, то есть переживут перезапуск."""
+    got = {}
+    for name, val, cast in (("silence_ms", silence_ms, int),
+                            ("rms_threshold", rms_threshold, float),
+                            ("min_speech_ms", min_speech_ms, int),
+                            ("preroll_ms", preroll_ms, int),
+                            ("max_segment_s", max_segment_s, float)):
+        if val:
+            got[name] = cast(val)
+            CFG.set("stt.vad." + name, cast(val))
+    if got:
+        # живой сегментатор берёт новые числа сразу; порог и шумовой пол не
+        # трогаем — пол выучен и переучиваться ему незачем
+        for k, v in got.items():
+            attr = "threshold" if k == "rms_threshold" else k
+            try:
+                setattr(stt.vad, attr, v)
+            except Exception as e:
+                log.warning("VAD: %s не применилось живьём (%s)", k, e)
+        log.info("Нарезка речи: %s (применено без перезапуска)", got)
+    v = stt.vad
+    return {"ok": True, "applied": got, "now": {
+        "silence_ms": v.silence_ms, "rms_threshold": v.threshold,
+        "min_speech_ms": v.min_speech_ms, "preroll_ms": v.preroll_ms,
+        "max_segment_s": v.max_segment_s,
+        "eff_threshold": round(v._eff_threshold(), 5),
+        "noise_floor": round(v.noise_floor, 5)}}
 
 
 @app.post("/api/voiceprint/color")
@@ -3174,12 +3464,24 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # картинка без подписи шлёт user_text='' — не кладём пустую строку в
     # память НАВСЕГДА (см. подробности у сборки hist_msgs ниже, где та же
     # защита стоит и для уже отравленной старой истории)
+    # ═══ МЕТКА «ОТВЕТ НАЧАЛСЯ» СТАВИТСЯ ПЕРВОЙ СТРОКОЙ (2026-08-15) ═══
+    # Она стояла ПОСЛЕ memory.add_event — и это оказалось не мелочью.
+    # Живой лог владельца, 15.08: диалог стартовал в 11:48:55, а память
+    # висела за автопуском (TORCH_GATE держал загрузку моделей) до 11:49:46.
+    # Пятьдесят секунд генерация «ещё не началась» с точки зрения этой
+    # метки. В 11:49:47 пришла новая фраза, живой контекст посчитал возраст
+    # генерации как 1.6с вместо 52с, решил «она только что стартовала, не
+    # жалко» — и перебил. За следующие 0.7 секунды так же перебили ещё три
+    # раза. Итог в логе: «0 токенов, прерван stop_event=True» по кругу и
+    # минута тишины для человека. Возраст генерации обязан считаться от
+    # МОМЕНТА ВХОДА в пайплайн, а не от момента, когда пайплайн разгрёб
+    # всё, что могло залипнуть до него.
+    DIALOG_STATE["active_since"] = time.time()
+    DIALOG_STATE["first_token_ts"] = 0.0
+
     memory.add_event(person_id, "user",
                      user_text.strip() if user_text and user_text.strip()
                      else ("(картинка без подписи)" if image else "…"))
-
-    DIALOG_STATE["active_since"] = time.time()
-    DIALOG_STATE["first_token_ts"] = 0.0
     t0 = time.monotonic()   # старт пайплайна (для разбивки «думала N сек»)
     # БЫСТРОЕ МЫШЛЕНИЕ — ДО памяти (2026-07-27): решение о маршруте стоит
     # долей миллисекунды и нужно уже здесь, чтобы лёгкой реплике не платить
@@ -3539,6 +3841,22 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         _ears = hearing.context_line()
         if _ears:
             dyn_parts.append("### Обстановка вокруг (факт): " + _ears)
+    except Exception:
+        pass
+    # СЛУХОВАЯ КОРА (2026-08-15): один взгляд на всё, что слышал слух за
+    # последние полминуты, по убыванию важности и с привыканием — как
+    # человек держит в голове звуковую сцену. Кроме речи: реплики и так
+    # лежат в истории диалога, дублировать их тут — путать модель.
+    try:
+        from server import cortex as _ctx
+        _line = "; ".join(
+            p["text"] for p in _ctx.tape(25.0, 0.2)
+            if p["kind"] != "speech")[:400]
+        if _line:
+            dyn_parts.append(
+                "### Звуковая сцена (слуховая кора, по важности): " + _line
+                + " -- Это фон, а не обращение; реагируй, только если "
+                  "к слову.")
     except Exception:
         pass
     if PENDING_ACTIONS:
@@ -4242,7 +4560,24 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # мелкой локальной моделью, ничего не объясняя. Заплатка на пустое
     # content — здесь, в САМОЙ ТОЧКЕ сборки истории: чинит и старые уже
     # отравленные записи в этом диалоге, не только новые.
-    hist_msgs = [{"role": r, "content": (t or "").strip() or "…"}
+    # МЕТКА ОБРЫВА НЕ ЕДЕТ В ПРОМПТ ДОСЛОВНО (2026-08-15, живой чат
+    # 13:06: ответ Сайки закончился скопированным « …(прервана — собеседник
+    # добавил уточнение)». Владелец: «мы это уже исправляли же». Разбор:
+    # прошлый обрыв честно записался в память ЕЁ репликой с этой пометкой,
+    # на рестарте пометка уехала в промпт как её собственный текст — и
+    # модель выучила её как ЕЁ манеру заканчивать фразы. Служебное «для
+    # себя» не имеет права выглядеть в истории как её слова. В памяти
+    # пометка остаётся (по ней видно обрывы в журнале), а в промпт вместо
+    # неё идёт нормальная человеческая ремарка в скобках-звёздочках,
+    # которые модель понимает как сценическую пометку, а не как реплику.)
+    def _hist_text(role, t):
+        t = (t or "").strip()
+        if role == "assistant" and t.endswith(_CUT_NOTE):
+            t = t[:-len(_CUT_NOTE)].rstrip()
+            t = (t + " *(меня перебили на этом месте — договаривать не "
+                 "нужно, просто продолжай разговор)*") if t else "…"
+        return t or "…"
+    hist_msgs = [{"role": r, "content": _hist_text(r, t)}
                 for r, t in trimmed]
     if dyn_parts:
         # динамика хода — отдельным системным сообщением ПЕРЕД последней
@@ -4336,6 +4671,13 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
             sentence = _gnd.feminize(sentence)
         except Exception:
             pass
+        # повторное пустое подтверждение не озвучиваем: голос — самое
+        # раздражающее место, где может прозвучать «Поняла» в десятый раз
+        if sentence and _is_bare_ack(sentence) and _ACK_STREAK["n"] >= 1 \
+                and time.time() - _ACK_STREAK["ts"] < 300:
+            log.info("Ответ-пустышка %r — не озвучиваю (подряд %d)",
+                     sentence[:40], _ACK_STREAK["n"] + 1)
+            return
         if sentence:
             # ПРИДЕРЖАННОЕ ТОЖЕ НАДО ПОКАЗАТЬ (2026-08-15). Владелец: «на
             # свои реплики почему-то перестала полностью прописывать?» —
@@ -4788,15 +5130,29 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                     full_reply.append(token)
                     sentence_buf += token
                     out.put({"type": "token", "text": token})
+                    # здесь токены уходят в чат сразу, без придержки —
+                    # отмечаем это, иначе показ хвоста ниже задвоит текст
+                    _shown = len(sentence_buf)
                     done = split_sentences(sentence_buf)
                     if len(done) > 1:
+                        _cut = len(sentence_buf) - len(done[-1])
                         for s in done[:-1]:
                             speak(s)
                         sentence_buf = done[-1]
+                        _shown = max(0, _shown - _cut)
             except Exception as e:
                 log.warning("Повтор без инструментов не удался: %s", e)
+        # ХВОСТ ПОКАЗЫВАЕМ, ЕСЛИ ЕГО ПРИДЕРЖИВАЛИ (2026-08-15, живой случай
+        # 12:15:22: «она мне ответила, и этого ответа нет нигде»).
+        # Придержка потока молчит, пока буфер начинается со скобки — защита
+        # от псевдо-вызовов. У фразы, законченной точкой, есть спасение:
+        # её отдаёт speak(s, show=...) в цикле. А у ПОСЛЕДНЕГО куска — того,
+        # что не дорос до конца предложения, — спасения не было: он уходил
+        # в speak() с show по умолчанию, то есть False. Реплика звучала
+        # голосом и не появлялась в чате ни одной буквой. Ровно то же
+        # правило, что и в цикле: не показывали — покажем.
         if sentence_buf.strip() and not stop_event.is_set():
-            speak(sentence_buf.strip())
+            speak(sentence_buf.strip(), show=_shown < len(sentence_buf))
         # ПРОГРЕВ СЛЕДУЮЩЕГО ХОДА: пока человек читает ответ, движок в фоне
         # укладывает в KV-кэш весь диалог вместе с этим ответом — следующая
         # фраза доплачивает prefill только за себя (см. llm.prewarm_next)
@@ -4991,7 +5347,24 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # видит собственные нарушения правила как «нормальный» пример и множит
     # их дальше. Живой UI уже получил токены как есть (стрим не переиграть),
     # это только для будущего контекста.
-    reply = _strip_markdown("".join(full_reply).strip())
+    # ЖЕСТ — НЕ РЕПЛИКА (2026-08-15, живой случай 12:15:22, «она ответила,
+    # и этого ответа нет нигде»). Модель на «Камила.» выдала ровно один
+    # маркер [жест:nodding] и больше ничего. Дальше сходилось всё худшее
+    # сразу: жест исполнился (кивнула), слов не было — в чат не ушло ни
+    # буквы, — а вот эта строка считала ответ по СЫРОМУ тексту, видела в
+    # нём «[жест:nodding]» и объявляла ответ непустым. Значит и честная
+    # ветка «молчание — не ответ» не срабатывала: человек не получил ни
+    # текста, ни объяснения. Хуже того, маркер уезжал в память как её
+    # реплика — то есть история учила её, что маркер это обычный текст.
+    # Считаем ответом только СЛОВА: маркеры вырезаны (fire=False — жест уже
+    # отыгран в speak(), второй раз не надо).
+    _said_raw = "".join(full_reply)
+    reply = _strip_markdown(_apply_gesture_marks(_said_raw, fire=False).strip())
+    # эхо старой пометки обрыва (могла остаться в уже отравленной памяти
+    # прошлых дней) — вычищаем из ответа, где бы она ни стояла
+    if "(прервана — собеседник" in reply:
+        reply = re.sub(r'\s*…?\s*\(прервана — собеседник[^)]*\)', '',
+                       reply).strip()
     # текстовые вызовы инструментов ([open_folder:...]) — исполняем и
     # показываем человеку сразу; ей результат уедет фактом в следующий ход
     if reply and not stop_event.is_set():
@@ -5010,11 +5383,45 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         except Exception as e:
             log.debug("текст-вызовы пропущены: %s", e)
     if reply:
+        # «СКАЗАЛА "ПОНЯЛА", НАПИСАЛА "ПОНЯЛ"» (2026-08-15, живой чат
+        # 13:24). Род правится в speak() — и потому ГОЛОС говорил верно.
+        # А в чат текст едет другим путём: сырыми токенами стрима, мимо
+        # speak(), и в память записывался тоже сырой. Итог — три версии
+        # одной реплики: ухо слышит «поняла», глаз читает «понял», память
+        # хранит «понял» и учит модель мужскому роду дальше. Каноничный
+        # текст один: правим род здесь и шлём его в чат финальной заменой
+        # (стрим уже показал сырое — UI подменит пузырь целиком).
+        try:
+            from server import gender as _gnd
+            reply = _gnd.feminize(reply)
+        except Exception:
+            pass
         # прервали на полуслове (живой контекст — юзер докинул) -> помечаем,
         # чтобы на следующем заходе она видела, что не договорила
+        # серия пустышек: считаем и на второй подряд молчим
+        if _is_bare_ack(reply) and not _tool_used.get("any"):
+            _fresh = time.time() - _ACK_STREAK["ts"] < 300
+            _ACK_STREAK["n"] = (_ACK_STREAK["n"] + 1) if _fresh else 1
+            _ACK_STREAK["ts"] = time.time()
+            if _ACK_STREAK["n"] >= 2:
+                log.info("Пустое подтверждение %d-й раз подряд (%r) — "
+                         "молчу вместо пустышки", _ACK_STREAK["n"],
+                         reply[:40])
+                out.put({"type": "final", "text": ""})
+                out.put({"type": "noreply",
+                         "text": "промолчала: сказать нечего, а «поняла» "
+                                 "ты уже слышал"})
+                out.put({"type": "done"})
+                DIALOG_STATE["active_since"] = 0.0
+                DIALOG_STATE["first_token_ts"] = 0.0
+                return
+        else:
+            _ACK_STREAK["n"] = 0
         if stop_event.is_set() and n_tokens > 0:
-            reply += " …(прервана — собеседник добавил уточнение)"
+            reply += _CUT_NOTE
         memory.add_event(person_id, "assistant", reply)
+        if n_tokens > 0 and not stop_event.is_set():
+            out.put({"type": "final", "text": reply})
     # ДЕЛО СДЕЛАНО — МОЛЧАНИЕ НЕ СТРАШНО (2026-07-29, живой чат: ответ
     # целиком состоял из вызова инструмента, после вырезания маркеров
     # осталась пустота — и человек читал пугающее «🤐 не смогла ответить»
@@ -5023,6 +5430,17 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     if not reply and not stop_event.is_set() \
             and (_tool_used.get("names") or PENDING_ACTIONS):
         reply = ""          # результат уже показан строкой ⚡ — не дублируем
+    # ОТВЕТИЛА ОДНИМ ЖЕСТОМ — это отдельная причина, и называть её надо
+    # своими словами. Общий разбор молчания (_diagnose_silence) считает
+    # токены и уверенно сообщил бы «модель выдала 6 токенов» — правда, но
+    # для человека бесполезная: он видел кивок и ждал слов.
+    elif (not reply and not stop_event.is_set() and n_tokens > 0
+          and _GESTURE_MARK_RE.search(_said_raw or "")):
+        log.warning("Весь ответ оказался жест-маркером (%r) — слов не было",
+                    _said_raw[:80])
+        out.put({"type": "noreply",
+                 "text": "Ответила только жестом — слов не пришло ни одного. "
+                         "Скажи ещё раз, я отвечу словами."})
     # МОЛЧАНИЕ — НЕ ОТВЕТ: если наружу не ушло ни слова и нас не перебивали,
     # объясняем в чате, почему (раньше причина тонула в логе, а в UI
     # выглядело так, будто Сайка просто проигнорировала фразу)
@@ -5730,16 +6148,124 @@ async def ws_endpoint(ws: WebSocket):
                         HEAR_STAT["rms"] = _r
                     except Exception:
                         pass
+                    # ═══ «СТОЙ» ОБЯЗАНО РАБОТАТЬ И КОГДА ОНА ГОВОРИТ ═══
+                    # (2026-08-15, живой случай: владелец трижды сказал
+                    # «стой» поверх её длинного ответа — ноль реакции.
+                    # Защита от эха выкидывала звук ДО нарезки: тяжёлый
+                    # конвейер она берегла честно, но вместе с ним умер и
+                    # аварийный тормоз — а он важнее всего конвейера.)
+                    # Дешёвый путь: без шумодава, ушей и отпечатка — только
+                    # нарезка (микросекунды) и распознавание готовой фразы
+                    # в соседнем потоке. Эхо её собственного голоса дальше
+                    # отсеет voice_phrase: он пропускает сквозь эхо-фильтр
+                    # ровно стоп-слова и обращение по имени.
+                    try:
+                        if stt.current_name not in stt.OFF                                 and not stt.is_streaming():
+                            _seg = stt.cut(p)
+                            if _seg is not None:
+                                try:
+                                    seg_q.put_nowait((time.monotonic(),
+                                                      _seg))
+                                except queue.Full:
+                                    pass
+                    except Exception:
+                        pass
                     continue
                 t0 = time.monotonic()
-                p = DENOISE.process(p)
+                # ПРЕДОХРАНИТЕЛЬ РЕАЛЬНОГО ВРЕМЕНИ (2026-08-15, панель
+                # владельца: шумодав 46мс + нарезка 41мс на 100мс куска,
+                # очередь слуха 23). Когда конвейер не успевает за звуком,
+                # первым за борт идёт самое дорогое и наименее нужное —
+                # шумодав: лучше слышать сырым, чем слышать вчерашнее.
+                if hear_q.qsize() > 4:
+                    HEAR_STAT["den_skip"] = HEAR_STAT.get("den_skip", 0) + 1
+                    if HEAR_STAT["den_skip"] % 50 == 1:
+                        log.warning("Слух отстаёт (очередь %d) — пропускаю "
+                                    "шумодав, звук идёт сырым (всего "
+                                    "пропусков %d)", hear_q.qsize(),
+                                    HEAR_STAT["den_skip"])
+                else:
+                    p = DENOISE.process(p)
                 t1 = time.monotonic()
                 # УХО (2026-08-13): сначала «что это вообще за звук», потом
                 # «чей голос». Без этого порядка клацанье клавиатуры честно
                 # получало эмбеддинг и заводило себе профиль в карте
                 # («Голос 4», 153 срабатывания, 103-400 Гц — живой случай).
                 hearing.feed(p)
-                if hearing.speech_ok():
+                try:
+                    from server import mic_passport
+                    mic_passport.feed(p)   # паспорт первого сенсора
+                except Exception:
+                    pass
+                # ═══ «БУДЬ ЗДОРОВ» (2026-08-15, просьба владельца) ═══
+                # Чих — единственное событие, на которое живой сосед по
+                # комнате отзывается сам. Кулдаун минута: серия чихов — один
+                # ответ. Крик сюда не входит: он, наоборот, знак «не лезь»
+                # (уходит фоном в промпт через hearing.context_line).
+                try:
+                    _ev = hearing.pop_event()
+                    if _ev:
+                        try:
+                            from server import cortex
+                            cortex.feel("event", "событие: " + _ev[0])
+                        except Exception:
+                            pass
+                    if (_ev and _ev[0] == "чих" and not observe["on"]
+                            and not QUIET["on"]
+                            and time.time() - EARS_REACT.get("ts", 0) > 60
+                            and not CFG.get("llm.off", False)):
+                        EARS_REACT["ts"] = time.time()
+                        log.info("Уши: чих (%.2f) — реагирую", _ev[1])
+                        handle_text("(звук в комнате: кто-то чихнул — "
+                                    "уместно коротко пожелать здоровья)")
+                except Exception as e:
+                    log.debug("рефлекс на чих пропущен: %s", e)
+                # ═══ БИТБОКС-ТРАНСКРИБ (2026-08-15, вызов владельца:
+                # «прууу ккх тся-тся пу ккх — хер ты таким транскрибом за
+                # мной поспеешь»). Поспеваю: детерминированный классификатор
+                # перкуссии по спектру и дрожи огибающей (server/beatbox.py,
+                # стенд сошёлся 8/8). Копейки: numpy на огибающей.
+                try:
+                    from server import beatbox as _bb
+                    _seq = _bb.feed(p)
+                    if _seq is not None:
+                        out.put({"type": "beat", "seq": _seq})
+                        if _seq:
+                            try:
+                                from server import cortex
+                                cortex.feel("beat", "ритм: " + _seq[-60:])
+                            except Exception:
+                                pass
+                except Exception as e:
+                    log.debug("битбокс пропущен: %s", e)
+                # живая лента звуков: заметный НЕ-речевой звук — строкой в
+                # чат (просьба владельца: «писать звуки в реальном времени,
+                # даже длинные — Тссссс»). Дёшево: только чтение списка.
+                try:
+                    for _snd in hearing.pop_sounds():
+                        out.put({"type": "sound", **_snd})
+                        try:
+                            from server import cortex
+                            for _e in (_snd.get("now") or []):
+                                cortex.feel("sound",
+                                            "звук: " + (_e.get("ru") or ""))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # ═══ ОТПЕЧАТОК — ТОЛЬКО НА НАСТОЯЩЕЙ РЕЧИ (2026-08-15) ═══
+                # Два стража вместо одного. Уши (PANNs) отвечают «что за
+                # звук в комнате» с окном в 2 секунды — их вето ловит
+                # клавиатуру, но опаздывает на границах. Нейро-VAD отвечает
+                # «речь ли ЭТОТ кусок» с точностью до 32мс — он и решает.
+                # Нет нейронки — работает старое правило одних ушей.
+                _vp_ok = hearing.speech_ok()
+                if _vp_ok:
+                    _np = getattr(stt.vad, "speech_prob", None)
+                    if _np is not None:
+                        _vp_ok = _np >= float(
+                            CFG.get("voiceprint.vad_min", 0.5))
+                if _vp_ok:
                     voiceprint.feed(p)
                 if not observe["stt"]:
                     continue
@@ -5773,7 +6299,9 @@ async def ws_endpoint(ws: WebSocket):
                     if seg is not None:
                         HEAR_STAT["segments"] += 1
                         try:
-                            seg_q.put_nowait(seg)
+                            # время нарезки едет вместе с куском: по нему
+                            # распознаватель поймёт, что кусок протух
+                            seg_q.put_nowait((time.monotonic(), seg))
                         except queue.Full:
                             SEG_DROP["n"] += 1
                             log.warning("Распознавание не догоняет: пропустила "
@@ -5821,6 +6349,12 @@ async def ws_endpoint(ws: WebSocket):
         try:
             r["stt_ms"] = ms
             r["heard_at"] = time.strftime("%H:%M:%S")
+            try:
+                from server import cortex
+                cortex.feel("speech", "речь: " + (r.get("text") or "")[:80],
+                            who=r.get("speaker", ""))
+            except Exception:
+                pass
             r["_heard_mono"] = time.monotonic()
             LAST_STT.update(engine=r.get("engine", "?"), stt_ms=ms,
                             ts=time.time())
@@ -5845,16 +6379,22 @@ async def ws_endpoint(ws: WebSocket):
         if HEAR_STAT["stt_ms"] > 2000:
             return
         now = time.monotonic()
-        # 1.0с вместо 1.4с (2026-08-15, «нужно ускорить, чтобы писала в
-        # реальном времени»): gigaam на свободном GPU тратит 200-400мс,
-        # текст может обновляться заметно живее без риска очереди
-        wait = max(1.0, HEAR_STAT["stt_ms"] / 1000 * 1.5)
+        # 0.55с (2026-08-15, задача владельца «сделать распознавание текста
+        # мгновенным»). Шаг подпирается снизу реальной ценой движка: gigaam
+        # на свободном GPU тратит 200-400мс на кусок, значит перечитывать
+        # можно вдвое чаще, чем раньше, и очередь настоящих фраз всё равно
+        # не заткнётся — она всегда важнее и разбирается первой.
+        wait = max(float(CFG.get("stt.polish_every_s", 0.55)),
+                   HEAR_STAT["stt_ms"] / 1000 * 1.2)
         if now - POLISH["ts"] < wait:
             return
         snap = stt.peek()
         if snap is None:
             return
-        if len(snap) <= POLISH["n"] + 4800:      # наросло меньше 0.3с
+        # 0.2с новой речи вместо 0.3с: за это время человек успевает
+        # договорить слово, а именно слова и должны появляться на экране
+        grow = int(float(CFG.get("stt.polish_grow_s", 0.2)) * 16000)
+        if len(snap) <= POLISH["n"] + grow:
             return
         POLISH["ts"], POLISH["n"] = now, len(snap)
         try:
@@ -5866,9 +6406,51 @@ async def ws_endpoint(ws: WebSocket):
                 except Exception:
                     pass
                 DRAFT.reset()                        # версия Vosk устарела
-                out.put({"type": "stt_draft", "text": txt})
+                # ЖИВАЯ ПОДСВЕТКА КАЧЕСТВА (2026-08-15, владелец: «как у
+                # Дуолинго, чтобы работало в реалтайм»). Пословная
+                # уверенность едет прямо в черновик — интерфейс красит
+                # слова по ней, пока фраза ещё звучит. Даёт её whisper;
+                # у GigaAM вероятностей нет — там черновик просто текстом.
+                out.put({"type": "stt_draft", "text": txt,
+                         "words": results[0].get("words") or None})
         except Exception as e:
             log.debug("Скользящая нормализация споткнулась: %s", e)
+
+    def _voice_metrics(pcm16, sr, text):
+        """Частота (F0), яркость тембра и скорость речи одного куска.
+        Владелец просил видеть это в метках фразы. Всё считается numpy за
+        миллисекунды: автокорреляционный питч по окнам 50мс, спектральный
+        центроид как «яркость», слова/сек по уже готовому тексту."""
+        out = {}
+        try:
+            x = np.asarray(pcm16, np.float32) / 32768.0
+            sec_ = len(x) / float(sr or 16000)
+            if sec_ < 0.3:
+                return out
+            f0s = []
+            step = int(sr * 0.05)
+            for j in range(0, len(x) - step, step * 2):
+                w = x[j:j + step]
+                if float(np.sqrt(np.mean(w ** 2))) < 0.01:
+                    continue
+                ac = np.correlate(w, w, "full")[len(w) - 1:]
+                lo, hi = int(sr / 400), int(sr / 70)
+                if hi >= len(ac):
+                    continue
+                k = lo + int(np.argmax(ac[lo:hi]))
+                if ac[k] > 0.3 * ac[0]:
+                    f0s.append(sr / k)
+            if f0s:
+                out["voice_hz"] = int(np.median(f0s))
+            spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+            fr = np.fft.rfftfreq(len(x), 1.0 / sr)
+            out["bright_hz"] = int(np.sum(fr * spec) / (np.sum(spec) + 1e-9))
+            n_words = len(re.findall(r"[А-Яа-яЁёA-Za-z]+", text or ""))
+            if n_words:
+                out["rate_wps"] = round(n_words / sec_, 1)
+        except Exception:
+            pass
+        return out
 
     def _stt_worker():
         """Распознавание готовых фраз. Может думать секундами — и теперь это
@@ -5881,20 +6463,170 @@ async def ws_endpoint(ws: WebSocket):
                 continue
             if seg is None:
                 break
+            # ПРОТУХШИЙ КУСОК НЕ РОЖДАЕТ ФРАЗУ (2026-08-15, живой залп
+            # 13:20:54: GigaAM упал на bfloat16, запасной faster_whisper
+            # грелся 90 секунд, всё наговорённое за это время нарезалось,
+            # дождалось движка и выстрелило шестью фразами за секунду —
+            # «отвечу следом (6 в очереди)». Человек эти «привет, алло,
+            # раз-два-три» говорил в мёртвый движок минуту назад; отвечать
+            # на них сейчас — разговор с эхом. Кусок старше порога молча
+            # пропускаем, о пропуске — честная строка в лог и счётчик.
+            seg_ts, seg = (seg if isinstance(seg, tuple) else (None, seg))
+            if seg_ts is not None:
+                _age = time.monotonic() - seg_ts
+                if _age > float(CFG.get("stt.stale_s", 12)):
+                    HEAR_STAT["stale"] = HEAR_STAT.get("stale", 0) + 1
+                    log.warning("Слух: кусок пролежал в очереди %.0fс "
+                                "(движок отставал) — пропускаю, чтобы не "
+                                "отвечать на минутной давности фразы "
+                                "(всего пропущено %d)", _age,
+                                HEAR_STAT["stale"])
+                    continue
             try:
                 t0 = time.monotonic()
-                results = stt.transcribe_segment(seg)
+                sr_hz = int(CFG.get("stt.sample_rate", 16000) or 16000)
+                sec = round(len(seg) / float(sr_hz), 2)
+                try:
+                    rms_seg = float(np.sqrt(np.mean(
+                        (np.asarray(seg, np.float32) / 32768.0) ** 2)))
+                except Exception:
+                    rms_seg = 0.0
+                # ВТОРОЙ ПРОХОД ШУМОДАВА — НА СОБРАННОЙ ФРАЗЕ (2026-08-15).
+                # Потоковый шумодав как работал, так и работает: он кормит
+                # отпечаток голоса, уши и VAD. А вот дорогим и точным движкам
+                # (noisereduce, deepfilter) на 100мс куске работать нечем —
+                # нестационарная оценка шума на таком отрезке видит только
+                # речь и глушит её же. Здесь у них целая фраза с тишиной по
+                # краям, то есть ровно то, подо что они написаны, и платим мы
+                # раз в фразу, а не сто раз в секунду.
+                # По умолчанию выключено: пока стенд (server/hear_bench.py)
+                # не показал, что от него распознаванию лучше, включать
+                # нечестно.
+                seg_in = seg
+                try:
+                    if str(CFG.get("denoise.segment_engine", "off")) \
+                            not in ("", "off"):
+                        seg_in = SEGMENT_DENOISE.process_whole(seg)
+                except Exception as e:
+                    log.debug("Шумодав фразы пропущен: %s", e)
+                # ═══ СМЕНА ГОЛОСА ВНУТРИ ФРАЗЫ (2026-08-15) ═══
+                # Живой диалог и аниме пауз между репликами не имеют:
+                # «Ты куда пошёл?Я в магазин.» приезжает одним куском и
+                # подписывается одним голосом. Режем по тембру (ECAPA из
+                # voiceprint) ДО распознавания — каждая реплика получает
+                # свой текст и своего говорящего. Проверено стендом
+                # (tools/hear_lab.py): три реплики двух голосов режутся по
+                # границам, монолог остаётся целым, наложение помечается.
+                _parts = [{"start": 0, "end": len(seg_in), "crowd": False}]
+                try:
+                    from server.stt import turns as _turns
+                    _parts = _turns.split(seg_in, sr_hz)
+                except Exception as e:
+                    log.debug("разрез по голосам пропущен: %s", e)
+                results = []
+                for _pi, _pt in enumerate(_parts):
+                    _audio = seg_in[_pt["start"]:_pt["end"]]
+                    for r in (stt.transcribe_segment(_audio) or []):
+                        if len(_parts) > 1:
+                            try:
+                                _nm, _cf = _turns.who(_audio, sr_hz)
+                                if _nm:
+                                    r["speaker"] = _nm
+                                    r["speaker_conf"] = round(_cf, 2)
+                            except Exception:
+                                pass
+                        if _pt.get("crowd"):
+                            r["crowd"] = True
+                        # МЕТКИ ГОЛОСА (2026-08-15, владелец: «получать
+                        # метки голосов — какая частота, тембр, скорость
+                        # речи»). Считаются по самому куску, дёшево.
+                        try:
+                            r.update(_voice_metrics(
+                                _audio, sr_hz, r.get("text", "")))
+                        except Exception:
+                            pass
+                        results.append(r)
                 ms = round((time.monotonic() - t0) * 1000)
+                # ФАНТОМ НА КЛАВИАТУРЕ (2026-08-15, живой случай 13:08:57:
+                # владелец МОЛЧА печатает — в чате появляется «Да.» и Сайка
+                # отвечает). Щелчки берут порог VAD по энергии, GigaAM на
+                # куске щелчков честно галлюцинирует короткое слово. Слова
+                # «да» в джанк-список не положишь — оно живое. Зато у нас
+                # есть уши: PANNs в этот момент видят «computer keyboard», а
+                # речи не видят. Правило узкое, чтобы не съесть настоящее
+                # «да»: сегмент короче секунды И уши свежие И речи в них
+                # нет — фраза не рождается, в лог и стенд честная причина.
+                try:
+                    if (results and sec < float(
+                                CFG.get("stt.phantom_max_s", 1.0))
+                            and hearing.STATE.get("ready")
+                            and time.time() - hearing.STATE.get("ts", 0) < 2.5
+                            and hearing.STATE.get("speech", 0.0)
+                                < float(CFG.get("stt.phantom_speech_min", 0.2))):
+                        log.info("Слух: короткий сегмент (%.1fс) на фоне без "
+                                 "речи (PANNs speech=%.2f) — похоже на стук/"
+                                 "щелчки, фразу %r не рождаю", sec,
+                                 hearing.STATE.get("speech", 0.0),
+                                 (results[0].get("text", "") or "")[:40])
+                        hear_bench.record(seg, sr_hz,
+                                          results[0].get("text", ""),
+                                          results[0].get("engine", ""), ms,
+                                          {"rms_raw": round(rms_seg, 5),
+                                           "phantom": True})
+                        results = []
+                except Exception as e:
+                    log.debug("фантом-фильтр пропущен: %s", e)
                 HEAR_STAT["stt_ms"] = round(
                     0.7 * HEAR_STAT["stt_ms"] + 0.3 * ms, 1)
                 HEAR_STAT["lag"] = seg_q.qsize()
                 if not results:
                     HEAR_STAT["empty"] += 1
+                    # пустой ответ движка — тоже факт, и на стенде он самый
+                    # ценный: видно волну, на которой он не нашёл ни слова
+                    hear_bench.record(seg, sr_hz, "", stt.current_name, ms,
+                                      {"rms_raw": round(rms_seg, 5),
+                                       "empty": True})
                     continue
                 POLISH["n"] = 0
                 DRAFT.reset()
                 out.put({"type": "stt_draft", "text": ""})
                 for r in results:
+                    # ЛОГИКА ПРАВИЛЬНОГО НАПИСАНИЯ (2026-08-15). Движок не
+                    # знает наших слов и честно пишет созвучное; словарь
+                    # проекта это чинит правилом, а не догадкой модели. Что
+                    # именно заменено — видно и в логе, и в heard_raw:
+                    # тихих правок текста здесь не бывает.
+                    try:
+                        # РАСТЯЖКА (2026-08-15, владелец: «затяну слово —
+                        # транскриб должен писать по времени продления»).
+                        # Движки нормализуют тянутые слова; след остаётся
+                        # только в звуке — восстанавливаем по плато
+                        # огибающей ДО словарного ремонта.
+                        _st = misheard.stretch(r.get("text", ""), seg_in,
+                                               sr_hz, r.get("words"))
+                        if _st != r.get("text", ""):
+                            r["heard_raw"] = r.get("text", "")
+                            r["text"] = _st
+                            log.info("Слух: восстановила растяжку: %r",
+                                     _st[:60])
+                        _raw = r.get("text", "")
+                        _fixed, _fixes = misheard.repair(_raw)
+                        if _fixes:
+                            r["text"] = _fixed
+                            r["heard_raw"] = _raw
+                        _sh, _why = misheard.shaky(r.get("text", ""),
+                                                   sec, rms_seg)
+                        if _sh:
+                            r["shaky"] = _why
+                            log.info("Слух: строка помечена шаткой (%s): %r",
+                                     _why, r.get("text", "")[:60])
+                    except Exception as e:
+                        log.debug("ремонт написания пропущен: %s", e)
+                    hear_bench.record(seg, sr_hz, r.get("text", ""),
+                                      r.get("engine", ""), ms,
+                                      {"heard_raw": r.get("heard_raw", ""),
+                                       "shaky": r.get("shaky", ""),
+                                       "rms_raw": round(rms_seg, 5)})
                     _emit_phrase(r, ms)
             except Exception as e:
                 log.warning("Распознавание споткнулось: %s", e)
@@ -6030,7 +6762,20 @@ async def ws_endpoint(ws: WebSocket):
             has_output = DIALOG_STATE.get("first_token_ts", 0.0) > 0
             gen_age = (time.time() - started) if started else 0.0
             grace = CFG.get("dialog.live_context_grace_s", 6)
-            if CFG.get("dialog.live_context", True) and (has_output or gen_age < grace):
+            # ПРИДЕРЖКА ПЕРЕБИВОК (2026-08-15, живой лог 11:49:47-48).
+            # Четыре фразы, распознанные подряд за 0.7 секунды, четыре раза
+            # дёрнули stop_event. Каждая перебивка — это полный рестарт:
+            # заново собрать промпт на 14 тысяч токенов и заново заплатить
+            # 4-6 секунд prefill. Четыре рестарта за секунду означают, что
+            # ответ не начнётся НИКОГДА, пока человек не замолчит совсем.
+            # Живой контекст задумывался как «докинул мысль — она учла», а
+            # не как «говорю дальше — она стирает начатое». Перебиваем не
+            # чаще раза в gap секунд; всё, что пришло раньше, копится молча
+            # и уедет тем же куском — оно и так попадёт в тот же заход.
+            gap = float(CFG.get("dialog.live_context_min_gap_s", 3.0))
+            too_soon = (time.time() - LIVE_CTX["ts"]) < gap
+            if (CFG.get("dialog.live_context", True)
+                    and (has_output or gen_age < grace) and not too_soon):
                 # докидка на лету: копим фразу И прерываем текущий ответ —
                 # _dialog_loop подхватит её в обновлённом контексте
                 log.info("handle_text: живой контекст — докидываю %r и "
@@ -6043,9 +6788,16 @@ async def ws_endpoint(ws: WebSocket):
                         pending_meta["image"] = image
                     n = len(pending)
                 out.put({"type": "queued", "text": user_text, "n": n})
+                LIVE_CTX["ts"] = time.time()
+                LIVE_CTX["n"] += 1
                 stop_event.set()   # прервать текущий ответ -> рестарт в loop
             else:
-                if CFG.get("dialog.live_context", True):
+                if too_soon and CFG.get("dialog.live_context", True):
+                    log.info("handle_text: перебивали %.1fс назад — фразу %r "
+                             "коплю молча, НЕ рестартую (иначе prefill по "
+                             "кругу и ответа не будет вовсе)",
+                             time.time() - LIVE_CTX["ts"], user_text[:40])
+                elif CFG.get("dialog.live_context", True):
                     log.info("handle_text: генерация ещё без единого токена "
                              "дольше %sс (холодный старт/завал) — коплю %r "
                              "молча, НЕ прерываю", grace, user_text[:40])
@@ -6402,6 +7154,37 @@ async def ws_endpoint(ws: WebSocket):
             else:
                 out.put({"type": "stt_ignored", **r, "quiet": True})
                 return
+        # ═══ СОЦИАЛЬНЫЙ ТАКТ (2026-08-15, владелец: «должна понимать,
+        # кто говорит, и нужно ли ей влезать, если слух фиксирует
+        # нескольких людей»). Живое правило из человеческого этикета:
+        # когда в комнате РАЗГОВОР МЕЖДУ ЛЮДЬМИ (за последнюю минуту
+        # звучало ≥2 разных голоса), в него не влезают без приглашения —
+        # даже в режиме «слушать всё». Приглашение = имя или открытое
+        # окно диалога (с ней только что говорили). Фраза не теряется:
+        # серым в чат и в память слуха — просто без ответа.
+        try:
+            # СЧИТАЕМ ФРАЗЫ, А НЕ КАРТУ (2026-08-15, живой прокол через
+            # 3 минуты после включения: карта раздробила голос владельца
+            # на «Голос 2» и «Голос 5», такт увидел «двоих» и замолчал на
+            # его прямой вопрос). Разговор двух людей — это две РАЗНЫЕ
+            # уверенные подписи у фраз за минуту, а не две карточки.
+            global SPEAKERS_RECENT
+            if SPEAKERS_RECENT is None:
+                from collections import deque as _dq
+                SPEAKERS_RECENT = _dq(maxlen=40)
+            if r.get("speaker") and (r.get("speaker_conf") or 0) >= 0.6:
+                SPEAKERS_RECENT.append((now, r["speaker"]))
+            if (always and CFG.get("attention.social", True)
+                    and not _addressed(r["text"]) and now >= attn["until"]):
+                _names = {nm for ts_, nm in SPEAKERS_RECENT
+                          if now - ts_ <= 60}
+                if len(_names) >= 2:
+                    log.info("Такт: разговор между людьми (%s) — не влезаю "
+                             "без имени: %r", _names, r["text"][:40])
+                    out.put({"type": "stt_ignored", **r, "social": True})
+                    return
+        except Exception as e:
+            log.debug("социальный такт пропущен: %s", e)
         if (always or not CFG.get("attention.enabled", True)
                 or _addressed(r["text"]) or now < attn["until"]):
             _user_activity()
@@ -6698,7 +7481,14 @@ def _autostart_components():
             if n not in stt_chain:
                 stt_chain.append(n)
         stt_chain.sort(key=lambda n: -_manual.get(n, 0))
-        _try_chain("stt", stt_chain, stt.load_engine)
+        BOOT["hear"] = "loading"
+        try:
+            from server.stt import neuro_vad as _nv
+            _nv.warm()      # нейронное «речь ли это» греется вместе со слухом
+        except Exception as e:
+            log.debug("нейро-VAD не пнулся: %s", e)
+        BOOT["hear"] = "ready" if _try_chain("stt", stt_chain,
+                                             stt.load_engine) else "broken"
 
     # СТРАЖ ПЕТЛИ КРАШЕЙ — ДО ВСЯКОЙ ЗАГРУЗКИ ГОЛОСА (2026-08-14). Смотрим
     # хлебную крошку: если прошлый старт умер на загрузке движка, второй
@@ -6750,10 +7540,20 @@ def _autostart_components():
         # в чат «что-то с сетью, брат» и лишь потом уступал. Piper офлайн
         # и поднимается за секунду — ему и быть времянкой; edge последним,
         # и только если не помечен больным (tts_sick.json).
+        # ОДИН ГОЛОС, А НЕ ДВА (2026-08-15, владелец: «не надо мне грузить
+        # ебучих два движка, должен догружаться один основной — тот, который
+        # выше всего в рейтинге»). Времянка задумывалась как добро: пока
+        # qwen3 компилируется две минуты, кто-то должен отвечать. Но платит
+        # за это человек — вторым движком в памяти, чужим голосом в колонках
+        # и невозможностью понять, почему «квен в памяти, а говорит пипер».
+        # Теперь по умолчанию грузится РОВНО ОДИН, верхний по рейтингу, а
+        # пока он греется, интерфейс честно показывает контур загрузки на
+        # кнопке голоса (см. /api/ready). Кому времянка нужна — tts.boot_stub.
         from server.tts.manager import is_sick as _tts_sick
         FAST_TTS = ("piper", "silero", "edge")
         best = tts_chain[0] if tts_chain else None
-        if best and best not in FAST_TTS:
+        BOOT["voice"] = "loading"
+        if best and best not in FAST_TTS and CFG.get("tts.boot_stub", False):
             fast = next((n for n in FAST_TTS
                          if n in tts_chain and not _tts_sick(n)), None)
             if fast:
@@ -6764,8 +7564,9 @@ def _autostart_components():
                              fast, best)
                 except Exception as e:
                     log.info("Голос-времянка %s не поднялась: %s", fast, e)
-        _try_chain("tts", tts_chain, tts.load_engine)
+        _ok = _try_chain("tts", tts_chain, tts.load_engine)
         tts.boot_override = None  # тяжёлый готов (или фолбэк) — времянку прочь
+        BOOT["voice"] = "ready" if _ok else "broken"
         # разовый бенч незамеренных запасных голосов — чтобы выбор «по
         # рейтингу» опирался на реальные замеры этого ПК
         try:
@@ -6827,6 +7628,7 @@ def _autostart_components():
     BACKENDS_AUTOSTART = ("ollama", "lmstudio", "locallm", "llamacpp")
 
     def _boot_llm():
+      BOOT["brain"] = "loading"
       try:
           tps = ratings.llm_tps()
           manual = ratings.manual_scores()
@@ -6900,11 +7702,13 @@ def _autostart_components():
                       log.info("Автопуск: мозги — облако/%s (ум %s/10), "
                                "греть нечего, отвечаю сразу",
                                model, _eff("cloud", model))
+                      BOOT["brain"] = "ready"
                       break
                   if not llm.switch_model(backend, model)["ok"]:
                       raise RuntimeError("прогрев не удался")
                   CFG.set("llm.backend", backend)
                   CFG.set("llm.model", model)
+                  BOOT["brain"] = "ready"
                   log.info("Автопуск: мозги — %s/%s (ум %s/10, %.1f ток/с)",
                            backend, model, _eff(backend, model),
                            tps.get(model, 0))
@@ -7008,6 +7812,13 @@ def main():
         self_heal.start(report_problem)
     except Exception as e:
         log.debug("self_heal: %s", e)
+    # файловый пульт: ИИ-напарник крутит ручки слуха через data/knobs.json,
+    # не имея хода в порт (2026-08-15, совместная отладка с Cowork)
+    try:
+        from server import knobs
+        knobs.start()
+    except Exception as e:
+        log.debug("knobs: %s", e)
     # Аватар (VMagicMirror и т.п.) машет и сбрасывает позу один раз при
     # старте сервера — небольшая задержка, чтобы дать программе-аватару
     # время быть уже открытой (если сама Sайка стартует раньше неё —

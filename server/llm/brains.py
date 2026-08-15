@@ -28,6 +28,7 @@ llm.cloud. Если этот слот пуст, отвалился по лими
 """
 import json
 import logging
+import re
 import time
 
 from server.config import CFG, ROOT
@@ -273,10 +274,28 @@ def recent_pos(backend: str, model: str) -> int:
     return 99
 
 
+# «ПЕРЕБОР ЗАПРОСОВ» — НЕ ПОЛОМКА, А «ПОДОЖДИ» (2026-08-15).
+# Владелец: «я просто не понимаю, какого хрена она мне отвечает не той
+# моделью, которая выше всего по рейтингу». Разбор живого лога: mistral
+# (его верхняя, ум 10) отвечает 429 Rate limit — обычное дело у бесплатного
+# тарифа, лимит там отпускает за десятки секунд. А мы за это уводили её из
+# лестницы на ДЕСЯТЬ МИНУТ, как настоящую поломку, — и весь разговор ехал на
+# GigaChat. Наказание не по проступку: сломанный бэкенд и занятый бэкенд
+# лечатся разным временем. Ждём коротко и возвращаемся к верхней модели.
+_RATE_S = 60          # «слишком часто спрашиваешь» — подождать и вернуться
+_RATE_RE = re.compile(r'\b429\b|rate[ _-]?limit|too many requests|quota',
+                      re.I)
+
+
 def note_fail(backend: str, model: str, why: str = ""):
-    """Мозг не ответил — уводим его из лестницы на 10 минут."""
-    _SICK[(backend, model)] = time.time() + _SICK_S
-    log.info("Мозг %s/%s отложен на %dс: %s", backend, model, _SICK_S, why)
+    """Мозг не ответил — уводим его из лестницы. Насколько — по причине:
+    перебор запросов это «занят», всё остальное — «сломан»."""
+    rate = bool(_RATE_RE.search(str(why or "")))
+    wait = _RATE_S if rate else _SICK_S
+    _SICK[(backend, model)] = time.time() + wait
+    log.info("Мозг %s/%s отложен на %dс (%s): %s", backend, model, wait,
+             "перебор запросов — вернусь к нему" if rate else "не ответил",
+             str(why)[:120])
 
 
 def is_sick(backend: str, model: str) -> bool:

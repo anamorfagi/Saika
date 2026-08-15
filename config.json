@@ -9,20 +9,21 @@
     "backend": "cloud",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "GigaChat-2-Pro",
+    "model": "@cf/qwen/qwen3-30b-a3b-fp8",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
     "cloud": {
       "enabled": true,
-      "provider": "gigachat",
-      "base_url": "https://gigachat.devices.sberbank.ru/api/v1",
-      "model": "GigaChat-2-Pro"
+      "provider": "cloudflare",
+      "base_url": "https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1",
+      "model": "@cf/qwen/qwen3-30b-a3b-fp8"
     },
     "tools_broken": [
       "gemma-4-e4b-it",
       "google/gemma-4-12b-qat",
-      "llama3.2:latest"
+      "llama3.2:latest",
+      "mistral-medium-3-5"
     ],
     "sampling": {
       "enabled": false,
@@ -150,10 +151,12 @@
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
-      "rms_threshold": 0.012,
-      "silence_ms": 700,
+      "rms_threshold": 0.01,
+      "silence_ms": 500,
       "min_speech_ms": 300,
-      "max_segment_s": 25
+      "max_segment_s": 25,
+      "preroll_ms": 360,
+      "neuro_gate_rms": 0.0025
     },
     "fallback_order": [
       "faster_whisper",
@@ -187,7 +190,13 @@
         "timeout_s": 45
       }
     },
-    "draft": false
+    "draft": true,
+    "bench": true,
+    "stretch_step_s": 0.28,
+    "stretch_max": 6,
+    "live_polish": true,
+    "polish_every_s": 0.5,
+    "phantom_max_s": 2.5
   },
   "tts": {
     "engine": "qwen3",
@@ -258,15 +267,16 @@
   "memory": {
     "db_path": "data/saika_memory.db",
     "chroma_path": "data/chroma",
-    "raw_limit_messages": 500,
+    "raw_limit_messages": 4000,
     "raw_limit_hours": 4,
-    "compress_raw_every_min": 120,
+    "compress_raw_every_min": 30,
     "core_update_every_days": 7,
     "episode_hard_cap": 10000,
     "regular_min_sessions": 3,
     "regular_min_messages": 30,
     "stranger_ttl_days": 30,
-    "rag_top_k": 5
+    "rag_top_k": 5,
+    "context_chars": 3000
   },
   "dreampc": {
     "model": "GSAI-ML/LLaDA-8B-Instruct",
@@ -397,16 +407,16 @@
     },
     "desk": {
       "top": true,
-      "lock": false,
+      "lock": true,
       "on": true,
       "x": 0,
-      "y": 641,
+      "y": 635,
       "w": 434,
       "h": 918,
-      "frame": true,
+      "frame": false,
       "ghost": false,
       "view": {
-        "x": -0.07186970015288305,
+        "x": -0.036592504561615266,
         "y": 0.013630960688419555,
         "z": 0.0,
         "zoom": 0.883139477889006,
@@ -427,11 +437,11 @@
       "slots": {
         "saika_v1": {
           "x": 0,
-          "y": 641,
+          "y": 635,
           "w": 434,
           "h": 918,
           "view": {
-            "x": -0.07186970015288305,
+            "x": -0.036592504561615266,
             "y": 0.013630960688419555,
             "z": 0.0,
             "rx": 0.0,
@@ -511,7 +521,7 @@
     "model": "google/gemma-4-e4b"
   },
   "denoise": {
-    "engine": "noisereduce"
+    "engine": "off"
   },
   "voiceprint": {
     "enabled": true,

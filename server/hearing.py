@@ -51,7 +51,138 @@ STATE = {
     "tags": [],            # [(имя, вероятность)] последнего окна
     "speech": 0.0,         # уверенность, что в кадре РЕЧЬ
     "ts": 0.0,             # когда посчитано
+    "dist": "",            # на слух: рядом / в комнате / приглушённо
+    "event": None,         # разовое событие (чих, крик) для рефлекса
+    "typing_cps": 0.0,     # темп печати по звуку, нажатий/сек
+    "sounds": [],          # живая лента звуков для чата (см. pop_sounds)
 }
+
+# ═══ СОБЫТИЯ, НА КОТОРЫЕ ЖИВОЙ ЧЕЛОВЕК РЕАГИРУЕТ (2026-08-15) ═══
+# Просьба владельца: «услышать, что кто-то чихнул, и сказать "будь
+# здоров"; понять, что кто-то орёт и это не к ней относится». Чих — повод
+# для короткой человеческой реакции; крик — наоборот, знак ФОНА: на
+# повышенных тонах говорят не с ассистентом. Событие складывается сюда
+# один раз, забирает его конвейер (pop_event) с собственным кулдауном.
+_EVENTS = {
+    "sneeze": ("чих", 0.30),
+    "cough": ("кашель", 0.45),
+    "shout": ("крик", 0.35),
+    "yell": ("крик", 0.35),
+    "screaming": ("крик", 0.35),
+    "children shouting": ("крик", 0.35),
+}
+
+
+# ═══ ЖИВАЯ ЛЕНТА ЗВУКОВ (2026-08-15) ═══
+# Владелец: «она должна определять звуки в реальном времени и ПИСАТЬ их,
+# даже длинные — я специально сказал "Тссссс", и ничего не появилось».
+# Он прав в главном: шипение — не речь, нейро-VAD честно его не режет, и
+# движку писать нечего. Но УШИ его слышат — просто их метки уходили только
+# в промпт, человеку их видно не было. Теперь заметный НЕ-речевой звук
+# уезжает строкой в чат: «🔉 слышу: шипение». Один и тот же звук не
+# повторяется чаще раза в 8 секунд — лента, а не пулемёт.
+_FEED_SKIP = ("speech", "conversation", "narration", "male speech",
+              "female speech", "silence", "inside", "music")  # музыку шлём
+_FEED_SKIP = ("speech", "conversation", "narration", "male speech",
+              "female speech", "silence", "inside, small room",
+              "inside, large room or hall")
+_feed_last = {}
+
+
+# ЗВУК — БУКВАМИ, КАК ЕГО ПЕРЕДАЛ БЫ ЧЕЛОВЕК (2026-08-15, владелец:
+# «звуки тс-тс-тс, тарелочки, хай-хэты, кх-кх он мог бы писать как
+# похожий звук, просто как текст»). У ударных и шумов есть общепринятая
+# «запись голосом» — ею и подписываем.
+_ONOMA = {
+    "hi-hat": "тс-тс", "cymbal": "тссь", "bass drum": "бум-бум",
+    "snare drum": "тыщ", "drum": "тум", "beatboxing": "бц-тк",
+    "hiss": "тсссс", "sizzle": "тсссс", "click": "щёлк",
+    "mouse click": "щёлк", "computer keyboard": "тук-тук-тук",
+    "typing": "тук-тук", "knock": "тук-тук", "cough": "кхе-кхе",
+    "finger snapping": "щёлк", "clapping": "хлоп", "applause": "хлоп-хлоп",
+    "whistling": "фьюить", "laughter": "ха-ха", "sneeze": "апчхи",
+    "drum roll": "тррр", "telephone bell ringing": "дзынь",
+    "alarm": "дзынь-дзынь", "water": "буль", "drip": "кап",
+    "plop": "бульк", "chop": "чоп", "thud": "бух", "squish": "хлюп",
+}
+
+
+# ЗВУК ЖИВЁТ, ПОКА ЗВУЧИТ (2026-08-15, третья редакция за день — и
+# владелец каждый раз прав). Дословно: «метки живые, не нужно их писать
+# каждый тик. Я слышу, как шелестит дерево от ветра, — оно уходит в фон
+# меткой в голове; звук исчез — метка исчезла». Ровно так и делаем:
+# СОБЫТИЯ вместо потока. Метка рождается, когда звук ПОЯВИЛСЯ, молча
+# висит, пока он длится, и снимается, когда он ушёл. Наружу уезжает
+# только ИЗМЕНЕНИЕ картины; звук мигает на границе порога — держим его
+# в картине ещё пару секунд (linger), чтобы метка не дрожала.
+_active = {}          # low-имя -> {"ru","en","ono","p","last"}
+_last_sent = None     # какой набор ключей уже показан
+
+# РОДОВЫЕ МЕТКИ МОЛЧАТ, КОГДА ЕСТЬ ЧАСТНАЯ (2026-08-15, живой случай:
+# губная трель дала «собака 44% · Animal 44% · Domestic animals 35%» —
+# это ОДИН звук, показанный трижды, от частного к общему: AudioSet
+# иерархичен, и родители класса срабатывают вместе с ним. Человек так не
+# слышит: «собака» уже включает «животное». Родовую метку показываем,
+# только если ничего конкретнее в кадре нет.
+_GENERIC = ("animal", "domestic animals, pets", "wild animals",
+            "human sounds", "sounds of things", "source-ambiguous sounds",
+            "music", "musical instrument", "human voice", "human locomotion",
+            "onomatopoeia", "noise", "background noise", "generic impact",
+            "surface contact", "miscellaneous sources", "specific impact")
+
+
+def _feed_sounds(tags):
+    global _last_sent
+    now = time.time()
+    linger = float(CFG.get("hearing.feed_linger_s", 2.5))
+    # есть ли в кадре конкретная (не родовая) метка выше порога
+    _has_specific = any(
+        float(p) >= float(CFG.get("hearing.feed_min", 0.35))
+        and str(n).lower() not in _GENERIC
+        and not any(k in str(n).lower() for k in _FEED_SKIP)
+        for n, p in tags[:3])
+    for name, p in tags[:3]:
+        low = str(name).lower()
+        if p < float(CFG.get("hearing.feed_min", 0.35)):
+            continue
+        if any(k in low for k in _FEED_SKIP):
+            continue
+        if low in _GENERIC and _has_specific:
+            continue
+        ent = _active.get(low)
+        if ent is None:
+            ono = ""
+            for k, v in _ONOMA.items():
+                if k in low:
+                    ono = v
+                    break
+            _active[low] = {"ru": _ru(name), "en": name, "ono": ono,
+                            "p": round(float(p), 2), "last": now}
+        else:
+            ent["p"] = round(float(p), 2)
+            ent["last"] = now
+    for low in [k for k, v in _active.items()
+                if now - v["last"] > linger]:
+        _active.pop(low, None)
+    keys = tuple(sorted(_active))
+    if keys != _last_sent:
+        _last_sent = keys
+        cur = [{k: v[k] for k in ("ru", "en", "ono", "p")}
+               for v in _active.values()]
+        STATE["sounds"] = [{"now": cur, "dist": STATE.get("dist", ""),
+                            "ts": now}]
+
+
+def pop_sounds() -> list:
+    out, STATE["sounds"] = STATE["sounds"], []
+    return out
+
+
+def pop_event():
+    """-> (имя, вероятность) один раз, дальше None до нового события."""
+    ev = STATE.get("event")
+    STATE["event"] = None
+    return ev
 
 _buf = np.zeros(0, dtype=np.float32)
 _lock = threading.Lock()
@@ -88,6 +219,24 @@ _RU = {
     "applause": "аплодисменты", "footsteps": "шаги", "clapping": "хлопки",
     "writing": "пишет", "scissors": "ножницы", "tools": "инструмент",
     "drill": "дрель", "sawing": "пила", "hammer": "молоток",
+    # БИТБОКС (2026-08-15, владелец: «увидеть, какие я звуки в битбоксе
+    # использую»). AudioSet знает и сам битбокс, и его составные части —
+    # им просто не хватало русских имён, чтобы попасть в панель и в промпт.
+    "plop": "бульк", "chop": "чоп", "thud": "бух", "thump, thud": "бух",
+    "squish": "хлюп", "slap, smack": "шлеп",
+    "burping, eructation": "отрыжка", "gargling": "полоскание горла",
+    "cacophony": "гвалт", "noise": "шум", "animal": "животное",
+    "domestic animals, pets": "домашнее животное",
+    "wild animals": "дикое животное", "growling": "рычание",
+    "roar": "рёв", "purr": "мурчание", "trill": "трель",
+    "hiss": "шипение", "sizzle": "шипение", "whoosh, swoosh": "шелест",
+    "air": "воздух", "buzz": "жужжание", "hum": "гул", "snap": "щелчок",
+    "finger snapping": "щелчок пальцами", "whistling": "свист",
+    "beatboxing": "бит-бокс", "drum": "барабан", "drum kit": "ударные",
+    "bass drum": "бочка", "snare drum": "малый барабан",
+    "hi-hat": "хай-хэт", "cymbal": "тарелка", "percussion": "перкуссия",
+    "drum roll": "дробь", "tabla": "табла", "rimshot": "римшот",
+    "scratching (performance technique)": "скретч",
 }
 
 
@@ -143,8 +292,13 @@ def _resample(a: np.ndarray) -> np.ndarray:
 
 def _classify(chunk: np.ndarray):
     x = _resample(chunk)[None, :]
-    clipwise, _ = _model.inference(x)
+    # ЭМБЕДДИНГ БОЛЬШЕ НЕ ВЫБРАСЫВАЕТСЯ (2026-08-15, цель владельца:
+    # «кластеризация звуков»). Второй выход PANNs — отпечаток ЗВУКА,
+    # 2048 чисел; он уезжает в карту звуков (server/sound_map.py), где
+    # повторяющиеся источники дома получают имена, как голоса в карте.
+    clipwise, _emb = _model.inference(x)
     probs = np.asarray(clipwise[0])
+    globals()["_last_emb"] = _emb
     idx = probs.argsort()[::-1][:6]
     tags = [(_labels[i], float(probs[i])) for i in idx
             if probs[i] >= float(CFG.get("hearing.min_conf", 0.12))]
@@ -172,6 +326,127 @@ def _loop():
         try:
             tags, speech = _classify(chunk)
             STATE.update(tags=tags, speech=speech, ts=time.time())
+            try:
+                from server import sound_map
+                _top_ru = _ru(tags[0][0]) if tags else ""
+                _src = sound_map.hear(
+                    np.asarray(globals().get("_last_emb")).ravel(),
+                    _top_ru, speech)
+                if _src:
+                    STATE["source"] = _src
+            except Exception:
+                pass
+            # ═══ CLAP — ВТОРОЕ МНЕНИЕ СО СВОИМИ МЕТКАМИ (2026-08-15) ═══
+            # Живой вечер битбокса: губная трель у AudioSet — «собака»,
+            # трещётка — «машина», горловая бочка — «музыка». Словарь у
+            # PANNs фиксированный, вокальной перкуссии в нём нет. CLAP
+            # сравнивает звук с ЛЮБЫМ текстом — метки задаются словами в
+            # config (hearing.clap.labels). Уверенный ответ CLAP встаёт
+            # ПЕРВЫМ в картину звука; не уверен — всё как было. Дорогой
+            # (сотни мс), поэтому не чаще clap_every_s и только на звуке.
+            try:
+                from server import clap_ears
+                _now = time.time()
+                if (clap_ears.enabled()
+                        and float(np.sqrt(np.mean(chunk ** 2))) > 0.01
+                        and _now - STATE.get("clap_ts", 0)
+                            >= float(CFG.get("hearing.clap.every_s", 2.0))):
+                    STATE["clap_ts"] = _now
+                    if not clap_ears.STATE["ready"]:
+                        clap_ears.warm()
+                    else:
+                        best = clap_ears.classify(chunk)
+                        picked = [(en, p) for ru, en, ono, p in best
+                                  if p >= float(CFG.get(
+                                      "hearing.clap.min", 0.45))
+                                  and ru not in ("речь", "музыка")]
+                        STATE["clap_tags"] = best
+                        if picked:
+                            # ru/ono кладём в словари налету, чтобы
+                            # _feed_sounds показал их по-человечески
+                            for ru, en, ono, p in best:
+                                _RU.setdefault(en.lower(), ru)
+                                if ono:
+                                    _ONOMA.setdefault(en.lower(), ono)
+                            tags = picked + [t for t in tags
+                                             if t[0].lower() not in
+                                             {e.lower() for e, _ in picked}]
+            except Exception as _ce:
+                log.debug("CLAP пропущен: %s", _ce)
+            try:
+                _feed_sounds(tags)
+            except Exception:
+                pass
+            # разовые события: чих/кашель/крик — с порогом из таблицы
+            try:
+                for name, p in tags:
+                    low = str(name).lower()
+                    for key, (ru, thr) in _EVENTS.items():
+                        if key in low and p >= thr:
+                            STATE["event"] = (ru, float(p))
+                            break
+            except Exception:
+                pass
+            # ТЕМП ПЕЧАТИ ПО ЗВУКУ (2026-08-15, владелец: «когда я печатаю,
+            # по звуку определить примерно скорость печати»). Нажатие — это
+            # транзиент: резкий скачок огибающей. Когда уши слышат
+            # клавиатуру, считаем скачки в окне и делим на секунды — вот и
+            # нажатия/сек. Уходит фоном в промпт: «печатает, ~6 наж/с» —
+            # и она может отреагировать («строчишь как из пулемёта»).
+            try:
+                kbd = any(any(k in str(t).lower() for k in
+                              ("keyboard", "typing", "click"))
+                          for t, _ in tags)
+                if kbd:
+                    env = np.abs(chunk)
+                    # разрешение огибающей ~2.5мс: на 400 точках соседние
+                    # щелчки при быстрой печати сливались, и темп занижался
+                    # вдвое (поймано стендом: сцена 8 наж/с давала 3.8)
+                    k = max(1, len(env) // 1600)
+                    env = env[:len(env) - len(env) % k].reshape(-1, k).max(1)
+                    d = np.diff(env)
+                    thr_ = float(d.std()) * 2.5 + 1e-6
+                    peaks = 0
+                    armed = True
+                    for v in d:
+                        if armed and v > thr_:
+                            peaks += 1
+                            armed = False
+                        elif v < 0:
+                            armed = True
+                    cps = peaks / WINDOW_S
+                    STATE["typing_cps"] = round(
+                        0.6 * STATE["typing_cps"] + 0.4 * cps, 1)
+                else:
+                    STATE["typing_cps"] = round(STATE["typing_cps"] * 0.6, 1)
+            except Exception:
+                pass
+            # ДИСТАНЦИЯ НА СЛУХ (2026-08-15, владелец: «услышать звук от
+            # телефона в другой комнате и примерное расстояние»). По одному
+            # микрофону метры не меряются честно — но КЛАСС дистанции
+            # слышен и человеку, и спектру: далёкий/застенный звук теряет
+            # верхи (стены и воздух гасят их первыми) и тонет в
+            # реверберации. Оцениваем долю энергии выше 2 кГц и общий
+            # уровень: ярко и громко — рядом; глухо и тихо — «где-то
+            # далеко, как из другой комнаты». Это описание, а не линейка.
+            try:
+                x = _resample(chunk)
+                spec = np.abs(np.fft.rfft(x[-SR_MODEL:]))
+                fr = np.fft.rfftfreq(min(len(x), SR_MODEL), 1.0 / SR_MODEL)
+                hi = float(spec[fr > 2000].sum())
+                tot = float(spec.sum()) + 1e-9
+                bright = hi / tot
+                loud = float(np.sqrt(np.mean(x ** 2)))
+                if loud < 0.003:
+                    STATE["dist"] = ""
+                elif bright < 0.12 and loud < 0.03:
+                    STATE["dist"] = "приглушённо, будто из другой комнаты"
+                elif loud < 0.02:
+                    STATE["dist"] = "негромко, в стороне"
+                else:
+                    STATE["dist"] = "рядом"
+            except Exception:
+                pass
         except Exception as e:
             log.debug("уши споткнулись: %s", e)
 
@@ -194,16 +469,51 @@ def feed(pcm):
         _worker.start()
 
 
+# звуки, которые чаще всего заводят фантомные «голоса» в карте. Живой
+# случай дважды: «Голос 4» из клавиатуры (153 срабатывания, 103-400 Гц)
+# 13 августа и «Голос 2» из неё же (112 раз, 109-115 Гц) 15 августа.
+_MECH = ("computer keyboard", "typing", "mouse", "click", "knock",
+         "tap", "clicking",
+         # БИТБОКС — НЕ НОВЫЙ ЧЕЛОВЕК (2026-08-15, живой вечер: вокальная
+         # перкуссия владельца завела в карте голосов «Голос 4» на 75
+         # точек). Это голос, но не РЕЧЬ: профиль из бочек и трещоток
+         # только мусорит карту и ворует точки у настоящих людей.
+         "beatboxing", "drum", "bass drum", "snare", "hi-hat", "cymbal",
+         "percussion", "burping")
+
+
 def speech_ok() -> bool:
     """ПРЕДОХРАНИТЕЛЬ ДЛЯ КАРТЫ ГОЛОСОВ: похоже ли, что сейчас говорит
     человек. Отвечаем ДА, когда ушей нет или они молчат дольше трёх секунд —
     правило «не уверен, значит не мешай»: лучше лишний отпечаток, чем
-    молча потерять живую речь."""
+    молча потерять живую речь.
+
+    ВЕТО МЕХАНИКИ (2026-08-15, владелец: «звук клавиатуры ОПЯТЬ почему-то
+    записывается как голос»). Прошлый порог не спасал вот от чего: окно
+    классификации — две секунды. Человек договорил фразу, потянулся к
+    клавишам — в окне ЕЩЁ живёт хвост его речи (speech выше порога), а в
+    микрофон УЖЕ идут щелчки, и они честно получают эмбеддинг. Так у
+    клавиатуры второй раз завёлся профиль. Лечится не порогом, а ВЕТО:
+    когда уши уверенно слышат механику (клавиатура, мышь, стук) ГРОМЧЕ,
+    чем речь, — отпечаток не считаем, каким бы ни был хвост речи в окне.
+    Живую речь это не режет: у говорящего человека speech стабильно выше
+    меток механики."""
     if not enabled() or not STATE["ready"]:
         return True
     if time.time() - STATE["ts"] > 3.0:
         return True
-    return STATE["speech"] >= float(CFG.get("hearing.speech_min", 0.15))
+    sp = float(STATE["speech"])
+    mech = 0.0
+    try:
+        for name, p in STATE["tags"]:
+            low = str(name).lower()
+            if any(k in low for k in _MECH):
+                mech = max(mech, float(p))
+    except Exception:
+        pass
+    if mech >= float(CFG.get("hearing.mech_veto", 0.25)) and mech >= sp:
+        return False
+    return sp >= float(CFG.get("hearing.speech_min", 0.15))
 
 
 def now() -> list:
@@ -228,6 +538,17 @@ def context_line() -> str:
     if not tags:
         return ""
     body = ", ".join(t for t, _ in tags)
+    if STATE.get("typing_cps", 0) >= 2 and any(
+            k in str(t).lower() for t, _ in tags
+            for k in ("keyboard", "typing")):
+        body += f" (печатает, ~{STATE['typing_cps']:.0f} наж/с)"
+    if STATE.get("dist"):
+        body += f" ({STATE['dist']})"
+    # крик — отдельная ремарка: на повышенных тонах говорят НЕ с ассистентом
+    if any("крик" == _EVENTS.get(k, ("",))[0]
+           for t, _ in tags for k in _EVENTS if k in str(t).lower()):
+        body += ("; кто-то повышает голос — это почти наверняка не "
+                 "обращение к тебе, не вмешивайся без причины")
     return ("Фоном сейчас слышно: " + body + ". Это просто обстановка "
             "вокруг, а не обращение к тебе и не задание. Можешь опереться "
             "на это, если к слову придётся, — а можешь не заметить, как "

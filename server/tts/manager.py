@@ -67,6 +67,19 @@ class Qwen3Engine:
         self.prompt = None
         self.lock = threading.Lock()        # сериализация синтеза
         self.load_lock = threading.Lock()   # одна загрузка за раз
+        # «ВЕСА В ПАМЯТИ» И «ГОТОВ ГОВОРИТЬ» — РАЗНЫЕ СОСТОЯНИЯ (2026-08-15,
+        # владелец: «я не понимаю, почему квен уже загружен в памяти, но
+        # включается движок пипер»). Он прав, и панель врала не со зла:
+        # self.model публикуется сразу после чтения весов, а дальше идёт
+        # компиляция (inductor) и два прогревочных синтеза — в живом логе
+        # это 12:12:53 -> 12:15:25, две с половиной минуты. Всё это время
+        # is_loaded() честно отвечал «да», строка светилась «в памяти», а
+        # говорила времянка piper, потому что автопуск ещё не отпустил
+        # boot_override. Молчаливого расхождения между тем, что написано, и
+        # тем, что происходит, быть не должно: заводим отдельный флаг и
+        # показываем его человеком читаемой строкой.
+        self.warming = False
+        self.warm_started = 0.0
 
     def load(self):
         # Под замком: без него два потока (диалог + фоновая починка) грузят
@@ -121,6 +134,19 @@ class Qwen3Engine:
             import torch
             from qwen_tts import Qwen3TTSModel
 
+            # ГЛОБАЛЬНЫЙ DTYPE — НЕ ТРОГАТЬ СОСЕДЕЙ (2026-08-15, живой лог
+            # 13:19:26: GigaAM упал с «RNN input dtype (torch.bfloat16)
+            # does not match weight dtype (torch.float32)» РОВНО в те
+            # секунды, когда здесь грузился Qwen3-TTS. Загрузчик qwen_tts
+            # по пути меняет torch-овский default dtype на bfloat16, а
+            # torch один на процесс: параллельная транскрипция GigaAM
+            # создала входной тензор уже в bfloat16 — и слух лёг, хотя
+            # его никто не трогал. Замок TORCH_GATE стережёт ЗАГРУЗКИ, а
+            # это была загрузка против ИНФЕРЕНСА — его он не покрывает.
+            # Чиним у источника: что бы qwen_tts ни выставил, на выходе
+            # из load() глобальный dtype обязан быть тем же, что на входе.
+            _prev_dtype = torch.get_default_dtype()
+
             cfg = CFG.get("tts.qwen3", {})
             attn = cfg.get("attn", "auto")
             kwargs = dict(device_map="cuda:0", dtype=torch.bfloat16)
@@ -150,6 +176,15 @@ class Qwen3Engine:
             if not model:
                 raise RuntimeError(f"Qwen3-TTS не загрузился: {last}")
 
+            try:
+                if torch.get_default_dtype() != _prev_dtype:
+                    log.warning("Qwen3-TTS: загрузчик сменил глобальный "
+                                "dtype на %s — возвращаю %s, чтобы не "
+                                "ронять слух и отпечаток",
+                                torch.get_default_dtype(), _prev_dtype)
+                    torch.set_default_dtype(_prev_dtype)
+            except Exception:
+                pass
             ref_wav = resolve(CFG.get("tts.voice_ref_wav"))
             ref_text = CFG.get("tts.voice_ref_text", "")
             if not ref_wav.exists() or not ref_text:
@@ -202,11 +237,32 @@ class Qwen3Engine:
                         compile_codebook_predictor=True, compile_talker=True)
                     # прогрев компиляции — под замком синтеза, чтобы
                     # параллельный speak не влез в середину
-                    with self.lock:
-                        for warm in ("Прогрев номер один.", "Прогрев номер два."):
-                            for _ in self._stream(warm):
-                                pass
+                    #
+                    # И ГОВОРИМ, ЧТО ЗДЕСЬ ПРОИСХОДИТ. Раньше между строкой
+                    # «Qwen3-TTS загружен» и «Автопуск: tts (qwen3) готов»
+                    # лог молчал две с половиной минуты, и понять, живой
+                    # процесс или повис, было нельзя ни по логу, ни по
+                    # панели. Тишина в логе на месте самой долгой операции —
+                    # это и есть молчаливый отказ, просто отложенный.
+                    self.warming = True
+                    self.warm_started = time.time()
+                    log.info("Qwen3-TTS: компилирую и прогреваю (режим %s). "
+                             "Это самая долгая часть запуска — минуты; пока "
+                             "она идёт, говорит времянка, и это нормально.",
+                             _mode)
+                    try:
+                        with self.lock:
+                            for warm in ("Прогрев номер один.",
+                                         "Прогрев номер два."):
+                                for _ in self._stream(warm):
+                                    pass
+                        log.info("Qwen3-TTS: прогрев закончен за %.0fс — "
+                                 "дальше говорю своим голосом",
+                                 time.time() - self.warm_started)
+                    finally:
+                        self.warming = False
                 except Exception as e:
+                    self.warming = False
                     log.warning("Оптимизации Qwen3-TTS не включились: %s", e)
 
     def _stream(self, text):
@@ -250,6 +306,13 @@ class Qwen3Engine:
 
     def is_loaded(self):
         return self.model is not None and self.prompt is not None
+
+    def is_warming(self):
+        """Веса уже в памяти, но говорить ещё нечем: идёт компиляция и
+        прогрев. Отдельный вопрос от is_loaded — и отвечать на него надо
+        отдельно, иначе панель показывает «в памяти» тому, кто в этот
+        момент физически не может произнести ни звука."""
+        return bool(self.warming)
 
 
 class SileroEngine:
@@ -1014,8 +1077,24 @@ class TTSManager:
                     else None
             except Exception:
                 loaded[name] = False
+        warming = {}
+        for name, eng in self.engines.items():
+            try:
+                warming[name] = bool(eng.is_warming()) \
+                    if hasattr(eng, "is_warming") else False
+            except Exception:
+                warming[name] = False
         return {"current": self.current_name, "health": self.health,
                 "engines": list(self.engines), "loaded": loaded,
+                # ЧТО СЕЙЧАС ГРЕЕТСЯ (2026-08-15). Без этого поля интерфейс
+                # не может отличить «готов» от «веса легли, но компилируется»
+                # — а разница в минутах, и человек всё это время слышит
+                # чужой голос и не понимает почему.
+                "warming": warming,
+                # кто говорит ПРЯМО СЕЙЧАС, включая времянку автопуска:
+                # current_name её уже учитывает, но панели нужно ЗНАТЬ, что
+                # это времянка, а не выбор человека
+                "boot_override": self.boot_override or "",
                 # порядок запасных, как его видит фолбэк — интерфейс рисует
                 # список ИМЕННО в нём и даёт перетаскивать (2026-07-29)
                 "order": [n for n in self._chain() if n != "off"],

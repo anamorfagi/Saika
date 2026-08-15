@@ -279,9 +279,40 @@
   #btn-send{border-color:rgba(145,132,217,.5);background:rgba(145,132,217,.22);
     color:#e2ddf8}
   #btn-send:hover{background:rgba(145,132,217,.38);color:#fff}
-  #btn-mic.stt-on{border-color:transparent;color:#fff;
-    background:linear-gradient(135deg,#6d5df6 0%,#a44df0 55%,#e04fd1 100%);
-    box-shadow:0 0 14px rgba(150,80,240,.5)}
+  /* ═══ ГОТОВНОСТЬ ПОДСИСТЕМЫ — КОНТУРОМ, А НЕ ЗАЛИВКОЙ (2026-08-15) ═══
+     Просьба владельца дословно: «система запустилась — в момент инициализации
+     у слуха, глаз, голоса, мозгов проявляется контурная подсветка по кругу,
+     тип загрузки; как только запуск произошёл, подсветка по контуру просто
+     становится постоянной; кнопка должна быть в цветовой палитре интерфейса,
+     не нужно её полностью делать красочной».
+     И причина, по которой это не украшение: яркая заливка микрофона значила
+     «слух ВКЛЮЧЁН», то есть «браузер шлёт звук». Готов ли движок на том
+     конце — она не значила никогда, и человек минуту говорил в стену.
+     Три состояния — три вида контура, все три в палитре: греется (бегущая
+     дуга), готово (ровный контур), сломано (красный контур). Выключено —
+     обычная кнопка, потому что это не поломка, а решение человека. */
+  #btn-mic.stt-on{border-color:rgba(145,132,217,.55);
+    color:#fff;background:rgba(145,132,217,.18)}
+  .iconbtn.st-ready,.chip.st-ready{position:relative;
+    border-color:rgba(145,132,217,.75);
+    box-shadow:inset 0 0 0 1px rgba(145,132,217,.28)}
+  .iconbtn.st-broken,.chip.st-broken{position:relative;
+    border-color:rgba(224,101,95,.7)}
+  /* «Греется» — тот же контур, что и «готово», только ДЫШИТ яркостью.
+     Первая версия крутила по контуру бегущую дугу (conic-gradient с
+     маской), и владелец описал её точно: «как будто грань взял и начал
+     вращать вокруг» — на кнопке 42 пикселя дуга читается не как загрузка,
+     а как артефакт отрисовки. Слово «загрузка» здесь должно передаваться
+     самым тихим способом: контур есть, но он ещё не устоялся. */
+  .iconbtn.st-load,.chip.st-load{border-color:rgba(145,132,217,.55);
+    animation:ringbreath 1.6s ease-in-out infinite}
+  @keyframes ringbreath{
+    50%{border-color:rgba(145,132,217,.18);
+        box-shadow:inset 0 0 0 1px rgba(145,132,217,.05)}}
+  @media (prefers-reduced-motion:reduce){
+    .iconbtn.st-load,.chip.st-load{animation:none;
+      border-color:rgba(145,132,217,.35)}
+  }
   .iconbtn.active{color:#fff;background:rgba(145,132,217,.3);
     border-color:rgba(145,132,217,.55)}
   .iconbtn.rec{color:#fff;background:rgba(224,101,95,.28);
@@ -1578,7 +1609,29 @@ function handleJson(m){
       d.style.cssText='opacity:.45;font-style:italic;border-style:dashed';
       $('#chat').appendChild(d);
     }
-    d.textContent=m.text+' …';
+    // ЖИВАЯ ПОДСВЕТКА КАЧЕСТВА (2026-08-15, владелец: «как у Дуолинго —
+    // проработка и подсветка у слов в реалтайм»). Пока фраза звучит,
+    // каждое слово красится своей уверенностью: чисто — обычным цветом,
+    // смазано — жёлтым, каша — красным. Уверенность отдаёт whisper;
+    // без неё (GigaAM) черновик остаётся простым текстом.
+    if(Array.isArray(m.words) && m.words.length){
+      d.textContent='';
+      for(const w of m.words){
+        const sp=document.createElement('span');
+        sp.textContent=w.w+' ';
+        if(w.p!=null){
+          if(w.p<0.45){ sp.style.color='var(--err)';
+            sp.title='каша ('+Math.round(w.p*100)+'%) — произнеси чётче'; }
+          else if(w.p<0.7){ sp.style.color='var(--warn)';
+            sp.title='смазано ('+Math.round(w.p*100)+'%)'; }
+          else sp.title='чисто ('+Math.round(w.p*100)+'%)';
+        }
+        d.appendChild(sp);
+      }
+      d.appendChild(document.createTextNode('…'));
+    }else{
+      d.textContent=m.text+' …';
+    }
     $('#chat').scrollTop=1e9;
     return;
   }
@@ -1596,9 +1649,102 @@ function handleJson(m){
     if(m.speaker && (m.speaker_conf==null || m.speaker_conf>=0.25))
       meta += ' · голос: '+m.speaker+
         (m.speaker_conf!=null?' ('+Math.round(m.speaker_conf*100)+'%)':'');
+    // МЕТКИ ГОЛОСА (2026-08-15, владелец: «какая у голоса частота, тембр,
+    // скорость речи») — сервер меряет их по самому куску звука
+    if(m.voice_hz) meta+=' · ~'+m.voice_hz+' Гц';
+    if(m.rate_wps) meta+=' · '+m.rate_wps+' сл/с';
+    if(m.crowd) meta+=' · ⚠ несколько голосов разом';
     if(m.heard_at) meta+=' · '+m.heard_at;
-    addMsg('user', m.text, meta); curSaikaMsg=null;
+    const bub = addMsg('user', m.text, meta); curSaikaMsg=null;
+    // ═══ НЕЧЁТКО ПРОИЗНЕСЁННЫЕ СЛОВА — ПОДСВЕТКОЙ (2026-08-15) ═══
+    // Просьба владельца: «как в прогах, где языку учат — система видит,
+    // что слово произнесено неправильно, и подсвечивает его». В тех
+    // приложениях считают уверенность по каждой фонеме; наш честный
+    // аналог для свободной речи — пословная вероятность декодера: слово,
+    // в котором движок не уверен, почти всегда и есть смазанное. Едет с
+    // сервера в m.words (пока даёт whisper; GigaAM вероятностей не
+    // отдаёт). Порог 0.55 — ниже него слово пунктирно подчёркнуто.
+    if(bub && Array.isArray(m.words) && m.words.length){
+      try{
+        const t=bub.firstChild; t.textContent='';
+        for(const w of m.words){
+          const sp=document.createElement('span');
+          sp.textContent=w.w+' ';
+          if(w.p!=null && w.p<0.55){
+            sp.style.cssText='border-bottom:1px dashed var(--warn);'+
+              'cursor:help';
+            sp.title='расслышала неуверенно ('+Math.round(w.p*100)+'%) — '+
+              'возможно, слово произнесено нечётко или его заглушил фон';
+          }
+          t.appendChild(sp);
+        }
+      }catch(e){}
+    }
+    if(m.shaky){
+      // строка целиком под подозрением (слов много, звука мало) — сервер
+      // прислал причину; показываем её честно, но текст не прячем
+      const warn=document.createElement('div');
+      warn.className='meta';
+      warn.style.color='var(--warn)';
+      warn.textContent='⚠ возможно, ослышалась: '+m.shaky;
+      bub && bub.appendChild(warn);
+    }
     loader(true);   // услышала — сейчас пойдёт ответ, показываем активность
+  }
+  else if(m.type==='beat'){
+    // БИТБОКС-СТРОКА (2026-08-15): перкуссия буквами, как её услышал бы
+    // человек. Живёт как строка звука: обновляется на месте, пустая
+    // последовательность гасит её.
+    let d=document.getElementById('beat-line');
+    if(!d && m.seq){
+      d=document.createElement('div'); d.id='beat-line';
+      d.style.cssText='align-self:center;font-size:12px;color:var(--text);'+
+        'padding:2px 10px;border-radius:8px;background:rgba(145,132,217,.10);'+
+        'letter-spacing:.5px;transition:opacity .4s';
+      $('#chat').appendChild(d);
+    }
+    if(d){
+      if(!m.seq){
+        d.style.opacity=0;
+        setTimeout(()=>{ if(d.style.opacity=='0') d.remove(); },500);
+      }else{
+        d.textContent='🥁 '+m.seq;
+        d.style.opacity=1;
+        $('#chat').appendChild(d);
+        $('#chat').scrollTop=1e9;
+      }
+    }
+  }
+  else if(m.type==='sound'){
+    // ЖИВАЯ СТРОКА ЗВУКА (2026-08-15, вторая редакция в тот же день).
+    // Первая версия добавляла строку НА КАЖДЫЙ звук — битбокс превратил
+    // чат в столбик «музыка 39%» до потолка. Владелец прав: звук — это
+    // состояние, а не событие. Одна строка живёт внизу чата, обновляется
+    // на месте, пишет звук «как слышится» (тс-тс, бум-бум) и сама гаснет
+    // через пару секунд тишины.
+    let d=document.getElementById('sound-line');
+    if(!d){
+      d=document.createElement('div'); d.id='sound-line';
+      d.style.cssText='align-self:center;font-size:11px;color:var(--dim);'+
+        'padding:1px 8px;border-radius:8px;background:rgba(255,255,255,.04);'+
+        'transition:opacity .4s';
+      $('#chat').appendChild(d);
+    }
+    // сервер шлёт только ИЗМЕНЕНИЕ картины звука: появился новый звук
+    // или пропал старый. Пустой список = всё стихло, метка гаснет — как
+    // в голове у человека: звук исчез, и метка исчезла.
+    const parts=(m.now||[]).map(x=>
+      (x.ono?x.ono+' ('+(x.ru||x.en)+')':(x.ru||x.en))+
+      ' '+Math.round((x.p||0)*100)+'%');
+    if(!parts.length){
+      d.style.opacity=0;
+      setTimeout(()=>{ if(d.style.opacity=='0') d.remove(); },500);
+    }else{
+      d.textContent='🔉 '+parts.join(' · ')+(m.dist?' · '+m.dist:'');
+      d.style.opacity=1;
+      $('#chat').appendChild(d);         // держим строку последней в чате
+      $('#chat').scrollTop=1e9;
+    }
   }
   else if(m.type==='queued'){
     // Сайка ещё отвечает — фраза не потерялась, встала в хвост
@@ -1648,6 +1794,17 @@ function handleJson(m){
     curSaikaMsg._raw = (curSaikaMsg._raw || '') + m.text;
     curSaikaMsg.firstChild.textContent = stripMarks(curSaikaMsg._raw);
     $('#chat').scrollTop = 1e9;
+  }
+  else if(m.type==='final'){
+    // КАНОНИЧНЫЙ ТЕКСТ ВМЕСТО СЫРОГО СТРИМА (2026-08-15). Токены летят в
+    // пузырь как есть — быстрее не бывает, — но род («поняла») и чистка
+    // маркеров происходят на сервере уже ПОСЛЕ стрима. Финал подменяет
+    // текст пузыря той версией, которая ушла в память и в голос: что
+    // слышно, то и написано.
+    if(curSaikaMsg){
+      curSaikaMsg._raw = m.text || curSaikaMsg._raw;
+      curSaikaMsg.firstChild.textContent = stripMarks(curSaikaMsg._raw);
+    }
   }
   else if(m.type==='tool'){
     // СТРОКА ИНСТРУМЕНТА ОБРЕЗАЛАСЬ ПО ПРАВОМУ КРАЮ (2026-08-14, владелец:
@@ -1995,6 +2152,14 @@ async function startMic(){
             autoGainControl:true};
   if(selectedMic) mc.deviceId={exact:selectedMic};
   micStream = await navigator.mediaDevices.getUserMedia({audio:mc});
+  // ПАСПОРТ МИКРОФОНА (2026-08-15): сервер знает звук, но не знает, ИЗ
+  // ЧЕГО он — имя устройства видно только браузеру. Сообщаем один раз
+  // при старте; диагнозы тракта смотри в /api/mic.
+  try{
+    const tr=micStream.getAudioTracks()[0];
+    const lbl=(tr&&tr.label)||selectedMicLabel||'';
+    if(lbl) api('/api/mic/device',{label:lbl}).catch(()=>{});
+  }catch(e){}
   audioCtx = new AudioContext();
   // при АВТОстарте без клика Chrome может создать контекст suspended —
   // микрофон выглядит включённым, но глух. Будим сразу; если политика не
@@ -2600,16 +2765,15 @@ async function fillModelPop(){
       // мозги? почему плюшки не прописываются каждой модели автоматом?»).
       // Прописываются — реестр пород (skills.card) заполняет их каждой
       // модели с рождения, /api/models их отдаёт — их просто не рисовали.
-      (m.skills?('<span style="flex:none;font-size:10.5px;letter-spacing:1px" title="'+
-        [m.skills.vision>=6?'видит картинки и экран':null,
-         m.skills.tools>=7?'уверенные руки-инструменты':null,
-         m.skills.code>=8?'сильна в коде':null,
-         m.skills.long>=9?'длинный контекст':null,
-         m.skills.fast>=7?'быстрая':null].filter(Boolean).join(' · ')+'">'+
-        (m.skills.vision>=6?'👁':'')+(m.skills.tools>=7?'🛠':'')+
-        (m.skills.code>=8?'⌨':'')+(m.skills.long>=9?'📜':'')+
-        (m.skills.fast>=7?'⚡':'')+'</span>'):'')+
-      capsBadges(m)+dot+btn+delBtn;
+      // ОДНО УМЕНИЕ — ОДИН ЗНАЧОК (2026-08-15, владелец: «у моделей есть
+      // излишнее повторение иконок их мультимодальности»). Рядов значков
+      // было ДВА, и они говорили об одном и том же разными картинками:
+      // caps (умеет ли физически) рисовал 👁 и 🔧, skills (насколько
+      // хорош) — тот же глаз 👁 и те же руки, но как 🛠. У зрячей модели
+      // с высоким баллом получалось два глаза подряд. Теперь ряд один,
+      // источники сливаются в abilityBadges: факт даёт значок, балл
+      // добавляет к нему подсказку и подсветку.
+      abilityBadges(m)+dot+btn+delBtn;
     const mb=el.querySelector('.mini:not(.del)');
     if(mb) mb.onclick=async(e)=>{
       e.stopPropagation();
@@ -2703,16 +2867,50 @@ async function fillModelPop(){
   }
 }
 /* значки возможностей модели — аккуратные боксы в ряд, как в LM Studio */
-function capIcon(g, t, c){
-  return '<span class="capb" title="'+t+'" style="color:'+c+'">'+g+'</span>';
+function capIcon(g, t, c, strong){
+  return '<span class="capb" title="'+t+'" style="color:'+c+
+    (strong?';font-weight:600;filter:brightness(1.25)':'')+'">'+g+'</span>';
 }
-function capsBadges(m){
-  const c=m.caps||{}; let s='';
-  if(c.vision) s+=capIcon('👁','видит картинки (мультимодальная)','var(--ok)');
-  if(c.reasoning) s+=capIcon('💭','рассуждающая (thinking)','var(--accent)');
-  if(c.tools) s+=capIcon('🔧','инструменты (function calling)','var(--warn)');
+/* ЗНАЧКИ УМЕНИЙ — ОДИН РЯД, ОДНО УМЕНИЕ = ОДИН ЗНАЧОК (2026-08-15).
+
+   Про модель нам известны ДВЕ разные вещи, и раньше каждая рисовала свой
+   ряд картинок:
+     caps   — что она физически умеет (зрение, инструменты, размышление).
+              Это факт: либо есть, либо нет;
+     skills — насколько она в этом хороша, балл из реестра пород.
+   Вещи разные, но НЕ независимые: зрячая модель с высоким баллом зрения
+   получала глаз дважды, а руки — сразу двумя разными значками (🔧 и 🛠).
+   Снаружи это читалось как «интерфейс дублирует иконки», и читалось верно.
+
+   Теперь наоборот: умение одно, значок один. Наличие берём из caps ИЛИ из
+   балла (у части моделей caps не заполнен, а балл есть, и терять из-за
+   этого глаз нельзя). Балл не рисует второй значок, а делает первый ярче и
+   дописывает в подсказку, что она в этом сильна. Порядок постоянный —
+   ряд не должен «прыгать» от модели к модели. */
+function abilityBadges(m){
+  const c=m.caps||{}, k=m.skills||null, has=(v,lim)=>k&&k[v]>=lim;
+  const row=[
+    ['vision',  '👁', 'видит картинки и экран',        'var(--ok)',
+     !!c.vision,    has('vision',6),  'и видит хорошо'],
+    ['reasoning','💭','рассуждающая (thinking)',       'var(--accent)',
+     !!c.reasoning, false,            ''],
+    ['tools',   '🔧', 'инструменты (function calling)','var(--warn)',
+     !!c.tools,     has('tools',7),   'и руки уверенные'],
+    ['code',    '⌨', 'сильна в коде',                 'var(--dim)',
+     false,         has('code',8),    ''],
+    ['long',    '📜', 'длинный контекст',              'var(--dim)',
+     false,         has('long',9),    ''],
+    ['fast',    '⚡', 'быстрая',                       'var(--dim)',
+     false,         has('fast',7),    ''],
+  ];
+  let s='';
+  for(const [id,glyph,title,color,fact,strong,extra] of row){
+    if(!fact && !strong) continue;
+    s+=capIcon(glyph, title+(strong&&extra?' — '+extra:''), color, strong);
+  }
   return s?'<span class="caps">'+s+'</span>':'';
 }
+
 /* ручные оценки (перебивают авто), хранятся локально */
 let manualScores=(()=>{try{return JSON.parse(localStorage.manualScores||'{}')}catch(e){return {}}})();
 /* РЕЙТИНГ — ЭТО УМ, А НЕ СКОРОСТЬ (2026-08-14, владелец: «какого хрена у
@@ -2812,10 +3010,20 @@ function ttsScore(nm, st){
   if(nm==='off') return 1;   // не движок, а отказ от него — держим сверху
   const h=(st.health||{})[nm], loaded=(st.loaded||{})[nm];
   if(h==='broken') return 2;
+  // ЛОМУЧИЙ ДВИЖОК ПАДАЕТ В РЕЙТИНГЕ САМ (2026-08-15, просьба владельца:
+  // «тот, что часто ломался и нет возможности запуститься, должен в
+  // рейтинге упасть автоматом»). Раньше падал только тот, кто сломан
+  // ПРЯМО СЕЙЧАС, — а движок, который валился пять раз за вечер и в этот
+  // раз кое-как встал, стоял в списке как ни в чём не бывало. История
+  // поломок это факт о движке, и она обязана быть видна в его оценке.
+  const strikes=(st.strikes||{})[nm]||0;
+  const sick=(st.sick||{})[nm];
   /* базовое КАЧЕСТВО голоса, в одну линию с сервером (tts/manager._priority):
      silero честно внизу — голос «как старушка» и лицензия против коммерции */
   let base=({qwen3:9, piper:7, omni:7, silero:3, edge:5})[nm]; if(base==null) base=6;
   if(loaded===false) base=Math.max(3, base-1);  // не в памяти — чуть ниже
+  if(strikes) base=Math.max(2, base-2*strikes);  // ронял процесс — вниз
+  if(sick)    base=Math.max(2, base-2);          // помечен больным — вниз
   return base;
 }
 function fillTtsPop(){
@@ -2843,10 +3051,31 @@ function fillTtsPop(){
     const h=(st.health||{})[nm]||'unknown';
     const loaded=(st.loaded||{})[nm];   // true/false, null = онлайн-движок
     const err=(st.errors||{})[nm]||'';
+    // «В ПАМЯТИ» ≠ «МОЖЕТ ГОВОРИТЬ» (2026-08-15, владелец: «я не понимаю,
+    // почему квен уже загружен в памяти, но включается движок пипер»).
+    // У qwen3 после чтения весов идёт компиляция и два прогревочных
+    // синтеза — в живом логе это две с половиной минуты. Веса лежат,
+    // is_loaded честно говорит «да», строка светилась «● в памяти», а
+    // произнести он в этот момент не может ничего, и автопуск справедливо
+    // держит времянку. Врала не логика голоса, врала подпись. Теперь
+    // состояние прогрева приезжает отдельным полем и называется вслух.
+    const warming=(st.warming||{})[nm];
+    const boot=st.boot_override||'';
     const stIcon = h==='broken' ? '<span class="st bad">✗</span>'
+                 : warming ? '<span class="st" style="color:var(--warn)"'+
+                   ' title="Веса уже в памяти, но движок компилируется и '+
+                   'прогревается. Пока идёт прогрев, говорит времянка — '+
+                   'это не поломка, это самая долгая часть запуска.">'+
+                   '◐ греется</span>'
                  : loaded===true ? '<span class="st ok">● в памяти</span>'
                  : loaded===null ? '<span class="st">☁ онлайн</span>'
                  : '<span class="st">—</span>';
+    // времянка автопуска: человек не выбирал этот голос, он просто
+    // затыкает паузу. Подписываем честно, иначе выглядит как самоволка
+    const bootTag = (nm===boot)
+      ? '<span class="st" style="color:var(--warn)" title="Времянка '+
+        'автопуска: говорит, пока греется твой основной голос. Уйдёт сама.">'+
+        'времянка</span>' : '';
     const btn = loaded===null ? '' :
       `<button class="mini" title="${loaded?'Выгрузить модель из памяти'
         :'Загрузить модель в память'}">${loaded?'⏏':'⬇'}</button>`;
@@ -2863,7 +3092,7 @@ function fillTtsPop(){
                 mt.note||''].filter(Boolean).join('\n\n');
     el.innerHTML = nm==='off'
       ? `🚫 <span class="mname">${names[nm]||nm}</span>`
-      : `${scoreBar(nm, ttsScore(nm,st),'качество голоса')}${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 <span class="mname">${mt.title||names[nm]||nm}</span>${clone}${lic}${stIcon}${btn}`;
+      : `${scoreBar(nm, ttsScore(nm,st),'качество голоса')}${weightDotBytes(TTS_WEIGHT[nm],1,true)}🔊 <span class="mname">${mt.title||names[nm]||nm}</span>${clone}${lic}${stIcon}${bootTag}${btn}`;
     const b=el.querySelector('.mini');
     // клик по строке — только переключить (мгновенно). Загрузка — по ⬇ или
     // лениво при первой озвучке, чтобы зависшая загрузка не блокировала выбор
@@ -3759,6 +3988,47 @@ $('#btn-githelp').onclick=toggleGitHelp;
 $('#githelp-close').onclick=()=>$('#git-help').classList.remove('show');
 
 connect();
+/* ═══ ГОТОВНОСТЬ ПОДСИСТЕМ: контур на кнопках (2026-08-15) ═══
+   Отдельный лёгкий опрос, а не поле в общем /api/status: статус тяжёлый
+   (он спрашивает бэкенды мозгов и во время подъёма отвечает не мгновенно),
+   а контур загрузки обязан крутиться ровно тогда, когда идёт загрузка.
+   Кнопка -> подсистема; текст подсказки объясняет состояние словами, чтобы
+   контур не пришлось расшифровывать по цвету. */
+const READY_MAP = [
+  ['#btn-mic',   'hear',  'Слух',   'говори — она слышит',
+                 'слух ещё грузится: движок распознавания не готов, слова пропадут'],
+  ['#btn-tts',   'voice', 'Голос',  'озвучка готова',
+                 'голос ещё греется: компиляция и прогрев занимают минуты'],
+  ['#btn-model', 'brain', 'Мозги',  'модель отвечает',
+                 'мозги ещё поднимаются'],
+];
+const READY_DOTS = {hear:'#dot-stt', voice:'#dot-tts', brain:'#dot-llm'};
+async function paintReady(){
+  let r;
+  try{ r = await (await fetch('/api/ready')).json(); }catch(e){ return; }
+  for(const [sel, key, label, okTxt, loadTxt] of READY_MAP){
+    const el=$(sel); if(!el) continue;
+    const st=(r[key]||{}).state||'off', who=(r[key]||{}).who||'';
+    el.classList.toggle('st-load',   st==='loading');
+    el.classList.toggle('st-ready',  st==='ready');
+    el.classList.toggle('st-broken', st==='broken');
+    const why=(r[key]||{}).why||'';
+    el.title = label+': '+(
+      st==='ready'  ? okTxt+(who?' ('+who+')':'') :
+      st==='loading'? loadTxt+(who?' — '+who:'') :
+      st==='broken' ? 'не поднялся'+(why?' — '+why:'') :
+                      'выключено — это твой выбор, не поломка');
+    // времянка автопуска: человек слышит НЕ свой голос, и надо сказать
+    const stub=(r[key]||{}).stub||'';
+    if(stub) el.title += ' · сейчас говорит времянка '+stub;
+  }
+  for(const [key, sel] of Object.entries(READY_DOTS)){
+    const d=$(sel); if(!d) continue;
+    const st=(r[key]||{}).state||'off';
+    d.classList.toggle('st-load', st==='loading');
+  }
+}
+paintReady(); setInterval(paintReady, 1500);
 refresh(); setInterval(refresh, 5000);
 pollSystem(); setInterval(pollSystem, 3000);
 pollNet(); setInterval(pollNet, 10000);
@@ -8521,16 +8791,9 @@ eqFrame();
       '<span style="text-transform:none;letter-spacing:0;font-size:9.5px;' +
       'opacity:.6"> — и я тебя узнаю из всей толпы доходяг</span></div>' +
     '<div id="vp-cards"></div>' +
-    '<div class="vp-row"><input type="search" id="vp-name2" ' +
-      'placeholder="имя нового голоса" maxlength="32" autocomplete="off" ' +
-      'autocorrect="off" spellcheck="false" name="saika-lbl-2" ' +
-      'data-lpignore="true" data-1p-ignore data-form-type="other" ' +
-      'style="flex:1;min-width:0;background:var(--panel2);color:var(--text);' +
-      'border:1px solid var(--border);border-radius:9px;padding:5px 8px;' +
-      'font:12px inherit;outline:none">' +
-      // кнопки тут нет намеренно: запись включает ДИКТОФОН ниже
-      // («● эталон»), а это поле — просто имя для него
-      '</div>' +
+    // ПОЛЯ ИМЕНИ БОЛЬШЕ НЕТ (2026-08-15, владелец: «имя голоса я подпишу
+    // на самой карточке выше»). Диктофон стартует сразу, эталон рождается
+    // с именем-времянкой, а переименование и так живёт на карточке.
     '<div class="vp-bar" id="vp-prog2" style="display:none"><i></i></div>' +
     // ТРИ РАЗДЕЛА СВЕРНУЛИСЬ В ТРИ КНОПКИ (2026-07-29, владелец: «слух из
     // системы — просто встроенная маленькая фишка, кнопку включить-
@@ -8539,28 +8802,27 @@ eqFrame();
     // втрое больше места, чем стоит переключатель. Панель голоса — про
     // голоса; всё остальное здесь гости, и гостям хватит иконки. Что
     // делает каждая — в подсказке при наведении.
-    '<div class="vp-row" id="vp-tools" style="margin-top:2px">' +
-      '<button class="vp-btn" id="vp-sys" style="flex:1;font-size:11px" ' +
+    // ДИКТОФОН КАК ДИКТОФОН (2026-08-15, третья итерация за день, и
+    // владелец прав в каждой: «убери эти бесполезные кнопки "слушать
+    // час", "отчёт" — буквально залупа, ты не знаешь, как выглядит
+    // нормальный диктофон UI»). Нормальный диктофон — это ОДНА большая
+    // кнопка записи с таймером на ней и два маленьких спутника: пауза и
+    // стоп. Всё. Журнал слуха («час»/«отчёт») из панели убран совсем —
+    // его роуты живы (/api/earlog), но кнопкам, смысл которых приходится
+    // объяснять, в интерфейсе не место.
+    '<div class="vp-row" id="vp-tools" style="margin-top:2px;gap:6px">' +
+      '<button class="vp-btn" id="vp-sys" style="flex:none;font-size:11px" ' +
         'title="Слушать звук компьютера вместо микрофона: включи кино и ' +
         'посмотри, что она из него вытащит. Отвечать при этом не будет">' +
         '🖥 система</button>' +
-      // ДИКТОФОН ВМЕСТО СТЕНОГРАММЫ (2026-08-14, владелец: «убери вот эту
-      // залупу, лучше сделай диктофон записать голос-референс: стоп,
-      // пауза»). Стенограмма — про слова; эта панель про ГОЛОСА, и
-      // главное действие тут одно: записать эталон, чтобы она узнавала.
-      // Сама стенограмма никуда не делась, её роуты живы — просто ушла
-      // с глаз, из панели голоса.
-      '<button class="vp-btn" id="vp-rec" style="flex:1;font-size:11px" ' +
-        'title="Диктофон: записать эталон голоса. Говори что угодно — ' +
-        'важен тембр, а не слова. Пауза не теряет набранное">' +
-        '● эталон</button>' +
-      '<button class="vp-btn" id="vp-recpause" style="font-size:11px;' +
-        'display:none" title="Пауза — набранное сохраняется">⏸</button>' +
-      '<button class="vp-btn" id="vp-log" style="flex:1;font-size:11px" ' +
-        'title="Журнал слуха: час слушает комнату и показывает, кто говорил ' +
-        'и что звучало — со спектрами">◉ час</button>' +
-      '<button class="vp-btn" id="vp-logrep" style="font-size:11px" ' +
-        'title="Собрать отчёт по накопленному">отчёт</button>' +
+      '<button class="vp-btn" id="vp-rec" style="flex:1;font-size:12px;' +
+        'font-weight:600" title="Записать эталон голоса. Говори что ' +
+        'угодно — важен тембр, а не слова. Имя переименуешь на карточке ' +
+        'выше">● запись</button>' +
+      '<button class="vp-btn" id="vp-recpause" style="flex:none;width:34px" ' +
+        'disabled title="Пауза — набранное сохраняется">⏸</button>' +
+      '<button class="vp-btn" id="vp-recstop" style="flex:none;width:34px" ' +
+        'disabled title="Закончить и сохранить эталон">■</button>' +
     '</div>' +
     '<div class="vp-dim" id="vp-toolst" style="font-size:10px;padding:0 2px">' +
     '</div>' +
@@ -8767,7 +9029,7 @@ eqFrame();
       ev => el.addEventListener(ev, on));
     el.addEventListener('blur', off);
   }
-  noAutofill($id('vp-name')); noAutofill($id('vp-name2'));
+  noAutofill($id('vp-name'));
 
   /* ДВА ЭЛЕМЕНТА С ОДНИМ id — ЭТО НЕ МЕЛОЧЬ (2026-08-15). Кнопка в меню
      слуха и диктофон в панели оба звались vp-rec, а $id возвращает первый
@@ -9045,12 +9307,25 @@ eqFrame();
   let REC = {on: false, name: '', got: 0, need: 24, paused: false};
 
   function paintRec(){
-    const b = $id('vp-rec'), p = $id('vp-recpause'), st = $id('vp-toolst');
+    const b = $id('vp-rec'), p = $id('vp-recpause'),
+          sb = $id('vp-recstop'), st = $id('vp-toolst');
     if(!b) return;
-    b.textContent = REC.on ? '■ стоп' : '● эталон';
+    if(REC.on){
+      const t = Math.max(0, Math.floor((Date.now()-(REC.t0||Date.now()))/1000));
+      const mm = String(Math.floor(t/60)), ss = String(t%60).padStart(2,'0');
+      b.textContent = (REC.paused?'⏸ пауза':'● '+mm+':'+ss) +
+        ' · '+REC.got+'/'+REC.need;
+      b.style.color = REC.paused ? '' : 'var(--err)';
+      b.style.borderColor = REC.paused ? '' : 'rgba(224,101,95,.55)';
+    }else{
+      b.textContent = '● запись';
+      b.style.color = ''; b.style.borderColor = '';
+    }
     b.classList.toggle('acc', REC.on);
+    b.disabled = REC.on;
+    if(sb) sb.disabled = !REC.on;
     if(p){
-      p.style.display = REC.on ? '' : 'none';
+      p.disabled = !REC.on;
       p.textContent = REC.paused ? '▶' : '⏸';
       p.title = REC.paused ? 'Продолжить запись' : 'Пауза — набранное сохранится';
     }
@@ -9071,32 +9346,36 @@ eqFrame();
     paintRec();
   };
 
+  async function recStop(){
+    try{
+      const r = await api('/api/voiceprint/enroll', {action: 'stop'});
+      toast(r.ok ? 'Записала «' + (r.name || '') + '», эталонов ' +
+                   (r.vectors || 0) + ' — имя поправь на карточке'
+                 : (r.error || 'мало речи — скажи ещё пару фраз'),
+            {kind: r.ok ? 'ok' : 'err', ttl: 5000});
+      REC.on = false; paintRec();
+      loadPoints(); paintPanel();
+    }catch(e){ toast('Диктофон: ' + e.message, {kind: 'err'}); }
+  }
   const recBtn = $id('vp-rec');
   if(recBtn) recBtn.onclick = async () => {
+    if(REC.on) return;
     try{
-      if(REC.on){
-        const r = await api('/api/voiceprint/enroll', {action: 'stop'});
-        toast(r.ok ? 'Записала «' + (r.name || '') + '», эталонов ' +
-                     (r.vectors || 0)
-                   : (r.error || 'мало речи — скажи ещё пару фраз'),
-              {kind: r.ok ? 'ok' : 'err', ttl: 5000});
-        REC.on = false; paintRec();
-        loadPoints(); paintPanel();
-        return;
-      }
-      // БЕЗ ЛИШНИХ ПОДТВЕРЖДЕНИЙ (просьба владельца): имя берём из поля
-      // рядом, а спрашиваем, только если поле пустое. Плюс prompt() —
-      // модальный диалог, он вешает всю страницу.
-      const fld = $id('vp-name2') || $id('vp-name');
-      let nm = ((fld && fld.value) || '').trim();
-      if(!nm) nm = (prompt('Чей голос пишем?', '') || '').trim();
-      if(!nm) return;
-      if(fld) fld.value = '';
+      // БЕЗ ВОПРОСОВ (2026-08-15, владелец: «имя голоса я подпишу на
+      // самой карточке выше»). Старт пишет сразу под именем-времянкой;
+      // prompt() был модальный и вешал страницу — больше его нет.
+      const nm = 'Эталон ' + new Date().toTimeString().slice(0,5);
       await api('/api/voiceprint/enroll', {action: 'start', name: nm});
-      REC = {on: true, name: nm, got: 0, need: 24, paused: false};
+      REC = {on: true, name: nm, got: 0, need: 24, paused: false,
+             t0: Date.now()};
+      clearInterval(REC._tick);
+      REC._tick = setInterval(()=>{ if(REC.on) paintRec();
+                                    else clearInterval(REC._tick); }, 1000);
       paintRec();
     }catch(e){ toast('Диктофон: ' + e.message, {kind: 'err'}); }
   };
+  const recStopBtn = $id('vp-recstop');
+  if(recStopBtn) recStopBtn.onclick = () => { if(REC.on) recStop(); };
   const recPause = $id('vp-recpause');
   if(recPause) recPause.onclick = async () => {
     try{

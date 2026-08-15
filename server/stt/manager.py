@@ -120,6 +120,16 @@ class VadSegmenter:
         self.speech_samples = 0
 
     def _eff_threshold(self):
+        # КОГДА РЕШАЕТ НЕЙРОНКА, ПОРОГ НЕ РАСТЁТ (2026-08-15). Адаптация
+        # придумана для энергетического VAD: шумно — поднимай планку. При
+        # нейронной нарезке это только мешает — планка задирается от игры
+        # фоном и душит тихую речь на входе в конвейер.
+        try:
+            from server.stt import neuro_vad
+            if neuro_vad.enabled() and neuro_vad.STATE.get("ready"):
+                return self.threshold
+        except Exception:
+            pass
         if not self.adaptive:
             return self.threshold
         # пол шума * 2.5 + небольшой запас; конфигный порог — нижняя планка
@@ -131,6 +141,43 @@ class VadSegmenter:
         thr = self._eff_threshold()
         # гистерезис: подняться над порогом сложнее, чем удержаться
         is_voice = rms > (thr * 0.6 if self.in_speech else thr)
+        # ═══ НЕЙРОННОЕ РЕШЕНИЕ «РЕЧЬ ЛИ ЭТО» (2026-08-15) ═══
+        # Порог по громкости не отличает слог от щелчка клавиши — отсюда
+        # фантомные фразы на печатание и каша в движке. Когда silero-vad
+        # готов, решение принимает он: вход в речь — вероятность выше
+        # порога, удержание — выше пониженного (тот же гистерезис). Пока
+        # нейронка грузится или упала — работаем по громкости, как всегда.
+        # Тонкость: совсем тихий звук (ниже трети порога) нейронке даже не
+        # показываем — она обучена находить речь и в шёпоте, но комнатное
+        # эхо телевизора за стеной нам фразами резать не нужно.
+        self.speech_prob = None
+        try:
+            from server.stt import neuro_vad
+            # ═══ ВОРОТА ПЕРЕД НЕЙРОНКОЙ — АБСОЛЮТНЫЕ, А НЕ ОТ ПОРОГА ═══
+            # (2026-08-15, живой прокол, найден по панели владельца:
+            # «уровень 82 / порог 41», и половина фраз не слышна вовсе.
+            # Ворота стояли на `rms > thr * 0.3`, то есть от АДАПТИВНОГО
+            # порога — а он задирается от игры и битбокса фоном. При
+            # thr=0.041 нейронку не спрашивали ни о чём тише 0.012, и вся
+            # тихая речь умирала ДО того, как её слышала нейронка. Смысл
+            # апгрейда был ровно обратный: решает нейронка, а не громкость.
+            # Ворота остаются только чтобы не гонять модель на мёртвой
+            # тишине — абсолютный пол, к порогу не привязан.)
+            if neuro_vad.enabled():
+                gate = float(CFG.get("stt.vad.neuro_gate_rms", 0.0025))
+                if rms > gate:
+                    p = neuro_vad.prob(pcm16)
+                    if p is not None:
+                        self.speech_prob = p
+                        on = float(CFG.get("stt.vad.neuro_on", 0.5))
+                        off = float(CFG.get("stt.vad.neuro_off", 0.35))
+                        is_voice = p >= (off if self.in_speech else on)
+                else:
+                    # мёртвая тишина: нейронку не будим
+                    self.speech_prob = 0.0
+                    is_voice = False
+        except Exception:
+            pass
 
         if not self.in_speech and not is_voice:
             # обновляем шумовой пол ТОЛЬКО на чистой тишине (медленная EMA);
@@ -168,6 +215,11 @@ class VadSegmenter:
             segment = np.concatenate(self.buffer) if self.buffer else None
             long_enough = self.speech_samples >= self.sr * self.min_speech_ms / 1000
             self.reset()
+            try:
+                from server.stt import neuro_vad
+                neuro_vad.reset()   # хвост прошлой фразы не влияет на новую
+            except Exception:
+                pass
             if segment is not None and long_enough:
                 return segment
         return None
@@ -343,8 +395,14 @@ class STTManager:
         for name in self._healthy_chain():
             try:
                 with self.lock:
-                    text = self._get(name).transcribe(segment, sr)
+                    eng = self._get(name)
+                    text = eng.transcribe(segment, sr)
                 results = [{"text": text, "engine": name}] if text else []
+                # пословная уверенность, если движок её посчитал (whisper):
+                # интерфейс подсветит слова, которые прозвучали нечётко
+                _wrds = getattr(eng, "last_words", None)
+                if results and _wrds:
+                    results[0]["words"] = _wrds
                 if name != self.current_name:
                     if self._notified_fallback != name:
                         self._notify(name)

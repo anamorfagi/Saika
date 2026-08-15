@@ -189,6 +189,32 @@ FEATURES = {
         "extra_pip": ["vosk"],
         "config_flag": "stt.draft",
     },
+    "neuro_vad": {
+        "title": "Слух: нейронный детектор речи (silero-vad)",
+        # ДОБАВЛЕН 2026-08-15 вместе с апгрейдом слуха. Пакет несёт веса
+        # В СЕБЕ (~2 МБ) — после установки нейро-VAD работает без сети
+        # вообще; без пакета server/stt/neuro_vad.py качает те же веса
+        # через torch.hub с github, что при плохой сети медленно и хрупко.
+        "core_modules": [],
+        "core_pip": [],
+        # onnxruntime — чтобы нейро-VAD бежал за доли мс (см. neuro_vad)
+        "extra_modules": ["silero_vad", "onnxruntime"],
+        "extra_pip": ["silero-vad", "onnxruntime"],
+        "config_flag": "stt.vad.autoinstall",
+    },
+    "clap_ears": {
+        "title": "Уши: свои метки звуков (CLAP, zero-shot)",
+        # LAION-CLAP сравнивает звук с ЛЮБОЙ текстовой меткой — то, чего
+        # не умеет PANNs с его фиксированными 527 классами AudioSet.
+        # Живой повод 2026-08-15: губная трель битбокса опозналась как
+        # «собака», трещётка — как «машина». Своими метками
+        # (hearing.clap.labels) это решается словами, без дообучения.
+        "core_modules": [],
+        "core_pip": [],
+        "extra_modules": ["laion_clap"],
+        "extra_pip": ["laion-clap"],
+        "config_flag": "hearing.clap.autoinstall",
+    },
     "denoise": {
         "title": "Шумодав: библиотечные движки и стенд",
         "core_modules": [],

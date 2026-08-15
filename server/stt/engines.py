@@ -85,6 +85,15 @@ class FasterWhisperEngine(STTEngine):
         cfg = CFG.get("stt.engines.faster_whisper", {})
         kw = dict(language=CFG.get("stt.language", "ru"),
                   beam_size=1, vad_filter=True,
+                  # ПОСЛОВНАЯ УВЕРЕННОСТЬ (2026-08-15, владелец: «как в
+                  # прогах, где языку учат — подсвечивать слова, которые
+                  # человек нечётко произнёс»). Приёмы таких приложений
+                  # (GOP, форс-алайнмент по фонемам) требуют ЭТАЛОННОГО
+                  # текста — в свободной речи его нет. Честный аналог без
+                  # эталона: вероятность каждого слова у самого декодера.
+                  # Слово, в котором модель не уверена, почти всегда и
+                  # есть смазанное/нечёткое — его и подсветит интерфейс.
+                  word_timestamps=bool(cfg.get("word_conf", True)),
                   condition_on_previous_text=False,
                   no_speech_threshold=float(cfg.get("no_speech_threshold", 0.5)),
                   log_prob_threshold=float(cfg.get("log_prob_threshold", -0.8)),
@@ -102,6 +111,7 @@ class FasterWhisperEngine(STTEngine):
                     kw.pop(k, None)
                 segments, _ = self.model.transcribe(audio, **kw)
             out = []
+            words = []
             for sg in segments:
                 # последний рубеж: сегмент, который сама модель считает
                 # тишиной, до текста доходить не должен
@@ -111,7 +121,24 @@ class FasterWhisperEngine(STTEngine):
                              sg.no_speech_prob)
                     continue
                 out.append(sg.text.strip())
-            return " ".join(t for t in out if t).strip()
+                for w in (getattr(sg, "words", None) or []):
+                    try:
+                        words.append({"w": w.word.strip(),
+                                      "p": round(float(w.probability), 2),
+                                      # времена слова — для восстановления
+                                      # растяжки («наприиииимер»), см.
+                                      # misheard.stretch
+                                      "t0": round(float(w.start), 2),
+                                      "t1": round(float(w.end), 2)})
+                    except Exception:
+                        pass
+            text = " ".join(t for t in out if t).strip()
+            if words:
+                # слова едут рядом с текстом; менеджер протащит их в UI
+                self.last_words = words
+            else:
+                self.last_words = []
+            return text
         except Exception as e:
             # CUDA-ошибки (cublas64_12.dll и т.п.) вылезают при инференсе,
             # а не при загрузке — пересоздаём модель на CPU и повторяем
@@ -176,6 +203,23 @@ class GigaAMEngine(STTEngine):
         path = _to_wav_tempfile(pcm16, sample_rate)
         try:
             try:
+                result = self.model.transcribe(path)
+            except RuntimeError as e:
+                # ЧУЖОЙ ГЛОБАЛЬНЫЙ DTYPE (2026-08-15, живой лог 13:19:26).
+                # Пока грузится Qwen3-TTS, его загрузчик меняет torch-овский
+                # default dtype на bfloat16 — и наш входной тензор рождается
+                # не того типа: «RNN input dtype (torch.bfloat16) does not
+                # match weight dtype». Движок при этом ЦЕЛ; ронять его в
+                # broken и уходить на 90-секундную загрузку whisper — это
+                # то, что устроило залп из шести фраз. Возвращаем dtype и
+                # пробуем ещё раз; у tts-менеджера стоит своя защита, эта —
+                # на случай гонки в самый момент подмены.
+                if "does not match weight dtype" not in str(e):
+                    raise
+                import torch
+                log.warning("GigaAM: глобальный dtype подменён (%s) — "
+                            "возвращаю float32 и повторяю", str(e)[:80])
+                torch.set_default_dtype(torch.float32)
                 result = self.model.transcribe(path)
             except Exception as e:
                 # длинный сегмент (2026-07-23: «Too long wav file, use
