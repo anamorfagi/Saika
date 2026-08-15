@@ -56,6 +56,8 @@ class Registry:
         # диапазоне тона говорит. Считается по факту узнавания, не при
         # записи, — поэтому показывает человека в жизни, а не на «пробе».
         self.stat: dict = {}        # имя -> {last, n, plo, phi}
+        # скелет: имя -> {hz:[], tract:[], rate:[]} последние 64
+        self.skel: dict = {}
         self.load()
 
     # ------------------------------------------------------------ хранение
@@ -77,6 +79,7 @@ class Registry:
                         "owner": bool(meta.get("owner", {}).get(name, False)),
                         "hyp": dict(meta.get("hyp", {}).get(name, {}))}
             self.stat = dict(meta.get("stat", {}))
+            self.skel = dict(meta.get("skel", {}))
             if "pts" in z and len(z["pts"]):
                 self.pts = z["pts"].astype(np.float32)
                 self.pts_who = list(meta.get("pts_who", []))
@@ -120,7 +123,8 @@ class Registry:
             np.savez_compressed(DIR / "state.npz", **arrays)
             (DIR / "meta.json").write_text(json.dumps({
                 "speakers": list(self.speakers.keys()), "colors": colors,
-                "stat": self.stat, "pinned": pinned, "auto": auto, "hyp": hyp,
+                "stat": self.stat, "skel": self.skel,
+                "pinned": pinned, "auto": auto, "hyp": hyp,
                 "owner": owner,
                 "pts_who": self.pts_who, "pts_ts": self.pts_ts,
                 "saved": time.time()}, ensure_ascii=False), "utf-8")
@@ -328,15 +332,94 @@ class Registry:
         self._drop_mismatched()
         return len(embs)
 
+    def note_skel(self, name: str, hz=0.0, tract=0.0, rate=0.0):
+        """═══ СКЕЛЕТ ГОЛОСА (2026-08-16) ═══
+
+        Владелец: «формировать скелеты голоса у людей, чтобы более чётко
+        определять, чей это спектр у слова».
+
+        Скелет — профиль человека, устойчивый там, где отдельная реплика
+        врёт. Держим ПОСЛЕДНИЕ 64 измерения каждой величины и берём по
+        ним МЕДИАНУ, а не среднее и не EMA. Причина видна на живом логе:
+        длина речевого тракта по одной фразе скакала 15 → 31 см у одного
+        и того же человека — оценка формант на секунде речи шумная. Ни
+        среднее, ни экспоненциальное сглаживание это не лечат: и то и
+        другое тянется за выбросом. Медиана выброс просто не замечает,
+        и уже на паре десятков реплик даёт число, которому можно верить.
+
+        Что копим:
+          hz    — основная частота (кто выше, кто ниже);
+          tract — длина речевого тракта в см, физический размер человека;
+          rate  — слогов в секунду, почерк речи.
+        """
+        sk = self.skel.setdefault(name, {"hz": [], "tract": [], "rate": []})
+        for key, val, lo, hi in (("hz", hz, 55.0, 420.0),
+                                 ("tract", tract, 8.0, 24.0),
+                                 ("rate", rate, 0.4, 9.0)):
+            try:
+                v = float(val or 0)
+            except Exception:
+                continue
+            if lo <= v <= hi:
+                sk[key].append(round(v, 2))
+                del sk[key][:-64]
+        self.dirty = True
+
+    def skeleton(self, name: str) -> dict:
+        """Профиль человека числами. Пусто, пока измерений мало: врать
+        одной точкой хуже, чем молчать."""
+        sk = self.skel.get(name) or {}
+        out = {}
+        need = 6
+        for key in ("hz", "tract", "rate"):
+            vals = sorted(sk.get(key) or [])
+            if len(vals) < need:
+                continue
+            n = len(vals)
+            med = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+            # полоса — межквартильный размах: он показывает, где голос
+            # живёт обычно, а не куда он однажды сорвался
+            q1, q3 = vals[n // 4], vals[(3 * n) // 4]
+            out[key] = {"med": round(med, 1), "lo": round(q1, 1),
+                        "hi": round(q3, 1), "n": n}
+        return out
+
     def note(self, name: str, pitch: float):
-        """Отметить живое узнавание: время, счётчик, диапазон тона."""
+        """Отметить живое узнавание: время, счётчик, диапазон тона.
+
+        ДИАПАЗОН ДЫШИТ, А НЕ ТОЛЬКО РАСТЁТ (2026-08-16). Владелец:
+        «нужно по умному, на основе распознавания частот звучания,
+        распределять слова от каждого человека». Чтобы частота вообще
+        могла что-то РАСПРЕДЕЛЯТЬ, диапазон обязан быть узким и честным.
+        Раньше здесь стояли min и max за всю историю: одна ошибка
+        узнавания — и «Голос 3» навсегда получал 91-222 Гц, то есть
+        полосу, в которую влезает кто угодно, и как признак она умирала.
+        Теперь края расширяются мгновенно (голос и правда бывает выше
+        и ниже), но при каждом попадании внутрь полосы медленно
+        подтягиваются к текущему тону. Случайный выброс за десяток
+        нормальных фраз рассасывается сам, а настоящий разброс человека
+        держится, потому что подтверждается заново."""
         st = self.stat.setdefault(name, {"last": 0.0, "n": 0,
                                          "plo": 0.0, "phi": 0.0})
         st["last"] = time.time()
         st["n"] = int(st.get("n", 0)) + 1
         if pitch and pitch > 40:
-            st["plo"] = min(st["plo"] or pitch, pitch)
-            st["phi"] = max(st["phi"] or pitch, pitch)
+            lo, hi = float(st.get("plo") or 0), float(st.get("phi") or 0)
+            if not lo or not hi:
+                lo = hi = pitch
+            elif pitch < lo:
+                lo = pitch
+            elif pitch > hi:
+                hi = pitch
+            else:
+                # тон внутри полосы — края сползаются к нему на 3%
+                lo += (pitch - lo) * 0.03
+                hi -= (hi - pitch) * 0.03
+            # полосе не даём схлопнуться в точку: у живого голоса разброс
+            # хотя бы ±6% от тона, иначе он сам себя перестанет узнавать
+            mid = (lo + hi) / 2.0
+            st["plo"] = round(min(lo, mid * 0.94), 2)
+            st["phi"] = round(max(hi, mid * 1.06), 2)
         self.dirty = True
 
     def forget(self, name: str):

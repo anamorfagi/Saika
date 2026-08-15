@@ -131,10 +131,32 @@ _GENERIC = ("animal", "domestic animals, pets", "wild animals",
             "surface contact", "miscellaneous sources", "specific impact")
 
 
+# ═══ ЗА ОКНОМ НЕ ЕЗДЯТ МАШИНЫ ПО КЛАВИАТУРЕ (2026-08-16) ═══
+# Владелец, дословно: «клавиатура или шум в микро вряд ли похоже на
+# машину или на мои звуки битбокса». Он прав дважды.
+#
+# Про машину. PANNs обучены на ютубе, где «vehicle» — это широкополосный
+# гул с транзиентами. Серия щелчков клавиш даёт спектрально ровно это, и
+# на одном окне класс честно берёт свои 41%. Но у настоящей машины есть
+# то, чего у клавиатуры нет: ДЛИТЕЛЬНОСТЬ. Машина за окном гудит десять
+# секунд подряд, щелчок живёт сотню миллисекунд. Поэтому:
+#   - любая метка показывается только после ВТОРОГО подряд окна;
+#   - «уличные» классы, которых у стола не бывает без открытого окна, —
+#     после третьего и с порогом заметно выше.
+# Это не запрет на класс (машина за окном действительно бывает, и она
+# нужна) — это требование подтвердить себя временем.
+_OUTDOOR = ("vehicle", "car", "truck", "motor", "engine", "aircraft",
+            "helicopter", "train", "motorcycle", "thunder", "wind",
+            "chainsaw", "siren")
+
+
 def _feed_sounds(tags):
     global _last_sent
     now = time.time()
     linger = float(CFG.get("hearing.feed_linger_s", 2.5))
+    conf_n = int(CFG.get("hearing.confirm_windows", 2))
+    out_n = int(CFG.get("hearing.confirm_windows_outdoor", 3))
+    out_min = float(CFG.get("hearing.feed_min_outdoor", 0.55))
     # есть ли в кадре конкретная (не родовая) метка выше порога
     _has_specific = any(
         float(p) >= float(CFG.get("hearing.feed_min", 0.35))
@@ -149,6 +171,9 @@ def _feed_sounds(tags):
             continue
         if low in _GENERIC and _has_specific:
             continue
+        _out = any(k in low for k in _OUTDOOR)
+        if _out and p < out_min:
+            continue
         ent = _active.get(low)
         if ent is None:
             ono = ""
@@ -157,18 +182,24 @@ def _feed_sounds(tags):
                     ono = v
                     break
             _active[low] = {"ru": _ru(name), "en": name, "ono": ono,
-                            "p": round(float(p), 2), "last": now}
+                            "p": round(float(p), 2), "last": now,
+                            "seen": 1, "need": out_n if _out else conf_n}
         else:
             ent["p"] = round(float(p), 2)
             ent["last"] = now
+            ent["seen"] = int(ent.get("seen", 1)) + 1
     for low in [k for k, v in _active.items()
                 if now - v["last"] > linger]:
         _active.pop(low, None)
-    keys = tuple(sorted(_active))
+    # наружу — только подтверждённые временем; неподтверждённые живут в
+    # _active молча и либо дозреют следующим окном, либо истекут по linger
+    ready = {k: v for k, v in _active.items()
+             if int(v.get("seen", 1)) >= int(v.get("need", 1))}
+    keys = tuple(sorted(ready))
     if keys != _last_sent:
         _last_sent = keys
         cur = [{k: v[k] for k in ("ru", "en", "ono", "p")}
-               for v in _active.values()]
+               for v in ready.values()]
         STATE["sounds"] = [{"now": cur, "dist": STATE.get("dist", ""),
                             "ts": now}]
 

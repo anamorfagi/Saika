@@ -109,6 +109,9 @@ class VadSegmenter:
         self.adaptive = vad.get("adaptive", True)
         self.sr = CFG.get("stt.sample_rate", 16000)
         self.noise_floor = 0.0     # EMA шумового пола (живёт через reset)
+        # чем закончился прошлый кусок: "pause" — человек сам замолчал,
+        # "length" — упёрлись в потолок и разрезали посреди мысли
+        self.last_cut = ""
         self.reset()
 
     def reset(self):
@@ -206,14 +209,56 @@ class VadSegmenter:
         if self.in_speech:
             self.buffer.append(pcm16)
 
+        # ═══ ГРАНИЦА ПО ПАУЗЕ, А НЕ ПО СЕКУНДОМЕРУ (2026-08-16) ═══
+        # Владелец, дословно: «можешь деление делать не по времени, а
+        # детектить предложения». Дословно предложения слышит только текст
+        # (там знаки препинания), но ЗВУК умеет главное: не рвать речь
+        # там, где человек не молчал.
+        #
+        # Было: молчание 420мс закрывает кусок, а если его не случилось —
+        # жёсткий нож ровно на потолке (8с в прослушке). Стример дышит
+        # между фразами 150-250мс, до 420 не дотягивает никогда — и нож
+        # падал по секундомеру, всегда посреди слова.
+        #
+        # Стало: чем длиннее кусок, тем меньшей паузы хватает, чтобы его
+        # закрыть. От soft_cut_from (половина потолка) требование плавно
+        # съезжает с silence_ms до soft_gap_ms. Человек, говорящий одним
+        # духом, всё равно упрётся в потолок — но упрётся он ПОСЛЕ того,
+        # как будут перебраны все настоящие паузы, и нож придётся на самую
+        # глубокую из них, а не на случайную миллисекунду.
+        need_ms = self.silence_ms
+        try:
+            soft_from = self.max_segment_s * float(
+                CFG.get("stt.vad.soft_cut_from", 0.5))
+            soft_gap = float(CFG.get("stt.vad.soft_gap_ms", 100))
+            spoken_s = self.speech_samples / float(self.sr)
+            if self.in_speech and spoken_s > soft_from and soft_gap < need_ms:
+                frac = min(1.0, (spoken_s - soft_from)
+                           / max(0.1, self.max_segment_s - soft_from))
+                need_ms = self.silence_ms + (soft_gap - self.silence_ms) * frac
+        except Exception:
+            need_ms = self.silence_ms
         end_by_silence = (self.in_speech and
-                          self.silence_samples >= self.sr * self.silence_ms / 1000)
+                          self.silence_samples >= self.sr * need_ms / 1000)
         end_by_length = (self.in_speech and
                          self.speech_samples >= self.sr * self.max_segment_s)
 
         if end_by_silence or end_by_length:
             segment = np.concatenate(self.buffer) if self.buffer else None
             long_enough = self.speech_samples >= self.sr * self.min_speech_ms / 1000
+            # ПРИЧИНА РЕЗА едет наружу: по ней склеиваются оборванные
+            # посреди мысли куски (см. GLUE в main.py). Три случая:
+            #   pause  — человек домолчал полные silence_ms: мысль кончена;
+            #   short  — закрыли по укороченной (рампой) паузе: он просто
+            #            вдохнул между словами, мысль продолжается;
+            #   length — нож по потолку, оборвано где попало.
+            full_gap = self.sr * self.silence_ms / 1000
+            if end_by_silence and self.silence_samples >= full_gap:
+                self.last_cut = "pause"
+            elif end_by_silence:
+                self.last_cut = "short"
+            else:
+                self.last_cut = "length"
             self.reset()
             try:
                 from server.stt import neuro_vad

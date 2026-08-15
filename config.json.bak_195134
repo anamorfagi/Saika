@@ -103,7 +103,7 @@
     "router": {
       "enabled": true
     },
-    "off": true,
+    "off": false,
     "n_ctx": "32768",
     "search_unreliable": [
       "@cf/qwen/qwen3-30b-a3b-fp8",
@@ -151,18 +151,12 @@
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
-      "rms_threshold": 0.006,
-      "silence_ms": 600,
-      "min_speech_ms": 420,
-      "max_segment_s": 8,
-      "preroll_ms": 400,
-      "neuro_gate_rms": 0.002,
-      "neuro_on": 0.42,
-      "neuro_off": 0.28,
-      "soft_cut_from": 0.45,
-      "soft_gap_ms": 100,
-      "observe_silence_ms": 600,
-      "observe_max_segment_s": 8
+      "rms_threshold": 0.01,
+      "silence_ms": 500,
+      "min_speech_ms": 300,
+      "max_segment_s": 25,
+      "preroll_ms": 360,
+      "neuro_gate_rms": 0.0025
     },
     "fallback_order": [
       "faster_whisper",
@@ -202,41 +196,12 @@
     "stretch_max": 6,
     "live_polish": true,
     "polish_every_s": 0.5,
-    "phantom_max_s": 1.2,
-    "phantom_mech_min": 0.35,
-    "stale_s": 10,
-    "stale_keep_q": 3,
-    "turns_min_part_s": 1.5,
-    "turns_overlap_ms": 120,
-    "turns_pitch_jump": 0.16,
-    "frontend": {
-      "enabled": true,
-      "target_dbfs": -20,
-      "hp_hz": 70,
-      "comp_ratio": 2.0,
-      "comp_thr_db": -24,
-      "max_gain_db": 30,
-      "pad_ms": 100
-    },
-    "turns_dna_win_s": 0.5,
-    "turns_dna_hop_s": 0.15,
-    "turns_dna_cos": 0.82,
-    "turns_min_part_hard_s": 0.8,
-    "rescore": {
-      "enabled": true,
-      "quiet_dbfs": -34,
-      "max_edit": 0.3,
-      "max_grow": 1.25,
-      "min_len": 18,
-      "max_sound_edit": 0.22
-    }
+    "phantom_max_s": 2.5
   },
   "tts": {
     "engine": "qwen3",
     "enabled": true,
-    "disabled": [
-      "qwen3"
-    ],
+    "disabled": [],
     "output_device": "CABLE Input",
     "output_device_dup": "WH-1000XM4",
     "voice_ref": "voice/ref.wav",
@@ -443,18 +408,18 @@
     "desk": {
       "top": true,
       "lock": true,
-      "on": false,
-      "x": 903,
-      "y": 682,
+      "on": true,
+      "x": 0,
+      "y": 635,
       "w": 434,
       "h": 918,
-      "frame": true,
+      "frame": false,
       "ghost": false,
       "view": {
-        "x": 0.002396514161220048,
-        "y": 0.0,
+        "x": -0.036592504561615266,
+        "y": 0.013630960688419555,
         "z": 0.0,
-        "zoom": 1.0,
+        "zoom": 0.883139477889006,
         "rx": 0.0,
         "ry": 0.0,
         "rz": 0.0,
@@ -463,21 +428,21 @@
         "az": 0.0,
         "el": 0.0,
         "dist": 0.0,
-        "ox": 0.0,
-        "oy": 0.0,
-        "oz": 0.0,
+        "ox": 0.014072588370879916,
+        "oy": -0.007405476880781537,
+        "oz": 0.008817607006140113,
         "headFollow": true,
         "lean": 0.0
       },
       "slots": {
         "saika_v1": {
-          "x": 903,
-          "y": 682,
+          "x": 0,
+          "y": 635,
           "w": 434,
           "h": 918,
           "view": {
-            "x": 0.002396514161220048,
-            "y": 0.0,
+            "x": -0.036592504561615266,
+            "y": 0.013630960688419555,
             "z": 0.0,
             "rx": 0.0,
             "ry": 0.0,
@@ -485,11 +450,11 @@
             "az": 0.0,
             "el": 0.0,
             "dist": 0.0,
-            "ox": 0.0,
-            "oy": 0.0,
-            "oz": 0.0,
+            "ox": 0.014072588370879916,
+            "oy": -0.007405476880781537,
+            "oz": 0.008817607006140113,
             "lean": 0.0,
-            "zoom": 1.0,
+            "zoom": 0.883139477889006,
             "snap": 0.0,
             "ortho": false,
             "headFollow": true
@@ -560,13 +525,8 @@
   },
   "voiceprint": {
     "enabled": true,
-    "listen_self": false,
-    "device": "auto",
-    "pitch_groups": true,
-    "pitch_group_tol": 0.18,
-    "pitch_band_max": 1.5,
-    "dna_cos": 0.9,
-    "pitch_group_max": 4
+    "listen_self": true,
+    "device": "auto"
   },
   "doctor": {
     "backend": "",
@@ -576,13 +536,6 @@
     "level": 7
   },
   "hearing": {
-    "device": "cpu",
-    "confirm_windows": 2,
-    "confirm_windows_outdoor": 3,
-    "feed_min_outdoor": 0.55
-  },
-  "beatbox": {
-    "kbd_veto": 0.25,
-    "jitter_max": 0.45
+    "device": "cuda"
   }
 }

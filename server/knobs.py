@@ -35,7 +35,7 @@ ACK = ROOT / "data" / "knobs_ack.json"
 # Белый список: что напарнику можно крутить. Всё — настройки слуха и
 # звука; ни файлов, ни системы, ни сети отсюда не достать.
 _ALLOWED_PREFIX = (
-    "stt.", "denoise.", "hearing.", "beatbox.", "voiceprint.vad_min",
+    "stt.", "denoise.", "hearing.", "beatbox.", "voiceprint.",
     "dialog.live_context", "transcript.",
 )
 # отдельные точечные ключи вне префиксов

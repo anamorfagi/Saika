@@ -610,7 +610,10 @@ def status():
                     "last": round(float(st.get("last", 0.0)), 1),
                     "heard": int(st.get("n", 0)),
                     "pitch_lo": int(st.get("plo", 0) or 0),
-                    "pitch_hi": int(st.get("phi", 0) or 0)}
+                    "pitch_hi": int(st.get("phi", 0) or 0),
+                    # скелет: медианы по последним 64 измерениям — тон,
+                    # длина речевого тракта, темп речи (см. VOICE_SKELETON.md)
+                    "skel": S.reg.skeleton(name)}
     return {
         "enabled": enabled(),
         "backend": S.enc.backend,

@@ -102,6 +102,40 @@ def _classify(x):
     return ""
 
 
+def _is_rhythm(ev) -> bool:
+    """═══ РИТМ — ЭТО РОВНОСТЬ, А НЕ ПРОСТО ТРИ УДАРА (2026-08-16) ═══
+
+    Владелец: «клавиатура вряд ли похожа на мои звуки битбокса». Правило
+    «≥3 события за 2.5с» ловило любую серию щелчков — а по спектру
+    одиночный щелчок клавиши и хай-хэт неразличимы, я это уже признавал.
+    Разница не в звуке удара, а в РАССТАНОВКЕ ударов во времени:
+
+      битбокс  — человек держит темп, промежутки почти равны;
+      клавиши  — промежутки скачут в разы: «мысль-очередь-пробел-пауза».
+
+    Считаем разброс промежутков (коэффициент вариации: сигма/среднее).
+    У ровного бита он около нуля, у печати уверенно выше половины. Порог
+    в конфиге; и отдельно требуем, чтобы удары не были однообразными —
+    десять одинаковых «тс» подряд это стук, а не рисунок."""
+    ts = [t for t, _o in ev]
+    if len(ts) < 3:
+        return False
+    gaps = [b - a for a, b in zip(ts, ts[1:]) if b > a]
+    if len(gaps) < 2:
+        return False
+    mean = sum(gaps) / len(gaps)
+    if mean <= 0:
+        return False
+    var = sum((g - mean) ** 2 for g in gaps) / len(gaps)
+    cv = (var ** 0.5) / mean
+    if cv > float(CFG.get("beatbox.jitter_max", 0.45)):
+        return False
+    # рисунок, а не морзянка: хотя бы два разных звука на серию
+    if len({o for _t, o in ev}) < 2:
+        return False
+    return True
+
+
 def feed(pcm16: np.ndarray):
     """Кусок 100мс из горячего цикла. Возвращает свежую последовательность
     строки битбокса, если она ИЗМЕНИЛАСЬ, иначе None."""
@@ -153,9 +187,9 @@ def feed(pcm16: np.ndarray):
     # битбокс-режим: ≥3 событий за 2.5с — это ритм, а не случайный стук
     while _events and now - _events[0][0] > 6.0:
         _events.popleft()
-    recent = [o for t, o in _events if now - t <= 2.5]
+    recent = [(t, o) for t, o in _events if now - t <= 2.5]
     seq = ""
-    if len(recent) >= 3:
+    if len(recent) >= 3 and _is_rhythm(recent):
         seq = " ".join(o for _t, o in list(_events)[-10:])
     if seq != _state["last_seq"]:
         _state["last_seq"] = seq

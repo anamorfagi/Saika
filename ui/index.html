@@ -1646,16 +1646,117 @@ function handleJson(m){
     // этого, но я ни капли не уверена». Ноль процентов рядом с именем
     // читается как утверждение и сбивает с толку сильнее, чем молчание.
     // Ниже четверти уверенности имени нет вовсе (2026-07-28).
-    if(m.speaker && (m.speaker_conf==null || m.speaker_conf>=0.25))
+    if(m.by_pitch_group)
+      // не узнавание, а разметка по высоте голоса: процентов тут не
+      // бывает, и обещать их нельзя (2026-08-16)
+      meta += ' · '+m.speaker+(m.pitch_hz?' (≈'+m.pitch_hz+' Гц)':'')+
+              (m.group_by==='днк'||m.group_by==='новая'?'':' ~');
+    // ДЛИНУ ТРАКТА В ПОДПИСИ УБРАЛ (2026-08-16). Оценка формант по одной
+    // короткой фразе скачет — у одного и того же человека выходило 23,
+    // 31.7, 29.7 и 15.9 см подряд. Показывать это как факт нельзя: цифра
+    // выглядит точной и врёт. Останется внутри, для карточки голоса, где
+    // её можно усреднить по десяткам реплик.
+    else if(m.speaker && (m.speaker_conf==null || m.speaker_conf>=0.25))
       meta += ' · голос: '+m.speaker+
         (m.speaker_conf!=null?' ('+Math.round(m.speaker_conf*100)+'%)':'');
+    if(m.src === 'sys') meta += ' · с компьютера';
+    // под музыку по высоте тона людей не разводим: у поющего частота
+    // идёт по мелодии, а не по человеку (2026-08-16)
+    if(m.music) meta += ' · 🎵 играет музыка — по тону не развожу';
     // МЕТКИ ГОЛОСА (2026-08-15, владелец: «какая у голоса частота, тембр,
     // скорость речи») — сервер меряет их по самому куску звука
     if(m.voice_hz) meta+=' · ~'+m.voice_hz+' Гц';
     if(m.rate_wps) meta+=' · '+m.rate_wps+' сл/с';
     if(m.crowd) meta+=' · ⚠ несколько голосов разом';
     if(m.heard_at) meta+=' · '+m.heard_at;
-    const bub = addMsg('user', m.text, meta); curSaikaMsg=null;
+    // ═══ ПУЗЫРЬ = ЗАКОНЧЕННАЯ МЫСЛЬ, А НЕ ВОСЕМЬ СЕКУНД (2026-08-16) ═══
+    // Владелец: «можешь деление делать не по времени, а детектить
+    // предложения». Сервер помечает glue у куска, который начался сразу
+    // после реза по потолку, — значит человек не замолкал, и рвать
+    // реплику надвое неправильно. Дописываем в тот же пузырь: он растёт,
+    // пока говорящий не сделает паузу.
+    // ═══ ДОРОЖКИ: У КАЖДОГО ЧЕЛОВЕКА СВОЯ КОЛЕЯ (2026-08-16) ═══
+    // Владелец: «он не записывает одновременно несколько дорожек текста
+    // от разных людей». Разрез по тембру внутри фразы у нас есть давно
+    // (server/stt/turns.py режет кусок по смене голоса ДО распознавания,
+    // и каждая часть приезжает своим сообщением со своим speaker) — но
+    // в ленте всё это валилось в одну колонку подряд, и увидеть, что
+    // говорили ДВОЕ, было нельзя: выглядело как один рваный монолог.
+    //
+    // Теперь у каждого голоса своя колея: свой отступ слева, своя
+    // ширина, своя полоска цветом голоса и подпись. Двое говорят —
+    // видно две колеи, и текст каждого читается отдельно. Колеи
+    // раздаются по факту появления, до четырёх; кто молчал минуту,
+    // освобождает свою.
+    const LANES = (window.__lanes = window.__lanes || {map: {}, ts: {}});
+    const who = m.speaker || '';
+    const nowT = Date.now();
+    for(const k in LANES.ts) if(nowT - LANES.ts[k] > 60000){
+      delete LANES.ts[k]; delete LANES.map[k];
+    }
+    if(who){
+      if(LANES.map[who] == null){
+        const busy = new Set(Object.values(LANES.map));
+        let i = 0; while(i < 4 && busy.has(i)) i++;
+        LANES.map[who] = i < 4 ? i : 0;
+      }
+      LANES.ts[who] = nowT;
+    }
+    const lane = who ? LANES.map[who] : 0;
+    const nLanes = Math.max(1, Object.keys(LANES.map).length);
+    LANES.last = LANES.last || {};
+    const prev = LANES.last[who || '_'];
+    let bub = null;
+    if(m.glue && prev && prev.isConnected){
+      bub = prev;
+      const t0 = bub.firstChild;
+      t0.textContent = (t0.textContent || '').replace(/…\s*$/, '') + ' ' +
+                       m.text;
+      const md = bub.querySelector('.meta');
+      if(md) md.textContent = new Date().toLocaleTimeString('ru-RU') + ' · ' +
+                              meta;
+      $('#chat').scrollTop = 1e9;
+    }else{
+      bub = addMsg('user', m.text, meta);
+    }
+    if(bub){
+      // ЦВЕТ ГОЛОСА — НА САМОМ ОБЛАЧКЕ (2026-08-16, владелец: «у облачков
+      // текста своя должна быть подсветка относительно голоса»). Цвет
+      // берётся тот же, что у территории этого голоса на карте, — чтобы
+      // карточка, точка на карте и реплика в ленте читались как одно.
+      const col = m.speaker_color || (who ? '#8892a6' : '');
+      if(col){
+        const mm = /^#([0-9a-f]{6})$/i.exec(col);
+        const n = mm ? parseInt(mm[1], 16) : 0x8892a6;
+        const rgb = (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
+        bub.style.borderLeft = '3px solid ' + col;
+        bub.style.background = 'linear-gradient(90deg,rgba(' + rgb +
+          ',.18) 0%, rgba(' + rgb + ',.05) 70%)';
+      }
+      // колея (отступ) появляется, только когда людей и правда несколько:
+      // одному человеку двигать реплики вбок незачем
+      if(nLanes > 1){
+        bub.style.marginLeft = (lane * 26) + 'px';
+        bub.style.maxWidth = '62%';
+        bub.style.alignSelf = 'flex-start';
+      }
+      // имя не дублируем отдельной строкой: оно уже стоит в подписи под
+      // пузырём («голос: виталя (42%)»), а вставка своего узла в начало
+      // сломала бы firstChild, на который опираются склейка и подсветка
+      // слов. Колею держат отступ и цветная полоска.
+      if(who) bub.dataset.who = who;
+    }
+    LANES.last[who || '_'] = bub;
+    window.__lastSttBub = bub;
+    // запоминаем пузырь по номеру фразы: «мозг в ухе» переспросит текст
+    // смыслом и пришлёт правку следом (2026-08-16)
+    if(m.pid){
+      window.__bubbles = window.__bubbles || {};
+      window.__bubbles[m.pid] = bub;
+      const ks = Object.keys(window.__bubbles);
+      if(ks.length > 60) delete window.__bubbles[ks[0]];
+    }
+    curSaikaMsg=null;
     // ═══ НЕЧЁТКО ПРОИЗНЕСЁННЫЕ СЛОВА — ПОДСВЕТКОЙ (2026-08-15) ═══
     // Просьба владельца: «как в прогах, где языку учат — система видит,
     // что слово произнесено неправильно, и подсвечивает его». В тех
@@ -1664,7 +1765,9 @@ function handleJson(m){
     // в котором движок не уверен, почти всегда и есть смазанное. Едет с
     // сервера в m.words (пока даёт whisper; GigaAM вероятностей не
     // отдаёт). Порог 0.55 — ниже него слово пунктирно подчёркнуто.
-    if(bub && Array.isArray(m.words) && m.words.length){
+    // при склейке текст уже дописан руками — перерисовка по словам его бы
+    // стёрла вместе с началом реплики (2026-08-16)
+    if(bub && !m.glue && Array.isArray(m.words) && m.words.length){
       try{
         const t=bub.firstChild; t.textContent='';
         for(const w of m.words){
@@ -1690,6 +1793,51 @@ function handleJson(m){
       bub && bub.appendChild(warn);
     }
     loader(true);   // услышала — сейчас пойдёт ответ, показываем активность
+  }
+  else if(m.type==='stt_fix'){
+    // ═══ ПРАВКА ПО СМЫСЛУ ═══ Акустика услышала одно, языковая модель
+    // поняла, что в этом разговоре такого быть не могло. Меняем текст на
+    // месте и честно показываем, что именно было заменено: домысел
+    // обязан быть виден, иначе ему нельзя доверять.
+    const b = (window.__bubbles || {})[m.pid];
+    if(b && b.isConnected && m.text){
+      try{
+        b.firstChild.textContent = m.text;
+        b.style.borderRight = '2px solid var(--accent)';
+        let note = b.querySelector('.fixnote');
+        if(!note){
+          note = document.createElement('div');
+          note.className = 'meta fixnote';
+          note.style.cssText = 'color:var(--dim);font-style:italic';
+          b.appendChild(note);
+        }
+        note.textContent = '↻ переслушала смыслом (' + (m.why || '') +
+                           '), было: ' + (m.was || '').slice(0, 70);
+      }catch(e){}
+    }
+  }
+  else if(m.type==='stt_regroup'){
+    // ═══ ЛЕНТА ПРИЧЁСЫВАЕТ СЕБЯ ЗАДНИМ ЧИСЛОМ ═══ Сервер пересобрал
+    // дорожки, когда набралось достаточно голоса, и часть реплик
+    // переехала к другому человеку. Меняем метку и цвет на месте: это
+    // честнее, чем оставить неверное имя навсегда (2026-08-16).
+    const map = window.__bubbles || {};
+    for(const it of (m.items || [])){
+      const b = map[it.pid];
+      if(!b || !b.isConnected) continue;
+      try{
+        const mm = /^#([0-9a-f]{6})$/i.exec(it.color || '');
+        const n = mm ? parseInt(mm[1], 16) : 0x8892a6;
+        const rgb = (n>>16)+','+((n>>8)&255)+','+(n&255);
+        b.style.borderLeft = '3px solid ' + (it.color || '#8892a6');
+        b.style.background = 'linear-gradient(90deg,rgba('+rgb+
+                             ',.18) 0%, rgba('+rgb+',.05) 70%)';
+        const md = b.querySelector('.meta');
+        if(md) md.textContent = md.textContent
+          .replace(/голос [A-F]/, it.name)
+          .replace(/(· )?переехал[аи].*$/, '') + ' · переехала в ' + it.name;
+      }catch(e){}
+    }
   }
   else if(m.type==='beat'){
     // БИТБОКС-СТРОКА (2026-08-15): перкуссия буквами, как её услышал бы
@@ -1802,8 +1950,28 @@ function handleJson(m){
     // текст пузыря той версией, которая ушла в память и в голос: что
     // слышно, то и написано.
     if(curSaikaMsg){
-      curSaikaMsg._raw = m.text || curSaikaMsg._raw;
-      curSaikaMsg.firstChild.textContent = stripMarks(curSaikaMsg._raw);
+      // ПУСТОЙ ФИНАЛ = УБРАТЬ ПУЗЫРЬ (2026-08-15, живой прокол через
+      // пять минут после релиза: сервер решил промолчать и прислал
+      // final:"" — а `m.text || _raw` на пустой строке брал СТАРОЕ, и
+      // «Понял.» остался висеть рядом со строкой «промолчала». Пустая
+      // строка тут не «нет данных», а осмысленное «стереть».)
+      if(typeof m.text === 'string' && !m.text){
+        curSaikaMsg.remove(); curSaikaMsg=null;
+      }else{
+        curSaikaMsg._raw = m.text || curSaikaMsg._raw;
+        curSaikaMsg.firstChild.textContent = stripMarks(curSaikaMsg._raw);
+      }
+    }
+  }
+  else if(m.type==='fem'){
+    // подмена рода в уже показанном тексте: сервер прислал пару
+    // «было -> стало» для одного предложения
+    if(curSaikaMsg && m.was && m.now){
+      const r=(curSaikaMsg._raw||'');
+      if(r.includes(m.was)){
+        curSaikaMsg._raw = r.replace(m.was, m.now);
+        curSaikaMsg.firstChild.textContent = stripMarks(curSaikaMsg._raw);
+      }
     }
   }
   else if(m.type==='tool'){
@@ -2133,6 +2301,21 @@ class Cap extends AudioWorkletProcessor{
 registerProcessor('cap',Cap);`;
 
 async function startMic(){
+  // ═══ ОДИН МИКРОФОН, А НЕ ДВА (2026-08-16) ═══
+  // В логе владельца: «Слух не успевает: уронила 1001 чанков (движок
+  // медленнее реального времени)» — тысяча кусков за полминуты. Столько
+  // звука с одного микрофона взяться не может; значит в вебсокет писали
+  // ДВА отправителя разом. Так и было: startMic не проверял, не запущен
+  // ли он уже. Старый воркл��т продолжал слать в тот же ws (свой
+  // AudioContext никто не закрывал), новый слал туда же — и сервер
+  // получал вдвое больше звука, чем есть в реальности. Отсюда и очередь
+  // в 280, и «движок медленнее реального времени»: он не медленный,
+  // ему просто наливали вдвое.
+  //
+  // Лечится одной строкой: перед новым стартом гасим прежний.
+  if(micOn || audioCtx || workletNode){
+    try{ stopMic('перезапуск потока'); }catch(e){}
+  }
   // ИСТОРИЯ НАСТРОЕК (2026-07-23, не повторять эксперименты):
   // 1. Хотели «чистый звук»: выключили AGC+шумодав, дали ручное усиление.
   //    Итог: шум дошёл до VAD (огрызки слов от whisper), а ручной гейн
@@ -2159,6 +2342,14 @@ async function startMic(){
     const tr=micStream.getAudioTracks()[0];
     const lbl=(tr&&tr.label)||selectedMicLabel||'';
     if(lbl) api('/api/mic/device',{label:lbl}).catch(()=>{});
+    // дорожку оборвала система — поднимаемся сразу, не дожидаясь сторожа
+    if(tr) tr.onended = () => {
+      if(!micOn) return;
+      micOn = false;
+      toast('Микрофон отобрала система — включаю обратно',
+            {kind: 'err', ttl: 6000});
+      startMic();
+    };
   }catch(e){}
   audioCtx = new AudioContext();
   // при АВТОстарте без клика Chrome может создать контекст suspended —
@@ -2183,7 +2374,13 @@ async function startMic(){
         g[i]=v>32767?32767:(v<-32768?-32768:v);
       }
     }
-    if(ws && ws.readyState===1) ws.send(e.data);
+    if(ws && ws.readyState===1){
+      // метка канала: 'S','K','A',1 — микрофон комнаты (см. ws_endpoint)
+      const _b=new Uint8Array(e.data.byteLength+4);
+      _b[0]=83; _b[1]=75; _b[2]=65; _b[3]=1;
+      _b.set(new Uint8Array(e.data),4);
+      ws.send(_b.buffer);
+    }
     if(monOn) _playMonitorChunk(e.data);   // «что слышит модель» — те же байты
     // индикатор уровня: RMS чанка -> полоска в кнопке 🎧
     const a=new Int16Array(e.data); let s=0, n=0;
@@ -2212,14 +2409,67 @@ async function startMic(){
   // включение микро = намерение поговорить: открываем окно диалога
   if(ws && ws.readyState===1) ws.send(JSON.stringify({type:'mic_on'}));
 }
-function stopMic(){
+function stopMic(why){
+  // ═══ КТО ПОГАСИЛ МИКРОФОН — ЗАПИСЫВАЕМ ВСЕГДА (2026-08-16) ═══
+  // Требование владельца, дословно: «микро только я должен отключать или
+  // запросом у Сайки, ничего другого не должно его отключать». Первый шаг
+  // к этому — перестать гасить его молча: каждая остановка называет
+  // причину, и её видно в консоли и в window.__micOff. Если микрофон
+  // когда-нибудь снова «выключится сам» — будет видно, чьи это руки.
+  window.__micOff = {why: why || 'кнопка', at: new Date().toLocaleTimeString('ru-RU')};
+  try{ if(why && why !== 'кнопка' && why !== 'пробел')
+        console.log('[микрофон] выключен:', why); }catch(e){}
   micOn=false; $('#btn-listen').classList.remove('rec');
   $('#lvl').style.transform='scaleX(0)';
   $('#input').placeholder='Скажи или напиши…';
-  if(workletNode) workletNode.disconnect();
-  if(micStream) micStream.getTracks().forEach(t=>t.stop());
-  if(audioCtx) audioCtx.close();
+  // ССЫЛКИ ОБНУЛЯЕМ, А НЕ ПРОСТО ГАСИМ (2026-08-16). Без этого
+  // workletNode оставался жив в замыкании: его onmessage продолжал
+  // стрелять по уже закрытому контексту, а проверка «микрофон уже
+  // запущен» не срабатывала — см. комментарий в startMic.
+  try{ if(workletNode){ workletNode.port.onmessage = null;
+        workletNode.disconnect(); } }catch(e){}
+  try{ if(micStream) micStream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  try{ if(audioCtx) audioCtx.close(); }catch(e){}
+  workletNode = null; micStream = null; audioCtx = null;
   if(ws && ws.readyState===1) ws.send(JSON.stringify({type:'mic_stop'}));
+}
+
+/* ═══ СТОРОЖ МИКРОФОНА (2026-08-16) ═══
+   Владелец: «микро только я должен отключать или запросом у Сайки,
+   ничего другого не должно его отключать». Кроме моего кода микрофон
+   умеет гасить сам браузер, и молча:
+     - дорожку обрывает система (устройство переключилось, USB моргнул,
+       Windows отдал вход другому приложению) — track.readyState
+       становится 'ended', а micOn у нас остаётся true: кнопка горит,
+       звука нет. Самый обидный случай — выглядит как «оно записывает»;
+     - AudioContext уходит в suspended (политика автозапуска, спящий
+       ноутбук, фоновая вкладка) — воркл��т живой, но кадры не идут.
+   Сторож раз в три секунды проверяет оба и молча поднимает обратно.
+   Гасить он не умеет вообще — только чинить. */
+let _micGuardWarned = 0;
+setInterval(async () => {
+  if(!micOn) return;
+  try{
+    const tr = micStream && micStream.getAudioTracks()[0];
+    const dead = !micStream || !tr || tr.readyState !== 'live';
+    if(dead){
+      if(Date.now() - _micGuardWarned > 15000){
+        _micGuardWarned = Date.now();
+        toast('Микрофон оборвался (устройство отдали другой программе или ' +
+              'переключили вход) — поднимаю обратно', {kind: 'err', ttl: 7000});
+      }
+      micOn = false;                 // чтобы startMic не решил, что всё цело
+      await startMic();
+      return;
+    }
+    if(audioCtx && audioCtx.state === 'suspended')
+      audioCtx.resume().catch(()=>{});
+  }catch(e){}
+}, 3000);
+
+// (заглушка ниже закрывает тело stopMic — сторож выше врезан между ними
+// намеренно, чтобы жить рядом с тем, что он чинит)
+function _micGuardEnd(){
 }
 
 /* ---------- прослушка микрофона (буквально «что слышит модель») ----------
@@ -2257,7 +2507,7 @@ async function toggleMonitor(){
     $('#btn-monitor').textContent='🔉 Прослушать этот микрофон';
     $('#btn-monitor').classList.remove('sel');
     // вернуть эхоподавление (constraints зависят от monOn — см. startMic)
-    if(micOn){ stopMic(); await startMic(); }
+    if(micOn){ stopMic('смена настроек'); await startMic(); }
     return;
   }
   if(!micOn){
@@ -2270,7 +2520,7 @@ async function toggleMonitor(){
   $('#btn-monitor').classList.add('sel');
   // перезапуск с echoCancellation:false — иначе AEC вычитает твой же
   // голос, который играет прослушка (самоподавление)
-  stopMic(); await startMic();
+  stopMic('смена настроек'); await startMic();
 }
 
 /* ---------- всплывающие меню ---------- */
@@ -2306,7 +2556,7 @@ async function fillMicPop(){
     el.innerHTML='🎙 <span class="mname" title="'+labelEsc+'">'+labelEsc+'</span>'+
       (sel?' <span class="st ok">✓ выбран</span>':'');
     el.onclick=()=>{selectedMic=d.deviceId;localStorage.micId=d.deviceId;
-      fillMicPop(); if(micOn){stopMic();startMic();}
+      fillMicPop(); if(micOn){stopMic('смена устройства');startMic();}
       };
     $('#mic-devices').appendChild(el);
   });
@@ -3205,7 +3455,9 @@ function renderAlways(){
 }
 
 /* ---------- события ---------- */
-$('#btn-listen').onclick = ()=> micOn? stopMic(): startMic();
+// кнопкой включённый микрофон пробел не гасит (см. _pttOwned ниже)
+$('#btn-listen').onclick = ()=>{ window._pttOwned = false;
+  return micOn ? stopMic('кнопка') : startMic(); };
 $('#btn-mic').onclick = ()=>{ fillMicPop(); togglePop('pop-mic'); };
 $('#pop-mic').addEventListener('click', e=>e.stopPropagation());
 $('#btn-monitor').onclick = toggleMonitor;
@@ -3300,7 +3552,7 @@ $('#mic-gain').oninput = e=>{
 $('#btn-mic-ns').onclick = async()=>{
   micNS=!micNS; localStorage.micNS=micNS?'1':'0';
   $('#mic-ns-label').textContent='Шумодав: '+(micNS?'вкл':'выкл');
-  if(micOn){ stopMic(); await startMic(); }   // применить на живом потоке
+  if(micOn){ stopMic('смена настроек'); await startMic(); }  // на живом потоке
 };
 $('#btn-clear').onclick = async()=>{
   await api('/api/dialog/clear',{});
@@ -3845,12 +4097,26 @@ async function pollNet(){
 
 /* кнопка записи: одиночный клик по значку меню, отдельная логика:
    долгое нажатие пробела = говорить (push-to-talk) */
+// ═══ ПРОБЕЛ ГАСИТ ТОЛЬКО ТО, ЧТО САМ ЗАЖЁГ (2026-08-16) ═══
+// Владелец: «и нах микро у меня вырубается постоянно». Вот почему:
+// keyup по пробелу звал stopMic() ВСЕГДА, когда микрофон включён — без
+// разницы, кто его включил. А пробел на странице нажимается постоянно:
+// им листают, им же промахиваются мимо поля ввода. Человек включил
+// микрофон кнопкой, походя нажал пробел — микрофон погас, и выглядит
+// это как «оно само выключается».
+//
+// Push-to-talk остаётся ровно тем, чем задуман: держишь пробел —
+// говоришь, отпустил — замолчал. Но гасит он микрофон, ТОЛЬКО если сам
+// его и зажёг. Включённый кнопкой пробел больше не трогает.
+window._pttOwned = false;
 document.addEventListener('keydown', e=>{
   if(e.code==='Space' && e.target===document.body && !micOn){
-    e.preventDefault(); startMic(); }
+    e.preventDefault(); window._pttOwned = true; startMic(); }
 });
 document.addEventListener('keyup', e=>{
-  if(e.code==='Space' && micOn && e.target===document.body){ stopMic(); }
+  if(e.code==='Space' && micOn && window._pttOwned &&
+     e.target===document.body){
+    window._pttOwned = false; stopMic('пробел'); }
 });
 
 /* ---------- дев-доска (карта разработки) ---------- */
@@ -3940,7 +4206,7 @@ document.addEventListener('keydown', e=>{
   }
   if(/^(input|textarea)$/i.test((e.target.tagName||'')) || e.ctrlKey || e.metaKey || e.altKey) return;
   if(e.code==='KeyB'){ e.preventDefault(); toggleBoard(); }
-  else if(e.code==='KeyM'){ e.preventDefault(); micOn?stopMic():startMic(); }
+  else if(e.code==='KeyM'){ e.preventDefault(); micOn?stopMic('горячая клавиша M'):startMic(); }
   else if(e.code==='KeyV'){ e.preventDefault(); if(typeof bargeIn==='function') bargeIn(); }
   else if(e.code==='KeyX'){ e.preventDefault(); quickPickModels(); }
   else if(e.code==='KeyC'){ e.preventDefault(); quickPickTts(); }
@@ -8514,7 +8780,12 @@ eqFrame();
   // пыль тоже выключаемая (2026-07-29): «лучше их убрать или сделать
   // нормально» — сделал и то, и другое: дыхание + личный тумблер
   const show = {cloud: true, terr: true, tail: true, dust: true};
-  try{ if(localStorage.saika_vp_dust === '0') show.dust = false; }catch(e){}
+  // ПЫЛЬ ВЫКЛЮЧЕНА ПО УМОЛЧАНИЮ (2026-08-16, владелец: «убери дурацкие
+  // пылинки»). Она была украшением, а карта голосов — измерительный
+  // прибор: у прибора на стекле не должно быть блёсток. Тумблер остался,
+  // включить можно, но по умолчанию — чистое поле.
+  show.dust = false;
+  try{ if(localStorage.saika_vp_dust === '1') show.dust = true; }catch(e){}
 
   /* ─────────────────────────── стили ─────────────────────────── */
   const css = document.createElement('style');
@@ -9219,6 +9490,7 @@ eqFrame();
   }
   registerProcessor('syscap',SysCap);`;
   let sysStream = null, sysCtx = null, sysNode = null, sysLvl = 0;
+  // микрофон прослушка больше не трогает — свои переменные ей не нужны
 
   function paintSys(){
     const b = $id('vp-sys'), st = $id('vp-sysst');
@@ -9226,9 +9498,10 @@ eqFrame();
     b.textContent = sysStream ? '■ Прекратить' : '🖥 Слушать систему';
     b.classList.toggle('acc', !!sysStream);
     if(st) st.textContent = sysStream
-      ? 'слушает системный звук · распознаёт речь и голоса, но не отвечает'
-      : 'звук с компьютера вместо микрофона — включи кино и посмотри, что она '
-        + 'из него вытащит. Отвечать при этом не будет';
+      ? 'слышит систему И твой микрофон разом · чужие голоса записывает молча, '
+        + 'тебе отвечает'
+      : 'звук с компьютера ПЛЮС твой микрофон — включи кино и посмотри, что она '
+        + 'из него вытащит. Отвечать будет только тебе';
   }
 
   async function sysStart(){
@@ -9248,27 +9521,66 @@ eqFrame();
       st.getVideoTracks().forEach(t => t.stop());   // картинка не нужна
       sysStream = new MediaStream(at);
       at[0].onended = () => sysStop();
-      if(typeof micOn !== 'undefined' && micOn && typeof stopMic === 'function')
-        stopMic();                                   // два потока в один ws нельзя
+      // ═══ МИКРОФОН НЕ ТРОГАЕМ ВООБЩЕ (2026-08-16, третья и последняя
+      // редакция за вечер) ═══
+      //
+      // Владелец, дословно: «какого хуя мой микро опять вырубился при
+      // включении прослушивания с системы звука». И до этого: «я же могу
+      // с компа считывать звук от друга в дискорде и при этом слышать,
+      // что вокруг меня происходит».
+      //
+      // Обе прошлые попытки исходили из ложной посылки «в вебсокет можно
+      // писать только одним источником». Сначала я СМЕШИВАЛ дорожки —
+      // получил клиппинг и двойное эхо (микрофон слышит те же колонки).
+      // Потом ПЕРЕКЛЮЧАЛ — в эфире всегда один, а значит второго в этот
+      // момент не слышно вовсе. Обе исходили из одного и того же вранья.
+      //
+      // Правда в том, что сокет один, а КАНАЛОВ может быть сколько
+      // угодно: достаточно помечать кадры. Теперь микрофон шлёт свои
+      // кадры с меткой 1, системный звук — с меткой 2, на сервере у
+      // каждого своя нарезка, свои фразы и своя дорожка в чате. Значит
+      // трогать микрофон не нужно СОВСЕМ: он как работал, так и работает,
+      // кнопка не гаснет, поток не рвётся.
       sysCtx = new AudioContext();
       const blob = new Blob([SYS_WORKLET], {type: 'application/javascript'});
       await sysCtx.audioWorklet.addModule(URL.createObjectURL(blob));
       sysNode = new AudioWorkletNode(sysCtx, 'syscap');
       sysCtx.createMediaStreamSource(sysStream).connect(sysNode);
+      const _rms = buf => {
+        const a = new Int16Array(buf);
+        let s2 = 0, n = 0;
+        for(let i = 0; i < a.length; i += 4){ s2 += (a[i] / 32768) ** 2; n++; }
+        return Math.sqrt(s2 / Math.max(1, n));
+      };
+      const _send = (buf, ch) => {
+        // метка канала перед PCM: 'S','K','A',номер (см. ws_endpoint)
+        if(typeof ws === 'undefined' || !ws || ws.readyState !== 1) return;
+        const a = new Uint8Array(buf.byteLength + 4);
+        a[0] = 83; a[1] = 75; a[2] = 65; a[3] = ch;
+        a.set(new Uint8Array(buf), 4);
+        ws.send(a.buffer);
+      };
+      // микрофон включён? Прослушка системы его больше не отнимает, но
+      // если он выключен — комнату она и не услышит, и об этом надо
+      // сказать, а не молча слушать половину мира
+      if(typeof micOn !== 'undefined' && !micOn)
+        toast('Слушаю систему. Микрофон при этом выключен — комнату вокруг '
+              + 'себя я не услышу, включи его кнопкой, если нужен и он.',
+              {kind: 'warn', ttl: 9000});
       // отдаём поток наружу: спектр (плоский и объёмный) рисует именно то,
       // что сейчас слушает сервер, а не выключенный микрофон
       window.saikaSysStream = sysStream; window.saikaSysCtx = sysCtx;
       sysNode.port.onmessage = e => {
-        if(typeof ws !== 'undefined' && ws && ws.readyState === 1) ws.send(e.data);
-        const a = new Int16Array(e.data);
-        let s2 = 0;
-        for(let i = 0; i < a.length; i += 8) s2 += (a[i] / 32768) ** 2;
-        sysLvl = Math.sqrt(s2 / Math.max(1, a.length / 8));
+        _send(e.data, 2);                  // канал 2 — звук с компьютера
+        sysLvl = _rms(e.data);
       };
+      // owner:true — «молчу на кино, но не на хозяина». Раньше режим
+      // затыкал её на ВСЁ, и вопрос владельца в тот же микрофон уходил
+      // в никуда наравне с репликами ютубера.
       if(typeof ws !== 'undefined' && ws && ws.readyState === 1)
-        ws.send(JSON.stringify({type: 'observe', on: true}));
-      toast('Слушаю систему. Речь не распознаю — просто смотрю, какие там ' +
-            'голоса и звуки. Журнал слуха ниже пишет всё это в отчёт.',
+        ws.send(JSON.stringify({type: 'observe', on: true, owner: true}));
+      toast('Слушаю систему отдельной дорожкой — микрофон при этом работает ' +
+            'как работал. Чужие голоса записываю молча, тебе отвечаю.',
             {kind: 'ok', ttl: 9000});
     }catch(e){
       toast('Не получилось взять системный звук: ' + (e.message || e),
@@ -9286,7 +9598,8 @@ eqFrame();
     sysNode = sysCtx = sysStream = null;
     window.saikaSysStream = window.saikaSysCtx = null;
     if(typeof ws !== 'undefined' && ws && ws.readyState === 1)
-      ws.send(JSON.stringify({type: 'observe', on: false}));
+      ws.send(JSON.stringify({type: 'observe', on: false, owner: false}));
+    // микрофон тут не трогаем: прослушка его не забирала (2026-08-16)
     paintSys();
   }
   const sysBtn = $id('vp-sys');
@@ -9650,7 +9963,8 @@ eqFrame();
                   : s.auto ? ' <span class="sm" title="познакомилась сама">✨</span>'
                   : '') + '</div>' +
         '<div class="sm">' + ago(s.last) + ' · ' + (s.heard || 0) + ' раз · ' +
-        pitch + '</div>' + g + '</div><div class="acts" draggable="false">' +
+        pitch + skelLine(s) + '</div>' + g + '</div>' +
+        '<div class="acts" draggable="false">' +
         '<button draggable="false" data-col="' + esc(n) + '" title="Сменить цвет">◑</button>' +
         // КОРОНА — СКРЫТАЯ НАСТРОЙКА (2026-07-29, владелец: «такое не надо
         // делать, это скрытая настройка»). Кнопка «назначить создателя» на
@@ -9734,6 +10048,25 @@ eqFrame();
     });
     // ПАЛИТРА (2026-07-29). Золото в списке отсутствует намеренно: это
     // цвет создателя, сервер его и не отдаст (см. registry.set_color).
+  // СКЕЛЕТ ГОЛОСА НА КАРТОЧКЕ (2026-08-16). Показываем только то, что
+  // измерено достаточное число раз: медиана по шести с лишним репликам —
+  // уже число, по одной — гадание. Длина тракта это физический размер
+  // человека (у взрослого мужчины ~17 см, у женщины ~14, у ребёнка ~11),
+  // и по ней голоса различаются надёжнее, чем по высоте тона.
+  function skelLine(s){
+    const k = s && s.skel;
+    if(!k) return '';
+    const bits = [];
+    if(k.tract) bits.push('тракт ' + k.tract.med + ' см');
+    if(k.hz) bits.push('тон ' + k.hz.lo + '–' + k.hz.hi + ' Гц');
+    if(k.rate) bits.push(k.rate.med + ' сл/с');
+    if(!bits.length) return '';
+    const n = (k.tract || k.hz || k.rate).n;
+    return '<br><span style="opacity:.75">скелет: ' + bits.join(' · ') +
+           ' <span class="sm">(по ' + n + ' репликам)</span></span>';
+  }
+
+
     const PAL = ['#4dd0e1', '#ffb74d', '#ba68c8', '#81c784',
                  '#f06292', '#9fa8da', '#4db6ac', '#ff8a65'];
     box2.querySelectorAll('[data-own]').forEach(b =>
@@ -10214,6 +10547,59 @@ eqFrame();
     D.paint(ctx, w, h, Math.min(2, window.devicePixelRatio || 1));
   }
 
+  // ═══ КООРДИНАТНАЯ СЕТКА (2026-08-16) ═══
+  // Владелец: «точки сделать нужно как в научной работе — проявление с
+  // высокой точностью, попадание по частотам звуков».
+  //
+  // Карта голосов это не картинка, а ПРИБОР: она показывает, где в
+  // пространстве тембров лежит человек. У прибора обязана быть шкала,
+  // иначе по нему нельзя ничего сказать — только полюбоваться. Рисуем
+  // честную декартову сетку с делениями и подписями осей.
+  //
+  // Что за оси. Проекция (UMAP) сжимает 192 измерения ECAPA в два, и у
+  // этих двух нет имени в физике — это «главное направление различий
+  // между голосами» и «второе». Так и подписываем, без выдумок. Слева
+  // отдельная шкала тона в герцах: она измерена по-настоящему, и по ней
+  // видно, куда попадает голос по частоте.
+  function grid(ctx, w, h, s, cx, cy){
+    const step = s * 0.5;                       // деление = 0.5 в единицах
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.font = '10px ui-monospace,SFMono-Regular,Menlo,monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for(let k = -6; k <= 6; k++){
+      const x = cx + k * step, y = cy + k * step;
+      const major = (k === 0);
+      ctx.strokeStyle = major ? 'rgba(233,233,237,.16)'
+                             : 'rgba(233,233,237,.055)';
+      if(x > 2 && x < w - 2){
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      if(y > 2 && y < h - 2){
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      if(!major && x > 18 && x < w - 18){
+        ctx.fillStyle = 'rgba(233,233,237,.30)';
+        ctx.fillText((k * 0.5).toFixed(1), x, h - 9);
+      }
+      if(!major && y > 14 && y < h - 22){
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(233,233,237,.30)';
+        ctx.fillText((-k * 0.5).toFixed(1), w - 6, y);
+        ctx.textAlign = 'center';
+      }
+    }
+    ctx.fillStyle = 'rgba(233,233,237,.38)';
+    ctx.font = '10px ui-monospace,SFMono-Regular,Menlo,monospace';
+    ctx.fillText('главное направление различий голосов', cx, h - 22);
+    ctx.save();
+    ctx.translate(w - 20, cy); ctx.rotate(-Math.PI / 2);
+    ctx.fillText('второе направление', 0, 0);
+    ctx.restore();
+    ctx.restore();
+  }
+
   function drawMap(cv, big){
     if(!cv || !cv.getBoundingClientRect().width) return;
     fit(cv, big ? 0 : 150);
@@ -10221,6 +10607,7 @@ eqFrame();
     const s = Math.min(w, h) / 2 / 1.35, cx = w / 2, cy = h / 2;
     ctx.clearRect(0, 0, w, h);
     if(big && show.dust) dust(ctx, w, h, s, cx, cy);
+    if(big) grid(ctx, w, h, s, cx, cy);
     const o = offOf(cv);
     buildCloud(o, w, h, s, cx, cy);
     ctx.drawImage(o.cv, 0, 0);
@@ -10236,6 +10623,29 @@ eqFrame();
       ctx.textAlign = 'center';
       ctx.fillText(n, map(mx, s, cx), map(-top, s, cy) - s * .035);
     });
+
+    // ═══ ХОД ГОЛОСА ЛИНИЕЙ (2026-08-16) ═══ Владелец прислал научную
+    // карту птичьего пения: там точки соединены тонкими нитями, и видно
+    // не облако, а ПУТЬ. У нас то же самое имеет смысл: подряд идущие
+    // отпечатки одного человека — это его движение по пространству
+    // тембров, пока он говорит. Нить показывает порядок, облако — нет.
+    if(big && show.tail && CLOUD.pts && CLOUD.pts.length > 1){
+      const lastBy = {};
+      ctx.lineWidth = 1;
+      for(let i = Math.max(0, CLOUD.pts.length - 120); i < CLOUD.pts.length; i++){
+        const p = CLOUD.pts[i];
+        if(!p.who) continue;
+        const prev = lastBy[p.who];
+        lastBy[p.who] = p;
+        if(!prev) continue;
+        const col = (CLOUD.colors || {})[p.who] || GREY;
+        ctx.strokeStyle = hex(col, .13);
+        ctx.beginPath();
+        ctx.moveTo(map(prev.x, s, cx), map(-prev.y, s, cy));
+        ctx.lineTo(map(p.x, s, cx), map(-p.y, s, cy));
+        ctx.stroke();
+      }
+    }
 
     const now = performance.now();
     const fresh = live.on && (now - live.seen) < 1400;
@@ -10514,8 +10924,39 @@ eqFrame();
     $id('dn-list').querySelectorAll('.dn-row').forEach(r => {
       r.onclick = async ev => {
         ev.stopPropagation();
-        try{ ST = await api('/api/denoise/set', {engine: r.dataset.e}); }
-        catch(e){}
+        // ═══ КЛИК ОБЯЗАН ОТВЕЧАТЬ (2026-08-16) ═══
+        // Владелец: «с шумодавом чё-то произошло, она как будто думает и
+        // при этом ничего не нажимается». Так и было: смена движка грузит
+        // модель синхронно (RNNoise, DeepFilterNet — секунды, а если
+        // пакета нет — куда дольше), ответ не приходит, а строчка молчит
+        // и выглядит мёртвой. Ошибку тут вообще глотали пустым catch.
+        // Теперь список на время запроса гаснет и не принимает клики, а
+        // неудача говорит вслух, а не проваливается в тишину.
+        const box = $id('dn-list');
+        if(box.dataset.busy) return;
+        box.dataset.busy = '1';
+        box.style.opacity = .45;
+        box.style.pointerEvents = 'none';
+        let t = 0;
+        try{
+          // гонка с таймером: сигнал в fetch пробросить нельзя (api тут
+          // общий и без него), а висеть молча нельзя тем более
+          ST = await Promise.race([
+            api('/api/denoise/set', {engine: r.dataset.e}),
+            new Promise((_ok, bad) => {
+              t = setTimeout(() => bad(new Error('_timeout')), 25000);
+            })]);
+        }catch(e){
+          toast(e && e.message === '_timeout'
+            ? 'Движок «' + r.dataset.e + '» не поднялся за 25 секунд — скорее '
+              + 'всего, пакета нет и он доставляется. Оставила прежний.'
+            : 'Не переключилось: ' + (e.message || e), {kind: 'err', ttl: 9000});
+        }finally{
+          if(t) clearTimeout(t);
+          delete box.dataset.busy;
+          box.style.opacity = '';
+          box.style.pointerEvents = '';
+        }
         paint();
       };
     });
