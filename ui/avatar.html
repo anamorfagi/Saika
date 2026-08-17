@@ -234,7 +234,7 @@ addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight;
   // при растягивании окна кадр пересобираем, но ручной масштаб уже
   // сохраняется отдельно и переживает это (см. saikaFit — zoom не трогает)
   if (document.body.classList.contains('desk')) window.saikaFit &&
-    window.saikaFit(); });
+    window.saikaFit(false); });   // false — не трогать выставленное руками
 
 /* ---------- позиционирование мышью (2026-07-25) ----------
    ЛКМ-драг — двигать модель (вверх/вниз/в стороны), колесо — приблизить/
@@ -286,6 +286,19 @@ const D2R = Math.PI / 180;
 // угол приводим к -180..180: при шаге гранями азимут иначе уезжает в -870°,
 // и ползунок в настройках (диапазон ±180) начинает показывать неправду
 const norm180 = a => ((((a || 0) + 180) % 360) + 360) % 360 - 180;
+/* РУЧКА К ВИДУ СНАРУЖИ (2026-08-17). Скрипт — модуль, поэтому `view`
+   заперт в его области видимости, и ни стенд, ни консоль браузера до него
+   не дотягивались: проверить «пережил ли вид изменение размера окна» можно
+   было только глазами, а глаз этого и не ловит (сброс облёта выглядит как
+   обычный вид спереди). Ручка на чтение и на правку, как window.saikaPanes
+   в index.html:
+       saikaView()                  — что сейчас
+       saikaView({ox:0.2, az:30})   — поправить и перерисовать            */
+window.saikaView = function(patch){
+  if (patch){ Object.assign(view, patch); applyView(); }
+  return view;
+};
+
 function applyView(){
   placeCamera();                 // облёт камеры — часть вида
   if (vrm){
@@ -338,7 +351,7 @@ function activeCam(){ return view.ortho ? orthoCam() : camera; }
 /* Восстановление сохранённого вида. Если он есть — saikaFit не зовём:
    иначе подгонка перебьёт то, что человек выставил руками. */
 window.saikaRestore = async function(){
-  if (!_DESK) { window.saikaFit(); return; }
+  if (!_DESK) { window.saikaFit(true); return; }
   try{
     const r = await fetch('/api/avatar/desk').then(x => x.json());
     const v = r && r.view;
@@ -349,10 +362,23 @@ window.saikaRestore = async function(){
       return;                       // человек уже всё настроил — не мешаем
     }
   }catch(e){}
-  window.saikaFit();                // первый запуск: вписываем целиком
+  window.saikaFit(true);            // первый запуск: вписываем целиком
 };
 
-window.saikaFit = function(){
+window.saikaFit = function(hard){
+  /* hard=true — «вписать с нуля»: зовётся только когда сохранённого вида
+     нет (первый запуск). hard=false/не задан — «окно поменяло размер»:
+     пересобираем кадр, но НИЧЕГО из выставленного человеком не трогаем.
+
+     ПОЧЕМУ ПОЯВИЛСЯ ПАРАМЕТР (2026-08-17, «шифт-колесико ломается при
+     масштабировании окна, а остальное нет»). Здесь стояло
+     `view = {x:0, y:0, z:0, zoom: view.zoom || 1}` — присваивание ЦЕЛОГО
+     объекта, которое молча выбрасывало всё, чего нет в фигурных скобках:
+     сдвиг вида (ox/oy/oz), перенос модели (x/y/z), облёт (az/el), поворот
+     (rx/ry/rz), шаг привязки, режим проекции. А функция висит на resize.
+     Заметен из всего этого был именно сдвиг: zoom уцелевал явно, а облёт
+     сбрасывался в ноль — то есть в вид спереди, который глазом от нормы
+     не отличить. */
   if (!vrm) return;
   const box = new THREE.Box3().setFromObject(vrm.scene);
   const size = box.getSize(new THREE.Vector3());
@@ -367,7 +393,10 @@ window.saikaFit = function(){
   // каждое изменение размера окна, и если обнулять zoom, то человек тянет
   // край рамки — и теряет то приближение модели, которое сам только что
   // выставил колесом. Подгоняем расстояние камеры, его настройку не трогаем.
-  view = {x:0, y:0, z:0, zoom: view.zoom || 1};
+  if (hard){          // только первый запуск: ставим фигуру по центру
+    view.x = view.y = view.z = 0;
+    view.ox = view.oy = view.oz = 0;
+  }
   camera.position.set(mid.x, mid.y, mid.z + dist);
   camera.lookAt(mid.x, mid.y, mid.z);
   camera.updateProjectionMatrix();
@@ -379,6 +408,21 @@ window.saikaFit = function(){
    Pointer Events покрывают мышь, палец и стилус одним кодом, а щипок двумя
    пальцами считаем сами — стандартного события для него нет. */
 const clampZoom = z => Math.min(4, Math.max(0.35, z));
+/* ПИКСЕЛИ -> МЕТРЫ СЦЕНЫ (2026-08-17). Было прибито число 2.2 — «столько
+   примерно метров видно по высоте кадра». Оно неверно вдвое: при расстоянии
+   2.6 и угле обзора 28° по высоте видно 1.30 м, а не 2.2 — поэтому сдвиг
+   уезжал заметно быстрее курсора, и «поймать» модель в нужное место с
+   первого раза не получалось. Считаем из того, чем реально смотрим: у
+   перспективы высота кадра зависит от расстояния до модели и угла, у
+   ортографии задана явно. Так сдвиг идёт ровно за рукой при любом
+   расстоянии, зуме и размере окна. */
+function pxToScene(){
+  const zoom = view.zoom || 1;
+  const H = Math.max(1, innerHeight);
+  if (view.ortho) return (1.9 / zoom) / H;
+  const r = view.dist || (camMode === 'bust' ? 1.35 : BASE_DIST);
+  return (2 * r * Math.tan(camera.fov * Math.PI / 360) / zoom) / H;
+}
 const ptrs = new Map();
 let pinch0 = 0, zoom0 = 1, moved = 0, lastTap = 0;
 function pinchDist(){
@@ -432,7 +476,7 @@ function _mid(dx, dy, alt, ctrl, shift, p){
   } else if (ctrl){
     view.zoom = clampZ((view.zoom || 1) * (1 - dy * 0.004));
   } else if (shift){
-    const kp = 2.2 / (innerHeight * view.zoom);
+    const kp = pxToScene();
     const right = new THREE.Vector3(), up = new THREE.Vector3(),
           fwd = new THREE.Vector3();
     camera.updateMatrixWorld();          // базис берём из СВЕЖЕЙ матрицы
@@ -513,7 +557,7 @@ addEventListener('pointermove', e=>{
     return;
   }
   if (!e.shiftKey) p.axis = '';
-  const k = 2.2/(innerHeight*view.zoom);      // пиксели -> метры сцены
+  const k = pxToScene();                      // пиксели -> метры сцены
   if (p.b === 2) camera.position.y += dy*k;   // ПКМ — вертикаль камеры
   else { view.x += dx*k; view.y -= dy*k; }
   applyView();

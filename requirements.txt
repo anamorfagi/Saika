@@ -1,0 +1,80 @@
+# ЗАВИСИМОСТИ ПРОЕКТА — прямые, с точными версиями (2026-08-17).
+#
+# Откуда взято: список собран НЕ от руки. Скрипт прошёл все .py проекта,
+# собрал импорты, сопоставил их с тем, что реально стоит в рабочем .venv
+# (229 дистрибутивов), и оставил только те, которые код действительно
+# импортирует. Версии — те, на которых Сайка работает СЕЙЧАС.
+#
+# Зачем это нужно. До сегодня окружение собиралось по мере надобности
+# «последней версией с pip», и однажды оборванная установка scipy 1.18
+# уронила слух, уши и голос — лечили fix_venv.bat. С фиксированными
+# версиями такое не повторится: на любой машине встанет ровно то же.
+#
+# ВАЖНО ПРО TORCH. Версия +cu130 лежит НЕ на обычном pypi:
+#   pip install torch==2.13.0+cu130 --index-url https://download.pytorch.org/whl/cu130
+# Ставить ПЕРВЫМ, до остального — иначе pip подтянет сборку под процессор.
+#
+# Полный слепок всех 229 пакетов (включая то, что тянется само) —
+# requirements.lock.txt. Он для точного воспроизведения, этот файл — для чтения.
+
+# --- Слух (распознавание речи, шумодав, отпечаток голоса)
+faster-whisper==1.2.1
+pywhispercpp==1.5.0
+vosk==0.3.45
+gigaam==0.1.0
+tone==0.1.0
+silero-vad==6.2.1
+soundfile==0.14.0
+sounddevice==0.5.5
+soxr==1.1.0
+noisereduce==3.0.3
+speechbrain==1.1.0
+umap-learn==0.5.12
+laion-clap==1.1.7
+panns-inference==0.1.1
+
+# --- Голос (синтез)
+edge-tts==7.2.8
+qwen-tts==0.0.4
+piper-tts==1.6.0
+
+# --- Мозги (модели, эмбеддинги)
+torch==2.13.0+cu130
+transformers==4.57.3
+huggingface-hub==0.36.2
+numpy==1.26.4
+
+# --- Память
+chromadb==1.5.9
+apscheduler==3.11.3
+
+# --- Глаза (экран, камера, чтение текста)
+opencv-python==4.13.0.92
+mss==10.2.0
+dxcam==0.3.0 ; sys_platform == "win32"
+windows-capture==2.0.0 ; sys_platform == "win32"
+pygrabber==0.2 ; sys_platform == "win32"
+rapidocr-onnxruntime==1.4.4
+
+# --- Руки (управление ПК, браузер, окна)
+pywin32==312 ; sys_platform == "win32"
+pywinauto==0.6.9 ; sys_platform == "win32"
+comtypes==1.4.16 ; sys_platform == "win32"
+pycaw==20251023 ; sys_platform == "win32"
+keyboard==0.13.5 ; sys_platform == "win32"
+psutil==7.2.2
+playwright==1.61.0
+winsdk==1.0.0b10 ; sys_platform == "win32"
+
+# --- Сеть и поиск
+requests==2.34.2
+ddgs==9.15.0
+trafilatura==2.2.0
+cryptography==49.0.0
+qrcode==8.2
+
+# --- Сервер и интерфейс
+fastapi==0.139.0
+uvicorn==0.51.0
+jinja2==3.1.6
+pyside6-addons==6.11.1

@@ -78,6 +78,22 @@ def _control_on():
     return bool(CFG.get("messengers.control_enabled", False))
 
 
+# РЕЖИМ ЗНАКОМСТВА (2026-08-17). Курица и яйцо: чтобы бот слушался только
+# владельца, нужен его числовой id, а узнать этот id владельцу негде — в
+# Телеграме он нигде не показан. Раньше бот в такой ситуации просто НЕ
+# ЗАПУСКАЛСЯ, и человек упирался в тупик: токен вписан, бот молчит, а
+# почему — видно только в логе сервера.
+# Теперь без списка владельцев бот поднимается, но не делает НИЧЕГО: любому
+# написавшему отвечает его же id и инструкцией. Это безопасно (команды в
+# этом режиме не исполняются ни для кого) и ровно этого хватает, чтобы
+# владелец узнал свой id и вписал его.
+_GREET = (
+    "\U0001f44b Это Сайка, но я пока никого не знаю в лицо.\n\n"
+    "Твой числовой id в Телеграме: {uid}\n\n"
+    "Впиши его в secrets.json, в messengers.owner_ids.telegram, и\n"
+    "перезапусти меня. До тех пор я никаких команд не выполняю — ни от\n"
+    "тебя, ни от кого-либо ещё.")
+
 _LOCKED = ("🔒 Управление ПК сейчас ВЫКЛЮЧЕНО владельцем. Включи рубильник в "
            "интерфейсе Сайки (правый верхний угол), тогда смогу закрывать/"
            "запускать. Статус и список процессов доступны всегда.")
@@ -175,6 +191,10 @@ def _tg_loop(token, owner_ids, cfg):
                 uid = (msg.get("from") or {}).get("id")
                 chat = (msg.get("chat") or {}).get("id")
                 text = msg.get("text", "")
+                if not owner_ids:
+                    # режим знакомства: называем id и ничего не выполняем
+                    _tg_send(base, chat, _GREET.format(uid=uid))
+                    continue
                 if uid not in owner_ids:
                     _tg_send(base, chat, "Извини, слушаюсь только владельца.")
                     continue
@@ -251,13 +271,17 @@ def start_all():
     tg = m.get("telegram", {}) or {}
     if tg.get("enabled") and tg.get("token"):
         ids = set(owners.get("telegram", []))
-        if not ids:
-            log.warning("Telegram включён, но owner_ids.telegram пуст — не "
-                        "запускаю (иначе кто угодно сможет управлять ПК)")
-        else:
-            threading.Thread(target=_tg_loop, args=(tg["token"], ids, m),
-                             daemon=True).start()
+        threading.Thread(target=_tg_loop, args=(tg["token"], ids, m),
+                         daemon=True).start()
+        if ids:
             log.info("Telegram-бот Сайки запущен для «%s»", pc)
+        else:
+            # это не отказ, а знакомство: команды не исполняются, бот
+            # только называет собеседнику его id (см. _GREET)
+            log.warning("Telegram: owner_ids.telegram пуст — поднимаю в "
+                        "режиме знакомства. Напиши боту, он пришлёт твой "
+                        "id; впиши его в secrets.json и перезапусти. "
+                        "Команды до этого не выполняются ни для кого.")
 
     vk = m.get("vk", {}) or {}
     if vk.get("enabled") and vk.get("token") and vk.get("group_id"):
