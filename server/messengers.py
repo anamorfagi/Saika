@@ -99,6 +99,43 @@ _LOCKED = ("🔒 Управление ПК сейчас ВЫКЛЮЧЕНО вл�
            "запускать. Статус и список процессов доступны всегда.")
 
 
+def _ask_saika(text):
+    """Свободная реплика -> её НАСТОЯЩИЕ мозги (2026-08-17).
+
+    Повод: в Телеграме она отвечала как автомат — «не поняла команду» на
+    всё, кроме пяти ключевых слов. Разборщик команд был единственным, что
+    тут стояло, до LLM текст не доходил вообще.
+
+    Свой мини-диалог городить не надо: api_chat прогоняет текст через тот
+    же run_dialog, что и разговор голосом, — с характером, памятью,
+    инструментами и рефлексами. Значит из мессенджера отвечает та же Сайка,
+    а не её бледная копия с отдельной историей.
+
+    Импорт ВНУТРИ функции намеренно: main импортирует нас, мы импортируем
+    main — на уровне модуля это кольцо. Так же сделано в остальных 15
+    местах проекта (см. ARCHITECTURE.md, шаг 0 распила это чинит).
+
+    Озвучка по умолчанию ВЫКЛЮЧЕНА: писать из мессенджера обычно значит
+    «меня нет дома», и говорить вслух в пустой комнате незачем. Включается
+    ключом messengers.speak_aloud.
+    """
+    from server.main import api_chat
+    try:
+        r = api_chat({
+            "text": text,
+            "speak": bool(CFG.get("messengers.speak_aloud", False)),
+            "timeout_s": int(CFG.get("messengers.reply_timeout_s", 180)),
+        })
+    except Exception as e:
+        log.warning("мессенджер: мозги не ответили: %s", e)
+        return "Задумалась и не смогла ответить. Загляни в логи сервера."
+    if not isinstance(r, dict):        # api_chat отдаёт JSONResponse при ошибке
+        return "Мозги сейчас недоступны — модель не отвечает или выключена."
+    reply = (r.get("reply") or "").strip()
+    if not reply:
+        return "Промолчала. Обычно это переполненное окно контекста у модели."
+    return reply[:3900]                # предел сообщения в Телеграме 4096
+
 def _reply_for(platform, user_id, text, cfg):
     from server import system_control as sc
     pc = cfg.get("pc_name", "этот ПК")
@@ -172,7 +209,11 @@ def _reply_for(platform, user_id, text, cfg):
             _pending[key] = {"action": "launch", "arg": arg, "ts": time.time()}
             return f"🖥 {pc}: запустить «{arg}»? Ответь «да»."
 
-    return (f"🖥 {pc}: не поняла команду. Напиши «команды», покажу что умею.")
+    # НЕ КОМАНДА — ЗНАЧИТ РАЗГОВОР (2026-08-17). Раньше здесь стоял отказ
+    # «не поняла команду», и на «расскажи шутку» бот отвечал как автомат.
+    # Команды выше остаются быстрым путём: они не тратят модель и не ждут
+    # генерацию. Всё остальное — обычная реплика, идёт к ней целиком.
+    return _ask_saika(t)
 
 
 # ---------------------- Telegram ----------------------
@@ -198,11 +239,31 @@ def _tg_loop(token, owner_ids, cfg):
                 if uid not in owner_ids:
                     _tg_send(base, chat, "Извини, слушаюсь только владельца.")
                     continue
-                _tg_send(base, chat, _reply_for("telegram", uid, text, cfg))
+                # ОТВЕТ В ОТДЕЛЬНОМ ПОТОКЕ (2026-08-17). Генерация занимает
+                # секунды, а иногда и минуту. Раньше ответ считался прямо
+                # здесь, и на это время цикл опроса вставал: следующие
+                # сообщения копились и приходили пачкой после. Теперь
+                # долгий ответ не держит очередь, а «печатает…» показывает,
+                # что она не уснула.
+                threading.Thread(target=_tg_answer,
+                                 args=(base, chat, uid, text, cfg),
+                                 daemon=True).start()
         except Exception as e:
             log.debug("telegram loop: %s", e)
             time.sleep(3)
 
+
+def _tg_answer(base, chat, uid, text, cfg):
+    """Посчитать ответ и отправить. Живёт в своём потоке, см. _tg_loop."""
+    try:
+        requests.get(base + "/sendChatAction",
+                     params={"chat_id": chat, "action": "typing"}, timeout=10)
+    except Exception:
+        pass                            # «печатает…» — украшение, не повод падать
+    try:
+        _tg_send(base, chat, _reply_for("telegram", uid, text, cfg))
+    except Exception as e:
+        log.warning("telegram: ответ не отправился: %s", e)
 
 def _tg_send(base, chat_id, text):
     try:
