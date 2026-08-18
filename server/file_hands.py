@@ -220,17 +220,127 @@ def _places_load() -> dict:
         return {}
 
 
+def _place_path(v) -> str:
+    """Значение места: строка (старый формат) или словарь (новый)."""
+    if isinstance(v, dict):
+        return str(v.get("path") or "")
+    return str(v or "")
+
+
+def _places_write(d: dict):
+    _PLACES.parent.mkdir(exist_ok=True)
+    _PLACES.write_text(json.dumps(d, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+
+
 def place_save(name: str, path: str) -> str:
     name = (name or "").strip().lower()
     path = (path or "").strip().strip('"')
     if not name or not path:
         return "нужны имя и путь"
     d = _places_load()
-    d[name] = path
-    _PLACES.parent.mkdir(exist_ok=True)
-    _PLACES.write_text(json.dumps(d, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
+    old = d.get(name)
+    n = int(old.get("n", 0)) if isinstance(old, dict) else 0
+    # человек назвал место сам — это сильнее любого автозапоминания
+    d[name] = {"path": path, "n": n, "trust": "сказал человек"}
+    _places_write(d)
     return f"запомнила: «{name}» = {path}"
+
+
+def place_seen(name: str, path: str) -> int:
+    """ЗАПОМНИТЬ МЕСТО, КУДА ЧЕЛОВЕК ПРИВЁЛ САМ (2026-08-18).
+
+    Владелец, дословно: «если мы напрямую будем просить „изучи мой ПК“, это
+    будет звучать как „найди все мои секреты“… просто когда мы с ней будем
+    говорить „открой то, открой это“ — куда мы будем приходить первые разы,
+    пускай и запоминает как доверенные человеком».
+
+    Он прав, и это не только про такт. Обход дисков заранее — это догадка о
+    том, что человеку важно, по косвенным признакам: размеру папки, имени,
+    расположению. А просьба «открой Ламоду» — прямое указание, и стоит она
+    ноль ресурсов: мы туда всё равно идём. Место, куда привели, доверено по
+    построению; место, которое нашёл сканер, — только предположение.
+
+    Считаем визиты: из счётчика потом растут мгновенные пути. Один заход —
+    случайность, три — привычка, и такую фразу уже можно исполнять не
+    думая.
+
+    Возвращает, сколько раз сюда приходили.
+    """
+    name = (name or "").strip().lower()
+    path = (path or "").strip().strip('"')
+    if not name or not path or len(name) < 3:
+        return 0
+    d = _places_load()
+    cur = d.get(name)
+    # человеческое имя не перебиваем автоматическим: он назвал — ему виднее
+    if isinstance(cur, dict) and cur.get("trust") == "сказал человек" \
+            and _place_path(cur) != path:
+        return int(cur.get("n", 0))
+    n = int(cur.get("n", 0)) if isinstance(cur, dict) else (1 if cur else 0)
+    n += 1
+    d[name] = {"path": path, "n": n, "trust": "приходили вместе"}
+    try:
+        _places_write(d)
+    except Exception as e:
+        log.debug("место «%s» не записалось: %s", name, e)
+    return n
+
+
+def place_habit(name: str, min_n: int = 3):
+    """ПРИВЫЧНОЕ МЕСТО — то, куда ходили уже несколько раз (2026-08-18).
+
+    Владелец: «постепенно формировать рефлексы у себя для моментальных
+    запусков». Вот порог, после которого фразу можно исполнять не думая.
+
+    Отличие от place_resolve: тот отвечает на любое похожее имя, потому что
+    его зовёт МОДЕЛЬ — она уже подумала и решила, что речь о месте. Здесь
+    решения ещё не было: фразу перехватывают ДО модели, и ошибиться нельзя.
+    Поэтому и порог: три захода — это привычка, один — случайность, а по
+    случайности молча открывать папку вместо разговора нельзя.
+
+    Возвращает путь или None.
+    """
+    name = (name or "").strip().lower()
+    if len(name) < 3:
+        return None
+    d = _places_load()
+    q = _stems(name)
+    if not q:
+        return None
+    best, best_score, best_n = None, 0, 0
+    for k, v in d.items():
+        if not isinstance(v, dict):
+            continue                       # старая запись без счётчика
+        n = int(v.get("n", 0))
+        if n < min_n and v.get("trust") != "сказал человек":
+            continue
+        ks = _stems(k)
+        if not ks:
+            continue
+        # имя должно совпасть ЦЕЛИКОМ, а не пересечься одним словом:
+        # «открой игры» не должно уводить в «игровая музыка»
+        if not (q <= ks or ks <= q):
+            continue
+        score = len(q & ks)
+        if score > best_score or (score == best_score and n > best_n):
+            best, best_score, best_n = _place_path(v), score, n
+    if best and Path(best).is_dir():
+        return best
+    return None
+
+
+def places_top(limit: int = 12) -> list:
+    """Куда ходят чаще всего — для промпта и для будущих быстрых путей."""
+    d = _places_load()
+    items = []
+    for k, v in d.items():
+        items.append({"name": k, "path": _place_path(v),
+                      "n": int(v.get("n", 1)) if isinstance(v, dict) else 1,
+                      "trust": (v.get("trust", "") if isinstance(v, dict)
+                                else "сказал человек")})
+    items.sort(key=lambda i: -i["n"])
+    return items[:limit]
 
 
 def _stems(s: str) -> set:
@@ -251,15 +361,18 @@ def place_resolve(name: str):
     name = (name or "").strip().lower()
     d = _places_load()
     if name in d:
-        return d[name]
+        return _place_path(d[name])
     q = _stems(name)
     if not q:
         return None
-    best, best_score = None, 0
+    best, best_score, best_n = None, 0, -1
     for k, v in d.items():
         score = len(q & _stems(k))
-        if score > best_score:
-            best, best_score = v, score
+        # при равном совпадении слов выигрывает то место, куда ходили чаще:
+        # «проекты» у человека одни, а папок с похожим именем может быть три
+        n = int(v.get("n", 1)) if isinstance(v, dict) else 1
+        if score > best_score or (score == best_score and score and n > best_n):
+            best, best_score, best_n = _place_path(v), score, n
     return best
 
 

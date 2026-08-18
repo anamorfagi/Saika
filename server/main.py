@@ -5697,6 +5697,121 @@ _BARE_STOP = re.compile(r"^\s*(?:и|или|а|но|ну|же|бы|то|это|п
                         r"сейчас|потом|тоже|также)\b", re.I)
 
 
+def _tail_args(name: str, tail: str) -> dict:
+    """Хвост после имени инструмента -> аргументы (2026-08-18).
+
+    ПОЧЕМУ ЭТО ПОНАДОБИЛОСЬ. Живой вечер, лог целиком одинаковый:
+
+        [window_place:match="PC — проводник",monitor=2]
+            -> window_place({'match': 'match='}) -> Не нашла окно «match=»
+        [window_focus:match="explorer"]
+            -> window_focus({'match': 'match='}) -> Не нашла окно «match=»
+        [open_folder:path="C:\\"]
+            -> Не нашла папку «path=»
+        window_place:{"monitor": 2, "match": "explorer"}
+            -> window_place({'match': '{'}) -> Не нашла окно «{»
+
+    Разборщик ниже брал ВСЁ после имени как одно голое значение и упирался
+    в первую кавычку — в аргумент улетала буквально строка «match=». Ни
+    одно окно так не зовут, поэтому не находилось НИЧЕГО, и человек час
+    слышал «не удалось найти окно», хотя окно было на экране и звалось
+    ровно так, как модель и написала.
+
+    Голое значение — честный запасной путь для «[window_focus проводник]»,
+    но если модель написала пары ключ=значение или JSON, надо читать их,
+    а не гадать. Проверяем в этом порядке; ключи фильтруем по схеме, чтобы
+    выдуманное моделью поле не уехало инструменту.
+    """
+    tail = (tail or "").lstrip()
+    tail = tail.lstrip(":=([ \t")
+    if not tail:
+        return {}
+    try:
+        from server.llm import tools as _t
+        schemas = _t.schemas()
+    except Exception:
+        return {}
+    props = {}
+    for sc in schemas:
+        f = sc.get("function") or {}
+        if f.get("name") == name:
+            props = ((f.get("parameters") or {}).get("properties") or {})
+            break
+    if not props:
+        return {}
+
+    # ЧУЖИЕ ИМЕНА КЛЮЧЕЙ (2026-08-18, живой лог: «[window_minimize:
+    # title="HoYoPlay"]» — параметр зовётся match, а модель написала title,
+    # и аргумент отбрасывался как выдуманный). Модель называет поле так,
+    # как оно зовётся у неё в голове; это тот же случай, что и «прощение
+    # диалекта» скобок — принять дешевле, чем переучивать.
+    _SYN = {"title": "match", "window": "match", "окно": "match",
+            "window_title": "match", "target": "match", "app": "match",
+            "имя": "match", "название": "match",
+            "folder": "path", "dir": "path", "directory": "path",
+            "папка": "path", "путь": "path",
+            "screen": "monitor", "display": "monitor", "экран": "monitor",
+            "монитор": "monitor", "pos": "position", "позиция": "position",
+            "где": "position", "куда": "position",
+            "query": "name", "программа": "name", "app_name": "name"}
+
+    def _key(k: str) -> str:
+        if k in props:
+            return k
+        alt = _SYN.get(k.lower())
+        return alt if alt and alt in props else ""
+
+    got = {}
+    # 1) JSON сразу за именем: window_place:{"monitor": 2, "match": "..."}
+    if tail.startswith("{"):
+        depth, end = 0, None
+        for i, ch in enumerate(tail):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if end:
+            try:
+                obj = json.loads(tail[:end])
+            except Exception:
+                obj = None
+            # объект с полем name — это полноценный вызов, его разбирает
+            # _text_tool_calls; сюда мы попадаем только если там его нет
+            if isinstance(obj, dict) and not obj.get("name"):
+                got = {_key(k): v for k, v in obj.items() if _key(k)}
+    # 2) пары ключ=значение до закрывающей скобки или конца строки
+    if not got:
+        cut = re.split(r"[\]\)}\n]", tail, 1)[0]
+        if re.search(r"[a-zA-Zа-яёА-ЯЁ_]\w*\s*[=:]", cut):
+            pairs = re.findall(
+                r"([a-zA-Zа-яё_]\w*)\s*[=:]\s*"
+                r"(?:\"([^\"]*)\"|'([^']*)'"
+                r"|((?:(?!\s*,\s*[a-zA-Zа-яё_]\w*\s*[=:])[^,\]\)}\n])+))",
+                cut, re.I)
+            for k, a, b, c in pairs:
+                kk = _key(k)
+                if kk:
+                    got[kk] = (a or b or c).strip().strip("\"'")
+    # ТИПЫ (2026-08-18): пары приходят строками, а «full=false» строкой —
+    # это bool("false") == True, то есть ровно наоборот. Числа тоже лучше
+    # отдавать числами: инструменты их всё равно приводят, но по строке
+    # «два» уже не приведут.
+    for k, v in list(got.items()):
+        if not isinstance(v, str):
+            continue
+        low = v.strip().lower()
+        if low in ("true", "да", "yes"):
+            got[k] = True
+        elif low in ("false", "нет", "no"):
+            got[k] = False
+        elif re.fullmatch(r"-?\d{1,4}", low) and k != "match":
+            got[k] = int(low)
+    return got
+
+
 def _bare_tool_calls(raw: str) -> list:
     """Вызовы, НАПЕЧАТАННЫЕ обычными словами -> [(имя, аргументы)]."""
     if not raw or len(raw) > 4000:
@@ -5715,6 +5830,12 @@ def _bare_tool_calls(raw: str) -> list:
             around = raw[max(0, m.start() - 1):m.end() + 1]
             if not re.search(r"[\[\(`]", around):
                 continue
+        # ПАРЫ И JSON — ПЕРЕД ГОЛЫМ ЗНАЧЕНИЕМ (2026-08-18). Иначе
+        # «[window_focus:match="explorer"]» превращается в match="match=".
+        _tl = _tail_args(name, raw[m.end(1):m.end(1) + 400])
+        if _tl:
+            out.append((name, _tl))
+            continue
         # за именем сразу JSON — это работа _text_tool_calls, не наша
         if raw[m.end(1):m.end(1) + 3].lstrip().startswith("{"):
             continue
@@ -5722,6 +5843,16 @@ def _bare_tool_calls(raw: str) -> list:
         # двоеточие НЕ срезаем: «C:» — это диск, а не мусор
         val = val.strip(" .,;!?«»\"'()[]")
         if _BARE_STOP.match(val):
+            val = ""
+        # ОГРЫЗОК РАЗБОРА — НЕ АРГУМЕНТ (2026-08-18, страховка на случай,
+        # если _tail_args не справится с очередным диалектом): «match=»,
+        # «monitor=2», «{», «path=» именами окон и путями не бывают.
+        # Лучше пустой вызов и честное «не расслышала», чем поиск окна с
+        # названием «match=» — час именно такого лога это и стоило.
+        if re.fullmatch(r"[a-zA-Zа-яё_]\w*\s*[=:]\s*[^\s]{0,12}", val) \
+                or val in ("{", "[", "(", "}"):
+            log.info("Текстовый вызов %s: «%s» — это огрызок разбора, "
+                     "а не аргумент; пропускаю", name, val)
             val = ""
         key = argmap.get(name) or ""
         if not val and name in (_BARE_CACHE.get("need") or set()):
@@ -6616,7 +6747,9 @@ async def ws_endpoint(ws: WebSocket):
                 return out
             f0s = []
             step = int(sr * 0.05)
+            _win = 0
             for j in range(0, len(x) - step, step * 2):
+                _win += 1
                 w = x[j:j + step]
                 if float(np.sqrt(np.mean(w ** 2))) < 0.01:
                     continue
@@ -6629,15 +6762,91 @@ async def ws_endpoint(ws: WebSocket):
                     f0s.append(sr / k)
             if f0s:
                 out["voice_hz"] = int(np.median(f0s))
+            # ДОЛЯ ОЗВОНЧЕННОГО (2026-08-16). Сколько окон куска вообще
+            # похожи на голос: есть энергия И есть период. Дальше из неё
+            # считается ПЛОТНОСТЬ РЕЧИ — слов на секунду живого голоса.
+            # Ради неё всё и меряется: у настоящей фразы плотность 2.4–6,
+            # у выдуманного слова на шуме — доли единицы. Пока это только
+            # число в стенде и в метке: порог ставим завтра, когда будет
+            # размеченная сцена, а не сегодня на глаз (замер по 20 живым
+            # одночастным сегментам стенда: речь 2.38–6.07).
+            out["voiced"] = round(len(f0s) / float(max(1, _win)), 2)
+            _vsec = out["voiced"] * sec_
             spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
             fr = np.fft.rfftfreq(len(x), 1.0 / sr)
             out["bright_hz"] = int(np.sum(fr * spec) / (np.sum(spec) + 1e-9))
             n_words = len(re.findall(r"[А-Яа-яЁёA-Za-z]+", text or ""))
             if n_words:
                 out["rate_wps"] = round(n_words / sec_, 1)
+                if _vsec > 0.05:
+                    out["dense"] = round(n_words / _vsec, 2)
         except Exception:
             pass
         return out
+
+    _JOIN_RE = re.compile(r"[А-Яа-яЁёA-Za-z0-9]+(?:-[А-Яа-яЁёA-Za-z0-9]+)*")
+
+    def _join_key(w):
+        return w.lower().replace("ё", "е")
+
+    def _join_parts(res):
+        """Снять повтор на стыке соседних кусков одной фразы.
+
+        ЗАЧЕМ (2026-08-16, владелец: «рандомные слова появляются, даже
+        если ничего не было сказано» и «бывают пропуски слов»). Оба
+        симптома — одна и та же граница разреза. Слово, попавшее на рез,
+        раньше обрывалось у левого куска и пропадало; теперь нахлёст
+        отдаёт его целиком ОБОИМ (turns.py), и цена этому — повтор:
+        живой случай из стенда 04:21:25, один сегмент 3.45с →
+        «Пробуждеееение гробнииииц.» и следом отдельным пузырём
+        «Гробнииииц.». Второй пузырь и есть тот «рандом»: никто этого
+        второй раз не говорил.
+
+        Снимаем повтор ПО СЛОВАМ, а не по сэмплам: движок на двух кусках
+        напишет одно и то же слово одинаково, а вот границы в сэмплах у
+        него плавают. Если после снятия у куска не осталось ничего —
+        куска не было, только эхо соседа."""
+        if len(res) < 2:
+            return res
+        _max = int(CFG.get("stt.join_dup_words", 4))
+        if _max <= 0:                    # ручка выключения: 0 — не трогать
+            return res
+        out_res = [res[0]]
+        for b in res[1:]:
+            a = out_res[-1]
+            wa = _JOIN_RE.findall(a.get("text") or "")
+            wb = _JOIN_RE.findall(b.get("text") or "")
+            if not wa or not wb:
+                out_res.append(b)
+                continue
+            hit = 0
+            for k in range(min(len(wa), len(wb), _max), 0, -1):
+                if [_join_key(w) for w in wa[-k:]] == \
+                        [_join_key(w) for w in wb[:k]]:
+                    hit = k
+                    break
+            if not hit:
+                out_res.append(b)
+                continue
+            if hit == len(wb):
+                # кусок целиком — эхо предыдущего: его не было
+                log.info("Стык кусков: %r — это хвост предыдущего, "
+                         "не показываю", (b.get("text") or "")[:40])
+                HEAR_STAT["empty"] = HEAR_STAT.get("empty", 0) + 1
+                continue
+            # отрезаем повторённую голову: ищем в тексте начало (hit+1)-го
+            # слова и всё до него выкидываем вместе с пунктуацией
+            _pos = [m for m in _JOIN_RE.finditer(b.get("text") or "")]
+            _cut = _pos[hit].start()
+            _new = (b.get("text") or "")[_cut:].lstrip(" ,.;:—-…")
+            if _new:
+                log.info("Стык кусков: снял повтор %r в начале %r",
+                         " ".join(wb[:hit]), (b.get("text") or "")[:40])
+                b["heard_raw"] = b.get("heard_raw") or b.get("text", "")
+                b["text"] = _new[0].upper() + _new[1:] \
+                    if _new[0].islower() else _new
+            out_res.append(b)
+        return out_res
 
     def _stt_worker():
         """Распознавание готовых фраз. Может думать секундами — и теперь это
@@ -6920,6 +7129,12 @@ async def ws_endpoint(ws: WebSocket):
                             except Exception as _e2:
                                 log.debug("голосовая ДНК: %s", _e2)
                             results.append(r)
+                # стык кусков: слово с границы приехало в оба — оставляем
+                # его одному (см. _join_parts)
+                try:
+                    results = _join_parts(results)
+                except Exception as e:
+                    log.debug("склейка стыков пропущена: %s", e)
                 ms = round((time.monotonic() - t0) * 1000)
                 # ═══ СКЛЕЙКА ОБОРВАННОЙ МЫСЛИ (2026-08-16) ═══
                 # Владелец: «деление не по времени, а детектить
@@ -6989,23 +7204,40 @@ async def ws_endpoint(ws: WebSocket):
                 # должны прямо слышать механику (клавиатура, щелчки,
                 # стук) громче, чем речь. Нет улики — фраза живёт.
                 try:
+                    # УДАР — ТА ЖЕ УЛИКА, ЧТО И ЩЕЛЧОК (2026-08-16,
+                    # владелец: «рандомные слова появляются, даже если
+                    # ничего не было сказано»; и про аниме: «там нам и
+                    # ходьбы, и взрывы, и музыка, и речь»). Разбор стенда,
+                    # запись 04:15:13: кусок 1.4с, −37 dBFS — на 11 дБ
+                    # ГРОМЧЕ всей речи вокруг (та жила на −48), тон 110 Гц,
+                    # текст «Три». Взрыв. Список улик был написан под
+                    # клавиатуру владельца, а в кино стучит не клавиатура:
+                    # добавляем удары, выстрелы, стекло, гром, аплодисменты
+                    # и шаги. Правило прежнее и такое же узкое: улика
+                    # должна быть ГРОМЧЕ речи в тех же ушах — молчание
+                    # ушей по-прежнему ничего не доказывает.
                     _mech = 0.0
                     for _nm, _p in (hearing.STATE.get("tags") or []):
                         _l = str(_nm).lower()
-                        if any(k in _l for k in ("keyboard", "typing",
-                                                 "mouse", "click", "knock",
-                                                 "tap")):
+                        if any(k in _l for k in (
+                                "keyboard", "typing", "mouse", "click",
+                                "knock", "tap", "explosion", "gunshot",
+                                "gunfire", "boom", "bang", "crash", "smash",
+                                "glass", "thunder", "slam", "firework",
+                                "artillery", "cap gun", "sonic boom",
+                                "applause", "clapping", "footstep",
+                                "chop", "whip", "slap")):
                             _mech = max(_mech, float(_p))
                     if (results and sec < float(
-                                CFG.get("stt.phantom_max_s", 1.0))
+                                CFG.get("stt.phantom_max_s", 1.6))
                             and hearing.STATE.get("ready")
                             and time.time() - hearing.STATE.get("ts", 0) < 2.5
                             and _mech >= float(
                                 CFG.get("stt.phantom_mech_min", 0.30))
                             and _mech > hearing.STATE.get("speech", 0.0)):
                         log.info("Слух: короткий сегмент (%.1fс), уши слышат "
-                                 "механику %.2f против речи %.2f — похоже на "
-                                 "стук/щелчки, фразу %r не рождаю", sec,
+                                 "не речь %.2f против речи %.2f — похоже на "
+                                 "удар/щелчки, фразу %r не рождаю", sec,
                                  _mech, hearing.STATE.get("speech", 0.0),
                                  (results[0].get("text", "") or "")[:40])
                         hear_bench.record(seg, sr_hz,
@@ -7074,7 +7306,14 @@ async def ws_endpoint(ws: WebSocket):
                                       r.get("engine", ""), ms,
                                       {"heard_raw": r.get("heard_raw", ""),
                                        "shaky": r.get("shaky", ""),
-                                       "rms_raw": round(rms_seg, 5)})
+                                       "rms_raw": round(rms_seg, 5),
+                                       # для завтрашней разметки: доля
+                                       # озвонченного и плотность речи —
+                                       # по ним и встанет порог фантома
+                                       "voiced": r.get("voiced"),
+                                       "dense": r.get("dense"),
+                                       "part_s": r.get("sec"),
+                                       "parts": len(_parts)})
                     _emit_phrase(r, ms)
             except Exception as e:
                 log.warning("Распознавание споткнулось: %s", e)

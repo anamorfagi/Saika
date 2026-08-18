@@ -103,7 +103,7 @@
     "router": {
       "enabled": true
     },
-    "off": true,
+    "off": false,
     "n_ctx": "32768",
     "search_unreliable": [
       "@cf/qwen/qwen3-30b-a3b-fp8",
@@ -234,9 +234,7 @@
   "tts": {
     "engine": "qwen3",
     "enabled": true,
-    "disabled": [
-      "qwen3"
-    ],
+    "disabled": [],
     "output_device": "CABLE Input",
     "output_device_dup": "WH-1000XM4",
     "voice_ref": "voice/ref.wav",
@@ -443,16 +441,16 @@
     "desk": {
       "top": true,
       "lock": true,
-      "on": false,
-      "x": 903,
-      "y": 682,
+      "on": true,
+      "x": 3317,
+      "y": 262,
       "w": 434,
       "h": 918,
-      "frame": true,
+      "frame": false,
       "ghost": false,
       "view": {
-        "x": 0.002396514161220048,
-        "y": 0.0,
+        "x": -0.007489694230383152,
+        "y": 0.001412315484514749,
         "z": 0.0,
         "zoom": 1.0,
         "rx": 0.0,
@@ -463,21 +461,21 @@
         "az": 0.0,
         "el": 0.0,
         "dist": 0.0,
-        "ox": 0.0,
-        "oy": 0.0,
+        "ox": 0.001412315484514749,
+        "oy": 0.0805019826173407,
         "oz": 0.0,
         "headFollow": true,
         "lean": 0.0
       },
       "slots": {
         "saika_v1": {
-          "x": 903,
-          "y": 682,
+          "x": 3317,
+          "y": 262,
           "w": 434,
           "h": 918,
           "view": {
-            "x": 0.002396514161220048,
-            "y": 0.0,
+            "x": -0.007489694230383152,
+            "y": 0.001412315484514749,
             "z": 0.0,
             "rx": 0.0,
             "ry": 0.0,
@@ -485,8 +483,8 @@
             "az": 0.0,
             "el": 0.0,
             "dist": 0.0,
-            "ox": 0.0,
-            "oy": 0.0,
+            "ox": 0.001412315484514749,
+            "oy": 0.0805019826173407,
             "oz": 0.0,
             "lean": 0.0,
             "zoom": 1.0,
@@ -560,7 +558,7 @@
   },
   "voiceprint": {
     "enabled": true,
-    "listen_self": false,
+    "listen_self": true,
     "device": "auto",
     "pitch_groups": true,
     "pitch_group_tol": 0.18,

@@ -650,19 +650,36 @@ def launch(query: str) -> str:
             continue
         seen.add(_norm(it["name"]))
         cands.append({"name": it["name"], "path": it["path"], "score": s})
-    # 3б. ПОИСК ПО ДИСКАМ (2026-08-14). Если ни «Пуск», ни реестр, ни
-    # запущенные процессы ничего не дали — идём смотреть туда, где программы
-    # и игры лежат физически: Program Files, библиотеки Steam/Epic/HoYoPlay
-    # на всех дисках, папки «games»/«игры». Медленно ровно один раз: найденное
-    # тут же уходит в память, и следующий запрос уже мгновенный.
-    if not cands:
+    # 3б. ПОИСК ПО ДИСКАМ (2026-08-14, условие переписано 2026-08-18).
+    # Смотрим туда, где программы и игры лежат физически: Program Files,
+    # библиотеки Steam/Epic/HoYoPlay на всех дисках, папки «games»/«игры».
+    #
+    # УСЛОВИЕ БЫЛО «if not cands» — И ЭТО НЕ РАБОТАЛО НИКОГДА. Живой лог:
+    # «запусти War Thunder» -> «Похоже на несколько: 1. RivaTuner Statistics
+    # Server; 2. RivaTuner Statistics Server localization reference;
+    # 3. RivaTuner…». Игра стоит в библиотеке Steam, app_finder нашёл бы её
+    # за секунды — но не запустился, потому что cands НЕ БЫЛ ПУСТ: нечёткий
+    # поиск по «Пуску» всегда наскребает мусор с ненулевым счётом. Три
+    # огрызка RivaTuner закрывали дорогу настоящему поиску, и человек сорок
+    # минут слышал «уточни название» на игру, которая у него установлена.
+    #
+    # Правильный признак — не «пусто», а «нет УВЕРЕННОГО совпадения». Порог
+    # 45 тот же, по которому выше принимается решение запускать молча.
+    _best = cands[0]["score"] if cands else 0
+    if _best < 45:
         try:
             from server import app_finder
             deep = app_finder.search(q)
             if deep:
-                log.info("Поиск по дискам нашёл для «%s»: %s", q,
-                         ", ".join(d["name"] for d in deep))
-                cands = deep
+                log.info("Поиск по дискам нашёл для «%s»: %s (в «Пуске» "
+                         "лучшее было %d баллов — слабо)", q,
+                         ", ".join(d["name"] for d in deep), _best)
+                # слабые догадки из «Пуска» не выбрасываем совсем, но
+                # уводим ВНИЗ: найденное на диске конкретнее любой из них
+                _weak = [c for c in cands if c["score"] >= 30]
+                cands = deep + [c for c in _weak
+                                if _norm(c["name"]) not in
+                                {_norm(d["name"]) for d in deep}]
         except Exception as e:
             log.debug("поиск по дискам не вышел: %s", e)
     cands.sort(key=lambda c: -c["score"])
@@ -770,6 +787,13 @@ def windows(include_minimized=True) -> list:
     ctypes, wintypes, user32 = _win32()
     mons = _monitors()
     out = []
+    # КТО СЕЙЧАС ВПЕРЕДИ (2026-08-18). Без этого модель не могла ПРОВЕРИТЬ
+    # результат window_focus иначе, чем позвав его ещё раз, — и звала, и
+    # окно моргало по кругу.
+    try:
+        fg = int(user32.GetForegroundWindow() or 0)
+    except Exception:
+        fg = 0
 
     ENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
                                   ctypes.c_void_p)
@@ -804,14 +828,40 @@ def windows(include_minimized=True) -> list:
                 proc = psutil.Process(pid.value).name()
             except Exception:
                 pass
+            # КЛАСС ОКНА (2026-08-18). Заголовок у проводника — имя папки,
+            # у браузера — имя вкладки: и то и другое меняется под ногами.
+            # Класс не меняется никогда: CabinetWClass — проводник,
+            # Chrome_WidgetWin_1 — хром. По нему и опознаём, когда заголовок
+            # врёт или его выдумали.
+            cls = ""
+            try:
+                _cb = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, _cb, 256)
+                cls = _cb.value or ""
+            except Exception:
+                pass
             out.append({"hwnd": int(hwnd), "title": title, "proc": proc,
                         "pid": int(pid.value), "minimized": mini,
+                        # РАЗВЁРНУТО ИЛИ НЕТ (2026-08-18). Раньше в списке
+                        # этого не было вообще: «разверни» -> она разворачивала
+                        # -> смотрела в список -> состояния там нет -> считала,
+                        # что не вышло, и разворачивала снова.
+                        "maximized": (not mini) and bool(user32.IsZoomed(hwnd)),
+                        "cls": cls,
+                        "front": int(hwnd) == fg,
+                        # глубина: EnumWindows идёт сверху вниз по z-порядку,
+                        # 0 — самое верхнее окно
+                        "z": len(out),
                         # окна от администратора нам не подчиняются — знать
                         # об этом надо ЗАРАНЕЕ, иначе модель будет долбиться
                         # в них раз за разом (живой случай с диспетчером
                         # задач: три захода подряд и три «готово»)
                         "admin": _elevated(int(pid.value)),
                         "monitor": 0 if mini else _monitor_of(rect, mons),
+                        # УГОЛ, А НЕ ТОЛЬКО РАЗМЕР (2026-08-18): по одним
+                        # ширине-высоте не отличить «слева» от «справа», а
+                        # привычки стола строятся именно на этом
+                        "x": rect[0], "y": rect[1],
                         "w": rect[2] - rect[0], "h": rect[3] - rect[1]})
         except Exception:
             pass
@@ -829,26 +879,75 @@ def windows(include_minimized=True) -> list:
 def screen_map() -> str:
     """Текстовая карта рабочего стола для промпта. Дешевле картинки на
     порядок и не жрёт зрение: модель понимает расклад по словам, а кадр
-    берёт только если действительно надо посмотреть глазами."""
+    берёт только если действительно надо посмотреть глазами.
+
+    ПОЧЕМУ ЗДЕСЬ СТАЛО БОЛЬШЕ ПОЛЕЙ (2026-08-18, живой вечер). Карта — это
+    не только «что открыто», это ЕДИНСТВЕННЫЙ способ проверить результат
+    своего же действия. Старая карта отдавала заголовок, обрезанный до 60
+    символов, и имя процесса — и ни слова о том, что впереди и что
+    развёрнуто. После «разверни хром» проверить было НЕЧЕМ: модель искала в
+    карте выдуманный заголовок («PC — проводник» — такого нет нигде), не
+    находила, считала, что не вышло, и повторяла. Отсюда мигание окон и
+    «не смогла найти окно» при фактически выполненном действии.
+
+    Теперь в карте есть всё, по чему проверяют: кто впереди (▶), состояние
+    (развёрнуто/обычное/свёрнуто), процесс и класс окна. Класс — потому что
+    заголовок у проводника это имя папки, у браузера — имя вкладки: назвать
+    их заранее нельзя, а класс постоянен."""
     ws = windows()
     if not ws:
         return "Окон не видно."
-    mons = _monitors()
-    lines = [f"Мониторов: {len(mons) or 1}."]
+    info = _mon_info()
+    if info:
+        head = "Мониторов: %d (%s)." % (len(info), "; ".join(
+            "экран %d — %d×%d%s" % (d["num"], d["rect"][2] - d["rect"][0],
+                                    d["rect"][3] - d["rect"][1],
+                                    ", главный" if d["primary"] else "")
+            for d in info))
+    else:
+        head = "Мониторов: 1."
+    lines = [head]
     by = {}
     for w in ws:
         by.setdefault(w["monitor"], []).append(w)
+
+    def one(w) -> str:
+        bits = []
+        if w.get("proc"):
+            bits.append(w["proc"])
+        if w.get("cls"):
+            bits.append(w["cls"])
+        bits.append("развёрнуто" if w.get("maximized") else "обычное")
+        if w.get("admin"):
+            bits.append("ОТ АДМИНИСТРАТОРА — не слушается")
+        return ("▶ " if w.get("front") else "") + w["title"][:80] \
+            + " [" + ", ".join(bits) + "]"
+
     for m in sorted(k for k in by if k):
-        items = by[m][:8]
-        lines.append(f"Экран {m}: " + "; ".join(
-            f"{w['title'][:60]}" + (f" ({w['proc']})" if w["proc"] else "")
-            + (" [от администратора — сворачивать и закрывать НЕЛЬЗЯ]"
-               if w.get("admin") else "")
-            for w in items))
+        items = sorted(by[m], key=lambda w: w.get("z", 0))[:10]
+        lines.append(f"Экран {m}: " + " | ".join(one(w) for w in items))
+        if len(by[m]) > 10:
+            lines.append(f"  …и ещё {len(by[m]) - 10} окон на экране {m}.")
     mini = by.get(0, [])
     if mini:
-        lines.append("Свёрнуто: " + "; ".join(w["title"][:40]
-                                              for w in mini[:8]))
+        lines.append("Свёрнуто: " + "; ".join(
+            w["title"][:50] + (f" ({w['proc']})" if w.get("proc") else "")
+            for w in mini[:10]))
+    lines.append("▶ — окно в фокусе. Порядок в строке — сверху вниз по "
+                 "глубине. Проверяй себя по ЭТОМУ списку: заголовки тут "
+                 "настоящие, выдумывать их не надо — и звать окно можно "
+                 "коротко, по процессу («chrome») или классу.")
+    # ПРИВЫЧКИ СТОЛА (2026-08-18). Считаем раскладку ровно здесь: стол уже
+    # осмотрен для промпта, лишнего обращения к системе нет. Троттлинг и вся
+    # логика — внутри desk_habits, тут только вызов и подсказка в промпт.
+    try:
+        from server import desk_habits as _dh
+        _dh.note()
+        _h = _dh.hint()
+        if _h:
+            lines.append(_h)
+    except Exception as _e:
+        log.debug("привычки стола пропущены: %s", _e)
     if any(w.get("admin") for w in ws):
         lines.append("Окна с пометкой «от администратора» я тронуть не могу: "
                      "Windows не даёт обычной программе командовать ими. "
@@ -946,7 +1045,24 @@ _CMD_HEAD = re.compile(
     r"\b(?:сайка|открой|открыть|запусти|покажи|переключись|переключи|"
     r"поставь|перенеси|сделай|разверни|сверни|закрой|найди|поищи|"
     r"пожалуйста|мне|на|в|во|к|с|со|для|из|автора|канал|сайт|окно|"
+    # МЕСТО — ЭТО НЕ ИМЯ (2026-08-18, живой вечер: «сделай проводник слева
+    # на экране» -> модель прислала match="проводник слева на экране" и
+    # получила «не нашла окно». Куда ставить — отдельные параметры
+    # position и monitor; в имени окна этих слов нет никогда.)
+    r"слева|справа|сверху|снизу|лево|право|верх|низ|центр\w*|середин\w*|"
+    r"углу|угол|экран\w*|монитор\w*|диспле\w*|перв\w+|втор\w+|"
+    r"половин\w*|пол-?экрана|полностью|полн\w+|весь|всё|"
     r"программу|приложение)\b", re.I)
+
+
+def _phrase() -> str:
+    """Последняя фраза человека. В ней живут уточнения, которых модель в
+    match не кладёт: «свёрнутый», «второй», «который в трее»."""
+    try:
+        from server.llm.tools import LAST_USER
+        return (LAST_USER.get("text") or "").lower()
+    except Exception:
+        return ""
 
 
 def _match(query: str):
@@ -987,17 +1103,53 @@ def _match(query: str):
     # «Сайка — Google Chrome», её собственную вкладку — она крупнее всех и
     # стояла первой в списке). Когда человек называет браузер, он имеет в
     # виду СВОЁ окно, не окно Сайки; её вкладка — только если больше некому.
+    # ДВА ОКНА ОДНОЙ ПРОГРАММЫ (2026-08-18, живой лог). «Я вижу, что есть
+    # ещё один проводник, который свёрнут. Разверни его» — и она развернула
+    # ТОТ ЖЕ, что уже стоял перед человеком. Причина: кандидаты
+    # отсортированы «несвёрнутые и крупные сверху», а брали всегда первого.
+    # Слова «свёрнутый» и «второй» модель в match не передаёт — она их
+    # теряет, потому что в схеме такого поля нет. Берём их прямо из фразы
+    # человека: это ровно то уточнение, которым он различает окна.
+    _ph = _phrase()
+    _want_min = bool(re.search(r"свёрнут|свернут|в\s+тре[ей]|из\s+тре[яй]|"
+                               r"спрятан|скрыт", _ph))
+    _want_vis = (not _want_min) and bool(
+        re.search(r"развёрнут|развернут|на\s+экране|видн\w*|перед\s+", _ph))
+    _ordn = 0
+    if re.search(r"\bтрет\w*", _ph):
+        _ordn = 3
+    elif re.search(r"\bвтор\w*|\bдруг\w*|ещ[её]\s+один|"
+                   r"друго[йе]\s+окн", _ph):
+        _ordn = 2
+
     def pick(cands):
         if not cands:
             return None
-        other = [c for c in cands if not _is_self_window(c)]
-        return (other or cands)[0]
+        other = [c for c in cands if not _is_self_window(c)] or cands
+        if _want_min:
+            mins = [c for c in other if c.get("minimized")]
+            if mins:
+                other = mins
+        elif _want_vis:
+            vis = [c for c in other if not c.get("minimized")]
+            if vis:
+                other = vis
+        # «второй проводник» — второй ПОДХОДЯЩИЙ, а не второй вообще
+        if _ordn and len(other) >= _ordn:
+            return other[_ordn - 1]
+        return other[0]
 
     w = pick([w for w in ws if q in w["title"].lower()])
     if w:                              # точное вхождение в заголовок
         return w
     w = pick([w for w in ws if q in (w["proc"] or "").lower()])
     if w:                              # иначе по имени процесса
+        return w
+    # ПО КЛАССУ ОКНА (2026-08-18). Нужен не для красоты: у окна, поднятого
+    # от администратора, psutil не может прочитать имя процесса и proc
+    # приходит ПУСТЫМ — искать по нему нечего. Класс WinAPI отдаёт всегда.
+    w = pick([w for w in ws if q in (w.get("cls") or "").lower()])
+    if w:
         return w
     # СПЕЦ-ВЕТКИ ДО АЛИАСОВ: у алиасов «папка -> explorer» жадный захват,
     # и «рабочая папка» уезжала в ПЕРВОЕ окно проводника (стенд поймал)
@@ -1035,7 +1187,12 @@ def _match(query: str):
     if alias:
         w = pick([w for w in ws
                   if alias in (w["proc"] or "").lower()
-                  or alias in w["title"].lower()])
+                  or alias in w["title"].lower()
+                  or alias in (w.get("cls") or "").lower()
+                  # класс проводника («проводник» -> explorer -> CabinetWClass)
+                  or (alias == "explorer"
+                      and (w.get("cls") or "").lower().startswith(
+                          ("cabinetw", "explorew")))])
         if w:
             return w
     # НЕЧЁТКО — как и с программами: «Coral Draft» должно находить окно
@@ -1052,6 +1209,19 @@ def _match(query: str):
     if best is not None and bs >= 34:
         return best
     return None
+
+
+def find(query: str):
+    """Какое окно имеется в виду под этой фразой (или None) — наружу.
+
+    Ручка для тех, кому надо СПРОСИТЬ, не действуя: диспетчер инструментов
+    проверяет ею, стоит ли подставлять фразу человека вместо пустого имени
+    окна (2026-08-18). Раньше пришлось бы звать приватный _match."""
+    try:
+        return _match(query)
+    except Exception as e:
+        log.debug("find(%r) не отработал: %s", query, e)
+        return None
 
 
 _elev_cache: dict = {}
@@ -1082,6 +1252,36 @@ def _elevated(pid: int) -> bool:
     return out
 
 
+def placement(hwnd) -> str:
+    """Состояние окна словом: max | min | normal | ? (2026-08-18).
+
+    ПОЧЕМУ НЕ IsZoomed. IsZoomed отвечает «развёрнуто ли ПРЯМО СЕЙЧАС» и на
+    свёрнутом окне возвращает False, даже если человек развернул его минуту
+    назад и оно вернётся развёрнутым. GetWindowPlacement.showCmd говорит
+    правду про оба состояния сразу, и именно он — честная проверка после
+    ShowWindow. Наружу вынесен нарочно: стенд должен уметь спросить
+    состояние, не влезая внутрь модуля (RULES п.13, «ручки для отладки»)."""
+    if not _IS_WIN:
+        return "?"
+    ctypes, wintypes, user32 = _win32()
+
+    class WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT),
+                    ("showCmd", wintypes.UINT),
+                    ("ptMinPosition", wintypes.POINT),
+                    ("ptMaxPosition", wintypes.POINT),
+                    ("rcNormalPosition", wintypes.RECT)]
+    wp = WINDOWPLACEMENT()
+    wp.length = ctypes.sizeof(WINDOWPLACEMENT)
+    try:
+        if not user32.GetWindowPlacement(hwnd, ctypes.byref(wp)):
+            return "?"
+    except Exception as e:
+        log.debug("GetWindowPlacement не ответил: %s", e)
+        return "?"
+    return {1: "normal", 2: "min", 3: "max"}.get(int(wp.showCmd), "normal")
+
+
 def _verify(hwnd, want: str) -> bool:
     """Действительно ли окно оказалось в нужном состоянии."""
     if not _IS_WIN:
@@ -1090,18 +1290,45 @@ def _verify(hwnd, want: str) -> bool:
     time.sleep(0.12)                # окну нужен кадр, чтобы перерисоваться
     try:
         if want == "min":
-            return bool(user32.IsIconic(hwnd))
+            return placement(hwnd) == "min" or bool(user32.IsIconic(hwnd))
         if want == "max":
-            return bool(user32.IsZoomed(hwnd))
+            # ПРОВЕРКА ПО PLACEMENT, А НЕ ПО IsZoomed (2026-08-18): см.
+            # комментарий в placement(). Обе проверки вместе — на случай
+            # окон, которые «разворачиваются» своими силами, не сообщая
+            # об этом системе (полноэкранные игры).
+            return placement(hwnd) == "max" or bool(user32.IsZoomed(hwnd))
         if want == "gone":
             return not bool(user32.IsWindow(hwnd))
         if want == "front":
             return int(user32.GetForegroundWindow()) == int(hwnd)
         if want == "normal":
-            return not (user32.IsIconic(hwnd) or user32.IsZoomed(hwnd))
+            return placement(hwnd) == "normal"
     except Exception:
         pass
     return True
+
+
+def state_note(hwnd) -> str:
+    """Что с окном СЕЙЧАС, по свежему опросу системы (2026-08-18).
+
+    ЗАЧЕМ. Ответ «показала окно» проверить нечем, и агентный цикл шёл
+    проверять сам: звал window_list, искал там выдуманный заголовок, не
+    находил и повторял действие — окна моргали. Дешевле сказать правду
+    сразу же, в том же ответе: развёрнуто ли, на каком экране, впереди ли.
+    Проверка тогда не нужна, а повторять нечего."""
+    try:
+        st = {"max": "развёрнуто", "min": "свёрнуто",
+              "normal": "обычного размера"}.get(placement(hwnd), "")
+        for w in windows():
+            if w["hwnd"] == int(hwnd):
+                bits = [b for b in (st, f"экран {w['monitor']}"
+                                    if w["monitor"] else "",
+                                    "впереди" if w.get("front") else "") if b]
+                return " Сейчас: " + ", ".join(bits) + "."
+        return f" Сейчас: {st}." if st else ""
+    except Exception as e:
+        log.debug("состояние окна не прочиталось: %s", e)
+        return ""
 
 
 def _blocked_note(w: dict, verb: str) -> str:
@@ -1192,7 +1419,17 @@ def _force_front(hwnd) -> bool:
         time.sleep(0.08)
         return int(user32.GetForegroundWindow()) == int(hwnd)
 
-    user32.ShowWindow(hwnd, 9)                     # SW_RESTORE
+    # SW_RESTORE ТОЛЬКО СВЁРНУТОМУ (2026-08-18, баг, из-за которого мигали
+    # окна). Здесь стоял безусловный ShowWindow(hwnd, 9). Свёрнутому это
+    # нужно — а РАЗВЁРНУТОЕ окно SW_RESTORE схлопывает в обычный размер.
+    # Цепочка выходила такая: window_maximize разворачивает -> зовёт
+    # _force_front, чтобы F11 ушёл в активное окно -> _force_front тут же
+    # разворот отменяет -> проверка «развёрнуто?» честно говорит «нет» ->
+    # ответ «не смогла развернуть, окно не послушалось». Владелец при этом
+    # ВИДЕЛ, как окно развернулось и схлопнулось. Тот же удар получало
+    # window_focus: «покажи хром» схлопывал развёрнутый хром.
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)                 # SW_RESTORE
     user32.SetForegroundWindow(hwnd)
     if _front():
         return True
@@ -1257,7 +1494,9 @@ def window_focus(query: str) -> str:
         return f"Не нашла окно «{query}»."
     _touch(w)   # помним: «это же окно» — про него
     if _force_front(w["hwnd"]):
-        return f"Показала «{w['title'][:60]}» — оно теперь впереди."
+        return (f"Показала «{w['title'][:60]}» — оно теперь впереди."
+                + state_note(w["hwnd"])
+                + " Проверять отдельно не надо, это уже проверено.")
     if _elevated(w.get("pid", 0)):
         return (f"«{w['title'][:50]}» запущено от администратора, а я нет — "
                 "Windows не даёт мне командовать такими окнами. Запусти "
@@ -1276,8 +1515,13 @@ def window_maximize(query: str = "", full: bool = False) -> str:
         return f"Не нашла окно «{query}»." if query else "Не вижу активного окна."
     _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
+    # ПОРЯДОК ВАЖЕН (2026-08-18): сперва фокус, потом разворот. Наоборот
+    # было — и не работало: _force_front поднимает окно из свёрнутого через
+    # SW_RESTORE, а SW_RESTORE отменяет только что сделанный SW_MAXIMIZE.
+    # Фокус нужен всё равно (F11 ниже уходит в АКТИВНОЕ окно), так что
+    # просто меняем очерёдность, а не выкидываем шаг.
+    _force_front(w["hwnd"])
     user32.ShowWindow(w["hwnd"], 3)                # SW_MAXIMIZE
-    _force_front(w["hwnd"])   # F11 ниже уйдёт в АКТИВНОЕ окно — оно нужно
     if not _verify(w["hwnd"], "max"):
         return _blocked_note(w, "развернуть")
     if full:
@@ -1291,17 +1535,39 @@ def window_maximize(query: str = "", full: bool = False) -> str:
             return (f"Развернула «{w['title'][:60]}». Полный экран без "
                     "модуля keyboard не переключу — нажми F11 сам.")
     return ("Развернула «" + w["title"][:60] + "»"
-            + (" на полный экран." if full else "."))
+            + (" на полный экран." if full else ".")
+            + state_note(w["hwnd"])
+            + " Проверять отдельно не надо, это уже проверено.")
 
 
 def window_restore(query: str = "") -> str:
-    """Вернуть окно из развёрнутого в обычный размер."""
+    """Вернуть окно в обычный вид. ДВА РАЗНЫХ ДЕЛА ОДНИМ ИМЕНЕМ (2026-08-18):
+
+    * окно было СВЁРНУТО — «разверни его» значит достать с панели задач и
+      показать. Человек ждёт, что окно появится на экране;
+    * окно было РАЗВЁРНУТО — то же слово значит уменьшить до обычного.
+
+    Раньше ответ был один на оба случая — «вернула в обычный размер», — и
+    в живом логе это выглядело враньём: человек просил достать свёрнутый
+    проводник, окно молча осталось на панели (фокус ему никто не давал), а
+    в ответ пришло «вернула к обычному размеру». Отвечаем по факту того,
+    что было ДО действия."""
     w = _match(query) if query else _foreground()
     if not w:
         return "Не нашла такое окно."
     _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
+    was_min = bool(w.get("minimized"))
     user32.ShowWindow(w["hwnd"], 9)                # SW_RESTORE
+    if was_min:
+        # достать из трея без фокуса бессмысленно: окно вылезет ПОД
+        # остальными, и человек его не увидит
+        front = _force_front(w["hwnd"])
+        if _verify(w["hwnd"], "min"):
+            return _blocked_note(w, "развернуть с панели задач")
+        return (f"Развернула «{w['title'][:60]}» с панели задач"
+                + (" и вывела вперёд." if front else
+                   " — но вперёд не пустило, оно за другими окнами."))
     if not _verify(w["hwnd"], "normal"):
         return _blocked_note(w, "вернуть в обычный размер")
     return f"Вернула «{w['title'][:60]}» в обычный размер."
@@ -1569,7 +1835,14 @@ def window_place(query: str, position: str = "center",
         return (f"не знаю позицию «{position}» — умею: центр, слева, справа, "
                 "сверху, снизу и четыре угла")
     x, y = coords[pos]
-    user32.ShowWindow(w["hwnd"], 9)            # SW_RESTORE: из свёрнутого
+    # SW_RESTORE ЗДЕСЬ НУЖЕН, но только свёрнутому или развёрнутому
+    # (2026-08-18): SetWindowPos развёрнутому окну меняет рамку, но не
+    # положение — окно остаётся развёрнутым, а мы рапортуем «поставила
+    # слева». Обычное окно трогать незачем: лишний ShowWindow — это лишнее
+    # моргание на экране.
+    if user32.IsIconic(w["hwnd"]) or user32.IsZoomed(w["hwnd"]):
+        user32.ShowWindow(w["hwnd"], 9)        # SW_RESTORE
+        time.sleep(0.06)                       # окну нужен кадр
     if not user32.SetWindowPos(w["hwnd"], 0, x, y, ww, wh, 0x0004 | 0x0010):
         return _blocked_note(w, "двигать")
     # проверяем, куда окно встало НА САМОМ ДЕЛЕ — «поставила на второй
@@ -1599,7 +1872,8 @@ def window_place(query: str, position: str = "center",
            else "высота как была")
     return (f"Поставила «{w['title'][:50]}» {position}{where}"
             + (f", {_wd}, {_ht}" if (width or height) else "")
-            + ".")
+            + "." + state_note(w["hwnd"])
+            + " Проверять отдельно не надо, это уже проверено.")
 
 
 # ──────────────────────────────── звук ────────────────────────────────
@@ -1993,11 +2267,77 @@ def _subdirs(base: Path) -> list:
                       key=lambda d: d.name.lower())
     except OSError:
         return []
+# ── ЗАПОМИНАТЬ ТУДА, КУДА ПРИВЕЛИ (2026-08-18) ────────────────────────
+# Владелец отказался от идеи «изучи мой ПК» сканером: «это будет звучать
+# как найди все мои секреты… просто когда мы с ней будем говорить открой
+# то, открой это — куда мы будем приходить первые разы, пускай и
+# запоминает как доверенные человеком».
+#
+# Поэтому карта машины строится не обходом дисков, а следом от разговора.
+# Стоит это ноль ресурсов (мы туда всё равно идём) и не требует доверия
+# авансом: место доверено потому, что человек сам туда привёл.
+_PLACE_JUNK = {
+    "открой", "открыть", "открывай", "зайди", "заходи", "перейди", "покажи",
+    "пойдём", "пойдем", "давай", "ну", "вот", "это", "эту", "этот", "там",
+    "мне", "мою", "мой", "моя", "пожалуйста", "плиз", "сайка", "хорошо",
+    "ладно", "окей", "ок", "так", "короче", "значит", "теперь", "сначала",
+    "папку", "папка", "папке", "папочку", "папочка", "директорию", "каталог",
+    "проводник", "проводнике", "проводника", "окно", "окне",
+    "на", "в", "во", "к", "с", "со", "по", "из", "у", "и", "а", "же",
+    "первом", "втором", "третьем", "первый", "второй", "экран", "экране",
+    "мониторе", "монитор", "диск", "диске", "диска",
+}
+
+
+def _place_name_from_phrase() -> str:
+    """Имя места СЛОВАМИ ЧЕЛОВЕКА — «ламода», «уроки», «игровая». Служебное
+    и командное выкидываем: иначе в память уедет «открой папку на втором
+    экране» и по такому имени потом ничего не найдётся."""
+    words = [w for w in re.findall(r"[\w'-]+", _phrase())
+             if w.lower() not in _PLACE_JUNK and len(w) > 2
+             and not w.isdigit()]
+    return " ".join(words[:3]).strip().lower()
+
+
 def open_folder(path: str = "") -> str:
     """Открыть папку в проводнике. Рабочую директорию (files.roots) —
     свободно; всё остальное только если владелец разрешил гулять по диску."""
     from server import file_hands
-    p = (path or "").strip()
+    p = (path or "").strip().strip("\"'`").lstrip("^")
+
+    # «ЭТОТ КОМПЬЮТЕР» И БУКВА ДИСКА — НЕ ПОДПАПКА (2026-08-18, живой лог).
+    # Человек: «открой проводник на первом экране». Модель честно позвала
+    # open_folder(path="Этот компьютер") — и получила «Папки "Этот
+    # компьютер" тут нет. Здесь (Saika) есть: .git, .pip_cache, .venv…».
+    # Она искала ПОДПАПКУ с таким именем в рабочей директории, потому что
+    # для неё «папка» — это всегда путь на диске. Но «Этот компьютер» —
+    # корень оболочки Windows, у него нет пути; открывается он через
+    # shell:MyComputerFolder. Тот же разговор про «диск Ц»: путь «C:» без
+    # слэша Path понимает как «текущая папка на диске C», а человек имеет
+    # в виду корень.
+    _pc_root = re.match(r"^(?:этот\s+|мой\s+)?(?:компьютер\w*|пк|"
+                        r"this\s+pc|my\s+computer)\s*$", p, re.I)
+    if _pc_root:
+        try:
+            os.startfile("shell:MyComputerFolder")   # noqa: S606
+        except Exception as e:
+            log.warning("«Этот компьютер» не открылся: %s", e)
+            return ("Не смогла открыть «Этот компьютер» — Windows не дала. "
+                    "Скажи человеку честно.")
+        try:
+            ds = ", ".join(drives())
+        except Exception:
+            ds = ""
+        return ("Открыла «Этот компьютер» в проводнике."
+                + (f" Диски: {ds}." if ds else ""))
+    # «диск Ц», «диск C», «C:», «C:\» -> корень диска
+    _dm = re.match(r"^(?:диск\w*\s+)?([a-zA-Zа-яё])\s*:?\\?\s*$", p, re.I)
+    if _dm:
+        _lat = {"ц": "c", "с": "c", "д": "d", "е": "e", "ф": "f", "ж": "g",
+                "г": "g", "х": "h", "и": "i", "й": "j", "к": "k", "л": "l"}
+        _L = _dm.group(1).lower()
+        p = _lat.get(_L, _L).upper() + ":\\"
+
     # «ОТКРОЙ РАБОЧУЮ ПАПКУ» — ЭТО КОРЕНЬ, А НЕ ПОИСК ПО ИМЕНИ (2026-08-13,
     # живой отказ: она приняла «рабочую папку» за НАЗВАНИЕ и пошла искать
     # подпапку с таким именем, потом «Рабочий стол» — обе не нашлись, и
@@ -2184,6 +2524,21 @@ def open_folder(path: str = "") -> str:
     # SetForegroundWindow наугад, а тот же window_focus, что работает по
     # прямой просьбе.
     remember_app("проводник")
+    # СЛЕД ОТ РАЗГОВОРА: куда пришли — то и запомнили. Два имени: как
+    # называется папка на диске (по нему найдём в следующий раз точно) и
+    # как её назвал человек (по нему он и будет просить). Счётчик визитов
+    # копится — из него потом растут мгновенные пути без думанья.
+    try:
+        from server import file_hands as _fh
+        _n = _fh.place_seen(target.name.lower(), str(target))
+        _said = _place_name_from_phrase()
+        if _said and _said != target.name.lower():
+            _fh.place_seen(_said, str(target))
+        if _n == 3:
+            log.info("«%s» — третий заход, место стало привычным: %s",
+                     target.name, target)
+    except Exception as e:
+        log.debug("место не запомнилось: %s", e)
     try:
         window_focus(target_dir.name or "проводник")
     except Exception as e:
