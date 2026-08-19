@@ -1239,20 +1239,43 @@ def work_note() -> str:
             + _media_hint(w) + _other_places(w))
 
 
+_PLAYER_HINT = ("youtube", "ютуб", "vlc", "spotify", "twitch", "музык",
+                "плеер", "player", "media", "кино", "фильм", "aimp",
+                "winamp", "foobar", "rutube", "kinopoisk", "netflix")
+_APP_SAY = {"chrome": "хром", "msedge": "edge", "firefox": "фаерфокс",
+            "opera": "опера", "vlc": "vlc", "spotify": "спотифай",
+            "aimp": "aimp", "explorer": "проводник"}
+
+
+def _playing_place() -> dict:
+    """Где сейчас играет звук — по последнему обжитому окну, похожему на
+    плеер. Владелец (2026-08-19): «если бы я после браузера попросил
+    открыть урок в плеере, то тише нужно было бы сделать в плеере».
+    То есть «потише» относится не к браузеру навсегда, а к тому, что мы
+    трогали последним и что при этом играет."""
+    for p in work_places():          # уже отсортировано: свежее первым
+        hay = (p.get("title", "") + " " + p.get("app", "")).lower()
+        if any(k in hay for k in _PLAYER_HINT):
+            return p
+    return {}
+
+
 def _media_hint(w: dict) -> str:
-    """Если в рабочем окне что-то играет, «потише» и «останови» относятся к
-    НЕМУ (2026-08-19, владелец: «ты же понимаешь, что я попросил сделать
-    звук потише на ютубе… ну это в контексте понятно»). Без этой строчки
-    модель переспрашивала, какой звук имеется в виду, хотя ролик только что
-    запустили вместе."""
-    t = ((w.get("title") or "") + " " + (w.get("proc") or "")).lower()
-    if not any(k in t for k in ("youtube", "ютуб", "chrome", "firefox",
-                                "edge", "opera", "vlc", "spotify", "twitch",
-                                "плеер", "player")):
+    """Строчка в промпт: чей звук крутить, если человек не уточнил."""
+    p = _playing_place()
+    if not p:
         return ""
-    return (" Здесь же играет звук: «потише», «громче», «останови», «дальше» "
-            "без уточнений — про ЭТО окно. Громкость именно его меняй через "
-            "volume_set с app (например app=\"ютуб\"), а не общесистемную.")
+    proc = (p.get("app") or "").lower().replace(".exe", "")
+    say = _APP_SAY.get(proc, proc or "это окно")
+    if "youtube" in (p.get("title") or "").lower():
+        say = "ютуб"
+    here = (int(p.get("hwnd") or 0) == int(w.get("hwnd") or 0))
+    where = ("Здесь же играет звук" if here
+             else f"Звук играет в другом обжитом окне — «{p.get('title', '')[:40]}» "
+                  f"(экран {p.get('monitor')})")
+    return (f" {where}: «потише», «громче», «останови», «дальше» без "
+            f"уточнений — про НЕГО. Громкость меняй через volume_set с "
+            f"app=\"{say}\", а не общесистемную; пульт — media_control.")
 
 
 def _other_places(cur: dict) -> str:
