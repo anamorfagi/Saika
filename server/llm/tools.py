@@ -658,12 +658,18 @@ _BROWSER_SCHEMAS = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "media_control",
-        "description": ("Пульт для того, что играет в ТВОЁМ окне браузера: "
-                        "пауза, продолжить, следующий трек, громче, тише, "
-                        "перемотать, сначала. Зови на «останови», «пауза», "
-                        "«включи обратно», «следующую», «громче». Это "
-                        "НАСТОЯЩЕЕ управление плеером — не отвечай «ставлю "
-                        "на паузу» без вызова, иначе музыка так и играет."),
+        "description": ("Пульт для того, что играет — СНАЧАЛА в твоём окне "
+                        "браузера, а если там пусто, то мультимедийной "
+                        "клавишей тому, что играет у ЧЕЛОВЕКА (YouTube в "
+                        "его Chrome, плеер, что угодно). Пауза, продолжить, "
+                        "следующий, предыдущий, громче, тише; перемотка и "
+                        "«сначала» работают только в твоём окне. Зови на "
+                        "«останови», «пауза», «включи обратно», «следующую», "
+                        "«громче» — и НЕ говори «ставлю на паузу» без "
+                        "вызова, иначе музыка так и играет. Не отвечай "
+                        "«ничего не играет», не попробовав: у человека "
+                        "ролик может идти в другом окне, до которого "
+                        "клавиша всё равно достанет."),
         "parameters": {"type": "object", "properties": {
             "action": {"type": "string", "description":
                        "пауза | играй | следующий | предыдущий | громче | "
@@ -1638,7 +1644,17 @@ def _browser_call(name: str, arguments) -> str:
         if name == "attach_chrome":
             return browser_hands.attach_chrome()
         if name == "media_control":
-            return browser_hands.media(str(arguments.get("action") or ""))
+            # СВОЁ ОКНО -> ЕСЛИ ТАМ ПУСТО, ПУЛЬТ СИСТЕМЫ (2026-08-19).
+            # «останови ролик на YouTube» умирало на том, что её
+            # окно Playwright пустое, а ролик играл в окне человека.
+            _r = browser_hands.media(str(arguments.get("action") or ""))
+            _bad = ("ничего не играет", "не готов", "пульт не сработал",
+                    "нет плеера")
+            if _r and not any(b in _r for b in _bad):
+                return _r
+            from server import pc_control as _pcm
+            from server.browser_hands import _media_cmd as _mc
+            return _pcm.media_key(_mc(str(arguments.get("action") or "")))
         if name == "click_on":
             return browser_hands.click_on(
                 str(arguments.get("what") or "")[:120],
