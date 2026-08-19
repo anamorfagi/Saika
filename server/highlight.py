@@ -5,18 +5,26 @@
 действие, чтобы оно масштабировалось по размерам окна, где она работает в
 текущем моменте».
 
-КАК УСТРОЕНО. Мягкое свечение по краю цели: по каждой стороне несколько
-узких полос, от плотной снаружи к почти невидимой внутрь — вместе они
-читаются как градиент. Полосы — обычные окна с общей прозрачностью
-(-alpha), поэтому чёрного прямоугольника не будет НИКОГДА.
+КАК УСТРОЕНО. Несколько вложенных РАМОК со скруглёнными углами, от яркой
+снаружи к еле заметной внутрь — вместе читаются как мягкое свечение.
+Каждая рамка — окно, которому вырезана середина настоящей дырой
+(SetWindowRgn: región окна = скруглённый прямоугольник МИНУС внутренний).
+Дыра — не «прозрачный цвет», который может не сработать, а физическое
+отсутствие окна: сквозь неё и видно, и кликается.
 
-⚠️ ПОЧЕМУ НЕ ОДНО ОКНО НА ВСЮ ЦЕЛЬ (2026-08-19, живой инцидент). Первая
-версия накрывала цель одним окном и делала середину прозрачной через
--transparentcolor. На машине владельца этот фокус не прошёл — и весь экран
-стал ЧЁРНЫМ, поверх всего: «у меня экран чёрный стал, не подскажешь, в чём
-дело». Урок простой: украшение не имеет права закрывать человеку работу,
-даже если что-то пошло не так. Полосы по краям физически не могут накрыть
-середину, что бы ни случилось с прозрачностью.
+⚠️ ТРИ ЗАХОДА, И ВОТ ПОЧЕМУ (2026-08-19).
+  1. Одно окно на всю цель с прозрачной серединой через -transparentcolor.
+     У владельца фокус не прошёл — ВЕСЬ ЭКРАН стал чёрным поверх всего.
+  2. Четыре прямые полосы по краям. Чёрного экрана больше нет, но: углы
+     без скруглений, цвет на малой прозрачности читается как «чёрная
+     полоса, чуть посветлее», а главное — полосы ЛОВИЛИ МЫШЬ, и с окном
+     под ними нельзя было работать («я не могу с ним взаимодействовать,
+     оно перекрывает прогу»). Сквозной стиль ставился не тому окну: у
+     Tk-окна winfo_id() — это внутреннее окно, а слои и «не ловить мышь»
+     живут на его обёртке (GetParent).
+  3. Рамки с настоящей дырой и скруглением — то, что здесь. Мышь ловить
+     нечему: середины у окна физически нет, а сама рамка помечена
+     WS_EX_TRANSPARENT уже на правильном hwnd.
 
 Пока свечение живёт, каждые 100 мс перечитывается прямоугольник цели по
 hwnd — человек двигает или растягивает окно, свечение едет и
@@ -48,7 +56,7 @@ log = logging.getLogger("saika.highlight")
 _Q = queue.Queue()
 _T = {"thread": None, "dead": False}
 GLOW_PX = 100             # ширина свечения по умолчанию, пиксели
-BANDS = 6                 # полос на сторону: больше — мягче градиент
+BANDS = 5                 # вложенных рамок: больше — мягче градиент
 
 
 def enabled() -> bool:
@@ -123,21 +131,68 @@ def _win_rect(hwnd: int):
         return None
 
 
+def _hwnds(win) -> list:
+    """Своё окно И его обёртку. У Tk winfo_id() отдаёт ВНУТРЕННЕЕ окно, а
+    стили слоя и «не ловить мышь» действуют на верхнем (2026-08-19: из-за
+    этого рамка перехватывала клики и с приложением нельзя было работать)."""
+    out = []
+    try:
+        import ctypes
+        h = int(win.winfo_id())
+        out.append(h)
+        p = ctypes.windll.user32.GetParent(h)
+        if p and int(p) != h:
+            out.append(int(p))
+    except Exception as e:
+        log.debug("hwnd не достался: %s", e)
+    return out
+
+
 def _click_through(win):
-    """Окно не ловит мышь и не забирает фокус."""
+    """Окно не ловит мышь и не забирает фокус — на ВСЕХ его уровнях."""
     try:
         import ctypes
         GWL_EXSTYLE = -20
         WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
         WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x00000080, 0x08000000
-        hwnd = int(win.winfo_id())
         user32 = ctypes.windll.user32
-        cur = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
-                              cur | WS_EX_LAYERED | WS_EX_TRANSPARENT
-                              | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+        for h in _hwnds(win):
+            cur = user32.GetWindowLongW(h, GWL_EXSTYLE)
+            user32.SetWindowLongW(h, GWL_EXSTYLE,
+                                  cur | WS_EX_LAYERED | WS_EX_TRANSPARENT
+                                  | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
     except Exception as e:
         log.debug("сквозное окно не получилось: %s", e)
+
+
+def _ring_region(win, w: int, h: int, thick: int, radius: int) -> bool:
+    """Вырезать в окне скруглённую рамку: сама рамка есть, середины НЕТ.
+    Дыра настоящая — сквозь неё видно и кликается. False — не вышло, и
+    тогда рамку лучше не показывать вовсе, чем показать плашкой."""
+    try:
+        import ctypes
+        gdi32, user32 = ctypes.windll.gdi32, ctypes.windll.user32
+        RGN_DIFF = 4
+        r = max(2, int(radius))
+        outer = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r)
+        inner = gdi32.CreateRoundRectRgn(thick, thick, w - thick + 1,
+                                         h - thick + 1,
+                                         max(2, r - thick), max(2, r - thick))
+        if not outer or not inner:
+            return False
+        gdi32.CombineRgn(outer, outer, inner, RGN_DIFF)
+        gdi32.DeleteObject(inner)
+        ok = False
+        for hd in _hwnds(win)[::-1]:          # сперва обёртка
+            if user32.SetWindowRgn(hd, outer, True):
+                ok = True
+                break
+        if not ok:
+            gdi32.DeleteObject(outer)
+        return bool(ok)
+    except Exception as e:
+        log.debug("рамка-дыра не вырезалась: %s", e)
+        return False
 
 
 def _loop():
@@ -151,17 +206,15 @@ def _loop():
     try:
         root = tk.Tk()
         root.withdraw()
-        # 4 стороны * BANDS полос. Полоса — крошечное окно с общей
-        # прозрачностью: чем ближе к центру, тем прозрачнее.
-        strips = []
-        for _ in range(4 * BANDS):
+        rings = []
+        for _ in range(BANDS):
             b = tk.Toplevel(root)
             b.overrideredirect(True)
             b.attributes("-topmost", True)
             b.attributes("-alpha", 0.0)
             b.configure(bg="#ff9a3c")
             b.withdraw()
-            strips.append(b)
+            rings.append(b)
         cap = tk.Toplevel(root)
         cap.overrideredirect(True)
         cap.attributes("-topmost", True)
@@ -174,44 +227,44 @@ def _loop():
               "label": "", "color": "#ff9a3c", "life": 30.0, "fade": 1.0,
               "glow": GLOW_PX}
 
-        def band_alpha(i: int) -> float:
-            """Снаружи плотнее, внутрь — в ноль. Квадратичный спад читается
-            глазом как мягкое свечение, линейный — как ступеньки."""
+        def ring_alpha(i: int) -> float:
+            """Ярче всего у самой границы окна, дальше внутрь — гаснет.
+            Значения выше прежних: на 0.3 тёплый цвет поверх тёмного стола
+            читался как «чёрная полоса чуть посветлее»."""
             k = 1.0 - (i / float(BANDS))
-            return 0.34 * (k ** 2)
+            return 0.10 + 0.55 * (k ** 2)
 
         def place(rect):
             x, y, w, h = rect
-            # СВЕЧЕНИЕ НЕ ДОЛЖНО СЪЕДАТЬ МАЛЕНЬКОЕ ОКНО: у окна 200x150 сто
-            # пикселей с каждой стороны — это оно целиком. Ограничиваем
-            # четвертью меньшей стороны, чтобы середина всегда осталась
-            # чистой, что бы ни пришло в rect.
-            g = max(8, min(int(st["glow"]), w // 4, h // 4))
-            t = max(1, g // BANDS)
-            n = 0
-            for i in range(BANDS):
+            g = max(10, min(int(st["glow"]), w // 4, h // 4))
+            t = max(3, g // BANDS)
+            for i, b in enumerate(rings):
                 off = i * t
-                geo = ((x + off, y + off, max(w - 2 * off, 1), t),      # верх
-                       (x + off, y + h - off - t, max(w - 2 * off, 1), t),
-                       (x + off, y + off, t, max(h - 2 * off, 1)),      # лево
-                       (x + w - off - t, y + off, t, max(h - 2 * off, 1)))
-                for gx, gy, gw, gh in geo:
-                    b = strips[n]
-                    n += 1
-                    b.geometry(f"{max(gw, 1)}x{max(gh, 1)}+{gx}+{gy}")
-                    b.configure(bg=st["color"])
-                    try:
-                        b.attributes("-alpha", band_alpha(i) * st["fade"])
-                    except Exception:
-                        pass
-                    b.deiconify()
-                    b.lift()
-                    _click_through(b)
+                rw, rh = w - 2 * off, h - 2 * off
+                if rw < 3 * t or rh < 3 * t:
+                    b.withdraw()
+                    continue
+                b.geometry(f"{rw}x{rh}+{x + off}+{y + off}")
+                b.configure(bg=st["color"])
+                b.deiconify()
+                b.update_idletasks()
+                # СНАЧАЛА ДЫРА, ПОТОМ ПОКАЗ. Не вышло вырезать середину —
+                # окно не показываем вовсе: плашка поверх работы хуже, чем
+                # отсутствие украшения (см. историю про чёрный экран).
+                if not _ring_region(b, rw, rh, t, 16 + i * 3):
+                    b.withdraw()
+                    continue
+                try:
+                    b.attributes("-alpha", ring_alpha(i) * st["fade"])
+                except Exception:
+                    pass
+                b.lift()
+                _click_through(b)
             if st["label"]:
                 lbl.configure(text=st["label"], bg=st["color"])
                 cap.update_idletasks()
                 cw = cap.winfo_reqwidth()
-                cap.geometry(f"+{x + max(0, (w - cw) // 2)}+{max(0, y + 6)}")
+                cap.geometry(f"+{x + max(0, (w - cw) // 2)}+{max(0, y + 8)}")
                 try:
                     cap.attributes("-alpha", min(1.0, 0.92 * st["fade"]))
                 except Exception:
@@ -223,7 +276,7 @@ def _loop():
                 cap.withdraw()
 
         def hide():
-            for b in strips:
+            for b in rings:
                 b.withdraw()
             cap.withdraw()
             st["shown"] = False
@@ -249,8 +302,6 @@ def _loop():
                 if left <= 0:
                     hide()
                 else:
-                    # ЗАТУХАНИЕ: ярко, пока есть запас, и плавно в ноль на
-                    # последней трети срока.
                     span = max(0.5, st["life"] * 0.35)
                     f = 1.0 if left > span else max(0.0, left / span)
                     moved = False
@@ -259,14 +310,27 @@ def _loop():
                         if r and r != st["rect"] and r[2] > 0 and r[3] > 0:
                             st["rect"] = r
                             moved = True
-                    if moved or abs(f - st["fade"]) > 0.03:
+                    if moved:
                         st["fade"] = f
                         place(st["rect"])
+                    elif abs(f - st["fade"]) > 0.03:
+                        st["fade"] = f
+                        for i, b in enumerate(rings):
+                            try:
+                                if b.winfo_viewable():
+                                    b.attributes("-alpha", ring_alpha(i) * f)
+                            except Exception:
+                                pass
+                        try:
+                            cap.attributes("-alpha", min(1.0, 0.92 * f))
+                        except Exception:
+                            pass
             root.after(100, tick)
 
         root.after(100, tick)
-        log.info("Свечение внимания готово: %d полос, %dпx, цвет %s",
-                 len(strips), GLOW_PX, CFG.get("pc.highlight_color", "#ff9a3c"))
+        log.info("Свечение внимания готово: %d рамок со скруглением, %dпx, "
+                 "цвет %s", BANDS, GLOW_PX,
+                 CFG.get("pc.highlight_color", "#ff9a3c"))
         root.mainloop()
     except Exception as e:
         _T["dead"] = True
