@@ -444,6 +444,32 @@ def higher_than(backend: str = "", model: str = "") -> list[dict]:
             if c["rank"] > mine and (c["backend"], c["model"]) != (backend, model)]
 
 
+def _no_second_local(cands: list) -> list:
+    """Выкинуть кандидатов, которые означают ВТОРУЮ локальную модель в
+    памяти (2026-08-19, ЧП). Живой разнос: на «открой RustDesk» лестница
+    поднялась на locallm/T-lite и подняла ЕЩЁ ОДИН воркер рядом с
+    llamacpp/gemma. Через десять секунд VRAM 96%, защита железа снесла
+    ВСЁ — слух, голос, мозги, — и разговор оборвался на полуслове.
+
+    Для рук это правило уже стояло (for_hands), но эскалация ходила мимо.
+    Правило одно и то же: облако — сколько угодно, второй локальный
+    движок — только с разрешения (llm.hands_local_second)."""
+    try:
+        if not CFG.get("llm.keep_only_one", True) or CFG.get(
+                "llm.hands_local_second", False):
+            return cands
+        cb, cm = current()
+        out = [c for c in cands
+               if c["backend"] == "cloud" or (c["backend"], c["model"]) == (cb, cm)]
+        if len(out) != len(cands):
+            log.debug("эскалация: пропускаю вторую локальную модель "
+                      "(осталось %d из %d)", len(out), len(cands))
+        return out
+    except Exception as e:
+        log.debug("проверка второй локальной модели: %s", e)
+        return cands
+
+
 def next_brain(tried=()) -> dict | None:
     """Следующая ступень вверх: сильнее текущей, ещё не пробованная, живая.
 
@@ -453,10 +479,12 @@ def next_brain(tried=()) -> dict | None:
     tried = {tuple(t) for t in (tried or ())}
     b, m = current()
     tried.add((b, m))
-    up = [c for c in higher_than(b, m) if (c["backend"], c["model"]) not in tried]
+    up = _no_second_local(
+        [c for c in higher_than(b, m) if (c["backend"], c["model"]) not in tried])
     if up:
         return up[0]
-    rest = [c for c in ladder() if (c["backend"], c["model"]) not in tried]
+    rest = _no_second_local(
+        [c for c in ladder() if (c["backend"], c["model"]) not in tried])
     return rest[0] if rest else None
 
 

@@ -9265,9 +9265,35 @@ def main():
         broadcast_event({"type": "guard", "level": "critical",
                          "temp": g.get("temp"),
                          "vram": round(g.get("vram_frac", 0) * 100)})
-        # та же жёсткая разгрузка, что по кнопке «Выгрузить всё из
-        # памяти». Мы в потоке защиты, событийного цикла тут нет — просто
-        # запускаем корутину в свежем цикле этого потока.
+        # СНАЧАЛА ЛИШНЕЕ, И ТОЛЬКО ПОТОМ ВСЁ (2026-08-19). Владелец:
+        # «бля, чё не так, она просто вырубает всё». Защита при 96% VRAM
+        # сносила ВСЁ — слух, голос, мозги — и разговор обрывался на
+        # полуслове, хотя виноват был один лишний движок: рядом с
+        # llamacpp/gemma в памяти оказался locallm/T-lite. Действуем как
+        # человек: убираем ЛИШНЕЕ, ждём, меряем заново, и только если не
+        # помогло — рубим по-настоящему.
+        try:
+            from server.llm import manager as _mgr
+            _cb, _cm = CFG.get("llm.backend", ""), CFG.get("llm.model", "")
+            _failed = _mgr.unload_others(_cb, _cm)
+            log.info("Защита: сперва выгружаю лишние движки (осталось "
+                     "%s/%s, не вышло: %s)", _cb, _cm, _failed or "—")
+            broadcast_event({"type": "problem", "component": "железо",
+                             "text": "память видеокарты на пределе — "
+                                     "выгрузила лишние движки, разговор "
+                                     "продолжается"})
+            time.sleep(3.0)
+            g2 = GUARD.last or {}
+            _tot = float(g2.get("vram_total_mb") or 0)
+            _now = float(g2.get("vram_mb") or 0) / _tot if _tot else 1.0
+            if _now < float(CFG.get("guard.vram_crit", 0.93)):
+                log.info("Защита: хватило — VRAM %.0f%%, всё остальное "
+                         "оставляю жить", _now * 100)
+                return
+        except Exception as e:
+            log.debug("мягкая ступень защиты не сработала: %s", e)
+        # не помогло — та же жёсткая разгрузка, что по кнопке «Выгрузить
+        # всё из памяти». Мы в потоке защиты, событийного цикла тут нет.
         try:
             asyncio.run(panic_unload())
         except Exception as e:
