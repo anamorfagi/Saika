@@ -55,8 +55,8 @@ log = logging.getLogger("saika.highlight")
 
 _Q = queue.Queue()
 _T = {"thread": None, "dead": False}
-GLOW_PX = 100             # ширина свечения по умолчанию, пиксели
-BANDS = 5                 # вложенных рамок: больше — мягче градиент
+GLOW_PX = 16              # толщина контура по умолчанию, пиксели
+BANDS = 3                 # вложенных рамок: больше — мягче спад
 
 
 def enabled() -> bool:
@@ -178,19 +178,33 @@ def _target_radius(hwnd: int) -> int:
         return 0
 
 
-def _click_through(win):
-    """Окно не ловит мышь и не забирает фокус — на ВСЕХ его уровнях."""
+def _click_through(win, alpha: float = None):
+    """Окно не ловит мышь и не забирает фокус.
+
+    ⚠️ WS_EX_LAYERED ЗДЕСЬ НЕ СТАВИМ (2026-08-19, третий подход к снаряду).
+    Его уже поставил сам Tk, когда мы задали -alpha. Повторная запись
+    ex-стиля ОБНУЛЯЕТ параметры слоя, и Windows рисует окно ЧЁРНЫМ, пока
+    кто-нибудь снова не позовёт SetLayeredWindowAttributes. Ровно отсюда
+    росли «чёрные полосочки вместо оранжевого свечения»: цвет мы задавали
+    правильный, а показывался обнулённый слой. Поэтому: добавляем ТОЛЬКО
+    «не ловить мышь», и сразу возвращаем прозрачность на место."""
     try:
         import ctypes
         GWL_EXSTYLE = -20
-        WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
+        WS_EX_TRANSPARENT = 0x00000020
         WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x00000080, 0x08000000
+        need = WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
         user32 = ctypes.windll.user32
         for h in _hwnds(win):
             cur = user32.GetWindowLongW(h, GWL_EXSTYLE)
-            user32.SetWindowLongW(h, GWL_EXSTYLE,
-                                  cur | WS_EX_LAYERED | WS_EX_TRANSPARENT
-                                  | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+            if cur & need == need:
+                continue                  # уже сквозное — не трогаем слой
+            user32.SetWindowLongW(h, GWL_EXSTYLE, cur | need)
+        if alpha is not None:
+            try:
+                win.attributes("-alpha", max(0.0, min(1.0, float(alpha))))
+            except Exception:
+                pass
     except Exception as e:
         log.debug("сквозное окно не получилось: %s", e)
 
@@ -266,11 +280,11 @@ def _loop():
               "glow": GLOW_PX}
 
         def ring_alpha(i: int) -> float:
-            """Ярче всего у самой границы окна, дальше внутрь — гаснет.
-            Значения выше прежних: на 0.3 тёплый цвет поверх тёмного стола
-            читался как «чёрная полоса чуть посветлее»."""
-            k = 1.0 - (i / float(BANDS))
-            return 0.10 + 0.55 * (k ** 2)
+            """Тонкий контур: внешняя линия почти непрозрачная, следующие
+            гаснут. Владелец: «должна быть тоненькая контурная подсветка,
+            оранжевая, а не чёрная» — значит, беречь прозрачность тут
+            нечего, иначе цвет не читается вовсе."""
+            return (0.95, 0.55, 0.28, 0.16, 0.10)[min(i, 4)]
 
         def place(rect):
             x, y, w, h = rect
@@ -297,24 +311,19 @@ def _loop():
                 if not _ring_region(b, rw, rh, t, max(0, base_r - off)):
                     b.withdraw()
                     continue
-                try:
-                    b.attributes("-alpha", ring_alpha(i) * st["fade"])
-                except Exception:
-                    pass
                 b.lift()
-                _click_through(b)
+                # сквозной стиль СНАЧАЛА, прозрачность — ПОСЛЕ него
+                _click_through(b, ring_alpha(i) * st["fade"])
             if st["label"]:
                 lbl.configure(text=st["label"], bg=st["color"])
+                cap.configure(bg=st["color"])   # чтобы вокруг подписи не
+                # проступал фон окна-обёртки
                 cap.update_idletasks()
                 cw = cap.winfo_reqwidth()
                 cap.geometry(f"+{x + max(0, (w - cw) // 2)}+{max(0, y + 8)}")
-                try:
-                    cap.attributes("-alpha", min(1.0, 0.92 * st["fade"]))
-                except Exception:
-                    pass
                 cap.deiconify()
                 cap.lift()
-                _click_through(cap)
+                _click_through(cap, min(1.0, 0.92 * st["fade"]))
             else:
                 cap.withdraw()
 
