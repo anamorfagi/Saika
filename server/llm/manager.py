@@ -784,8 +784,11 @@ def _lmstudio_unload(model: str) -> bool:
         # выгрузка не находит цель, а память надо освободить всё равно
         for args in ([cli, "unload", model], [cli, "unload", "--all"]):
             try:
+                # encoding явно: на русской Windows text=True берёт
+                # cp1251 и давится UTF-8 выводом (см. git_sync._run)
                 r = subprocess.run(
-                    args, capture_output=True, text=True, timeout=60,
+                    args, capture_output=True, encoding="utf-8",
+                    errors="replace", timeout=60,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if r.returncode == 0:
                     log.info("Модель %s выгружена (%s)", model,
@@ -793,7 +796,7 @@ def _lmstudio_unload(model: str) -> bool:
                     _LMS_MISS["logged"] = False
                     return True
                 log.debug("lms %s: %s", " ".join(args[1:]),
-                          (r.stderr or r.stdout or "")[:200])
+                          ((r.stderr or "") or (r.stdout or ""))[:200])
             except Exception as e:
                 log.debug("lms %s не отработал: %s", " ".join(args[1:]), e)
     for path, payload in (("/api/v1/models/unload", {"instance_id": model}),

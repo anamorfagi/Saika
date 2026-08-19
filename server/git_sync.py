@@ -28,11 +28,22 @@ FETCH_INTERVAL_S = 90  # не долбим GitHub на каждый опрос �
 
 
 def _run(args, timeout=30):
+    """git с ЯВНОЙ кодировкой UTF-8 (2026-08-19, живой обвал).
+
+    Было text=True без encoding — значит Python декодировал вывод кодировкой
+    системы, а на русской Windows это cp1251. git отдаёт UTF-8, и первая же
+    кириллическая «И» (байты D0 98) роняла поток-читатель:
+    'charmap' codec can't decode byte 0x98. Поток умирал, r.stdout
+    оставался None, и .strip() валил ВЕСЬ /api/git/status — панель git в
+    интерфейсе отваливалась с 500. Всплыло, когда в сообщении последнего
+    коммита появилась кириллица (мы её сами туда и положили, показав HEAD).
+    errors=replace: лучше «крякозябра» в одном символе, чем мёртвая ручка."""
     try:
         r = subprocess.run(
-            ["git", *args], cwd=str(ROOT), capture_output=True, text=True,
+            ["git", *args], cwd=str(ROOT), capture_output=True,
+            encoding="utf-8", errors="replace",
             timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return r.returncode, r.stdout.strip(), r.stderr.strip()
+        return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
     except FileNotFoundError:
         return 127, "", "git не найден в PATH"
     except subprocess.TimeoutExpired:
