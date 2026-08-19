@@ -220,6 +220,14 @@ def _launch_chrome_debug(restore=True) -> bool:
         return False
     port = int(CFG.get("browser.cdp_port", 9222))
     args = [exe, f"--remote-debugging-port={port}"]
+    # ВЫБОР ПРОФИЛЯ — НЕ ДЛЯ РОБОТА (2026-08-19). У владельца в Chrome
+    # девять профилей, и свежий запуск без --profile-directory открывает
+    # окно «Кто использует Chrome?». Он увидел его посреди разговора и
+    # спросил, какой ещё «автоэффект» она запустила. Берём профиль по
+    # умолчанию (browser.chrome_profile), пока не сказано иначе.
+    prof = str(CFG.get("browser.chrome_profile", "Default")).strip()
+    if prof:
+        args.append(f"--profile-directory={prof}")
     if restore:
         args.append("--restore-last-session")
     try:
