@@ -154,6 +154,24 @@
      всего: 12-16 пикселей между каждой строкой) и прячем то, что не
      «полоска»: список процессов и легенду весов — они открываются по
      клику на плашке видеокарты. Цифры и полоски остаются все. */
+  /* ВНИМАНИЕ: где работаю, куда смотрю (2026-08-19, просьба владельца
+     «должно быть визуально видно, что и где она работает, где читает,
+     что видит»). Живёт в левой колонке под системой. */
+  #sysbar .attn{display:flex;flex-direction:column;gap:6px;flex:none}
+  #sysbar .attn img{width:100%;border-radius:8px;display:block;
+    border:1px solid rgba(255,255,255,.10)}
+  #sysbar .attn .pl{display:flex;justify-content:space-between;gap:6px;
+    font-size:11px;line-height:1.4;padding:4px 6px;border-radius:7px;
+    background:rgba(255,255,255,.035)}
+  #sysbar .attn .pl.cur{background:rgba(90,209,255,.13);
+    border:1px solid rgba(90,209,255,.28)}
+  #sysbar .attn .pl b{color:rgba(233,233,237,.82);font-weight:600}
+  #sysbar .attn .pl .mon{color:#5ad1ff;white-space:nowrap}
+  #sysbar .attn .look{font-size:11px;color:rgba(233,233,237,.72)}
+  #sysbar .attn .tr{font-size:10px;color:var(--dim);line-height:1.6}
+  #sysbar .attn .eyes-on{color:#5ad1ff;animation:eyespulse 1.1s ease-in-out
+    infinite}
+  @keyframes eyespulse{0%,100%{opacity:.55}50%{opacity:1}}
   #sysbar.dense{padding:10px 13px;gap:0}
   #sysbar.dense .hdr{margin-bottom:6px}
   #sysbar.dense .row{margin-top:6px}
@@ -2745,9 +2763,55 @@ function sysPatch(sb, vals, sig){
   }
   return true;
 }
+let ATTN = {};
+// ЧТО И ГДЕ ОНА ДЕЛАЕТ. Отдельная ручка /api/attention: места работы по
+// программам (браузер, проводник, редактор), последний взгляд с
+// миниатюрой экрана и след последних действий. Обновляется вместе с
+// системной колонкой — отдельный таймер тут не нужен.
+function attnBlock(){
+  const a = ATTN || {}, P = a.places || [];
+  if(!P.length && !a.look) return '';
+  const ago = s => s == null || s < 0 ? '' : (s < 60 ? s + 'с назад'
+    : Math.round(s / 60) + ' мин назад');
+  let h = '<div class="hdr" style="margin-top:18px">Где я работаю</div>'
+        + '<div class="attn">';
+  if(a.look && a.look.thumb){
+    h += '<img src="' + a.look.thumb + '" alt="что вижу">';
+  }
+  const E = a.eyes || {}, L = E.last || {};
+  if(E.on){
+    h += '<div class="look eyes-on">👁 <b>' + esc(E.what || 'смотрю') + '</b>'
+       + (E.for_s ? ' · ' + E.for_s + 'с' : '') + '</div>';
+  } else if(L.ts){
+    const parts = [];
+    if(L.grab_ms) parts.push('кадр ' + (L.grab_ms/1000).toFixed(1) + 'с'
+       + (L.backend ? ' (' + esc(L.backend) + ')' : ''));
+    if(L.kb) parts.push(L.kb + ' КБ');
+    if(L.describe_ms) parts.push('разбор ' + (L.describe_ms/1000).toFixed(1) + 'с');
+    if(parts.length) h += '<div class="tr">👁 ' + parts.join(' · ') + '</div>';
+  }
+  if(a.look){
+    h += '<div class="look">👁 ' + esc(a.look.what || '')
+       + (a.look.where ? ' · ' + esc(a.look.where) : '')
+       + ' <span style="color:var(--dim)">' + ago(a.look.ago) + '</span></div>';
+  }
+  P.forEach(p => {
+    h += '<div class="pl' + (p.current ? ' cur' : '') + '">'
+       + '<span><b>' + esc(p.kind) + '</b> · ' + esc(p.title || '') + '</span>'
+       + '<span class="mon">экран ' + (p.monitor || '?') + '</span></div>';
+  });
+  if(a.trace && a.trace.length){
+    h += '<div class="tr">' + a.trace.slice(0, 3).map(t =>
+      esc(t.kind) + ': ' + esc(t.what) + (t.where ? ' — ' + esc(t.where) : '')
+    ).join('<br>') + '</div>';
+  }
+  return h + '</div>';
+}
+
 async function pollSystem(){
   try{
     sysinfo = await (await fetch('/api/system')).json();
+    try{ ATTN = await (await fetch('/api/attention')).json(); }catch(e){}
     const esc2 = t => String(t).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
     let h='<div class="hdr">Система</div>';
     const c=sysinfo.cpu||{};
@@ -2780,6 +2844,7 @@ async function pollSystem(){
       border-radius:8px;padding:6px;cursor:pointer"
       title="Выгрузить из памяти ВСЕ модели (слух, голос, LLM). Сайка продолжит работать, нужное подгрузится заново по порядку.">
       🧹 Выгрузить всё из памяти</button>`;
+    h += attnBlock();
     // ПЕРЕСОБИРАЕМ ТОЛЬКО КОГДА ЕСТЬ ЧТО МЕНЯТЬ (2026-08-15). Колонка
     // перерисовывалась целиком каждую секунду, даже если ни одна цифра не
     // сдвинулась: innerHTML сносит поддерево, браузер строит его заново —
@@ -2795,9 +2860,17 @@ async function pollSystem(){
         // подпись структуры: пересобираем, только если изменился СОСТАВ
         // (появилась видеокарта, другой список процессов). Цифры и полоски
         // обновляются на месте — DOM не трогаем, прокрутка стоит где стояла
+        // ВНИМАНИЕ МЕНЯЕТСЯ ЧАЩЕ ЦИФР. sysPatch перерисовывает колонку
+        // только когда подпись сменилась, поэтому состояние блока
+        // «где я работаю» входит в неё целиком — иначе он замирал бы.
+        const _a = ATTN || {}, _e = _a.eyes || {};
         const sig = [c.percent!=null, r.total?1:0, g?g.name:'', g&&g.util!=null,
                      g&&g.temp!=null,
-                     (g&&g.procs?g.procs.map(x=>x.who).join(','):'')].join('|');
+                     (g&&g.procs?g.procs.map(x=>x.who).join(','):''),
+                     (_a.places||[]).map(p=>p.kind+p.hwnd+p.monitor+p.current).join(','),
+                     _a.look ? (_a.look.what+_a.look.where+(_a.look.thumb||'').length) : '',
+                     _e.on ? 'eyes:'+_e.what : ((_e.last||{}).ts||''),
+                     (_a.trace||[]).length ? _a.trace[0].what : ''].join('|');
         const vals = {};
         if(c.percent!=null) vals.cpu = {text: Math.round(c.percent)+'%', pct: c.percent};
         if(r.total) vals.ram = {text: GB(r.used)+' / '+GB(r.total), pct: r.percent};

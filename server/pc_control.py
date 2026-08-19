@@ -1051,8 +1051,36 @@ _WORK = {"hwnd": 0, "title": "", "proc": "", "monitor": 0, "ts": 0.0}
 WORK_LIFE_S = 900.0          # четверть часа: дольше — это уже другая работа
 
 
+# МЕСТ РАБОТЫ НЕСКОЛЬКО, ПО ОДНОМУ НА ПРОГРАММУ (2026-08-19). Владелец:
+# «она должна видеть запущенные проги и удерживать внимание на местах
+# работы — ты же не запускаешь новый проводник, чтобы что-то сделать».
+# Человек держит в голове не одно окно, а по окну на дело: браузер, где
+# читает; проводник, где ходит по папкам; редактор. Поэтому помним каждое
+# место отдельно, а _WORK — просто «где я была только что».
+_DESKS = {}          # вид программы -> {hwnd, title, proc, monitor, ts, n}
+
+_KINDS = (
+    ("браузер", ("chrome", "chromium", "firefox", "msedge", "edge", "opera",
+                 "yandex", "brave", "vivaldi")),
+    ("проводник", ("explorer",)),
+    ("редактор", ("code", "devenv", "pycharm", "idea", "notepad", "sublime",
+                  "notepad++")),
+    ("терминал", ("cmd", "powershell", "windowsterminal", "conhost")),
+    ("общение", ("telegram", "discord", "slack", "zoom")),
+)
+
+
+def _kind_of(w: dict) -> str:
+    proc = (w.get("proc") or "").lower().replace(".exe", "")
+    for kind, procs in _KINDS:
+        if proc in procs:
+            return kind
+    return proc or "окно"
+
+
 def note_work(w: dict):
-    """Запомнить окно, в котором только что работали."""
+    """Запомнить окно, в котором только что работали (и место для его
+    программы отдельно)."""
     try:
         if not w or _is_self_window(w) or not w.get("hwnd"):
             return
@@ -1060,8 +1088,54 @@ def note_work(w: dict):
                      title=str(w.get("title") or ""),
                      proc=str(w.get("proc") or ""),
                      monitor=int(w.get("monitor") or 0), ts=time.time())
+        kind = _kind_of(w)
+        d = _DESKS.setdefault(kind, {"n": 0})
+        d.update(hwnd=int(w.get("hwnd") or 0),
+                 title=str(w.get("title") or ""),
+                 proc=str(w.get("proc") or ""),
+                 monitor=int(w.get("monitor") or 0), ts=time.time(),
+                 n=int(d.get("n", 0)) + 1)
     except Exception:
         pass
+    # ВЗГЛЯД ИДЁТ ЗА РУКАМИ — и это видно человеку в интерфейсе.
+    try:
+        from server import attention
+        attention.follow(w, "работаю")
+    except Exception:
+        pass
+
+
+def desk_for(kind: str) -> dict:
+    """Окно, в котором мы работаем с программой этого вида, если оно живо.
+    Для правила «не плодить новые окна»: сперва спроси здесь."""
+    d = _DESKS.get(kind) or {}
+    if not d.get("hwnd") or time.time() - d.get("ts", 0) > WORK_LIFE_S:
+        return {}
+    for w in windows():
+        if int(w.get("hwnd") or 0) == int(d["hwnd"]):
+            return w
+    return {}
+
+
+def work_places() -> list:
+    """Для интерфейса и для неё самой: где мы работаем прямо сейчас."""
+    live = {int(w.get("hwnd") or 0): w for w in windows()}
+    out = []
+    for kind, d in _DESKS.items():
+        w = live.get(int(d.get("hwnd") or 0))
+        if not w:
+            continue
+        out.append({"kind": kind, "app": d.get("proc", ""),
+                    "title": w.get("title", "")[:70],
+                    "monitor": w.get("monitor") or 0,
+                    "hwnd": int(d.get("hwnd") or 0),
+                    "minimized": bool(w.get("minimized")),
+                    "front": bool(w.get("front")),
+                    "uses": int(d.get("n", 0)),
+                    "ago": int(time.time() - d.get("ts", 0)),
+                    "current": int(d.get("hwnd") or 0) == _WORK["hwnd"]})
+    out.sort(key=lambda p: p["ago"])
+    return out
 
 
 def work_window() -> dict:
@@ -1161,7 +1235,20 @@ def work_note() -> str:
             "Работай ЗДЕСЬ и не спрашивай, где это, — человек уже показал. "
             "Инструментам окон и вкладок передавай screen="
             f"{w.get('monitor') or 1}. Новое окно, вкладку или ещё один "
-            "проводник заводи, только если человек прямо об этом просит.")
+            "проводник заводи, только если человек прямо об этом просит."
+            + _other_places(w))
+
+
+def _other_places(cur: dict) -> str:
+    """Остальные места работы одной строкой — чтобы она знала, что у неё
+    уже открыто, и возвращалась туда, а не заводила новое."""
+    rest = [p for p in work_places()
+            if p["hwnd"] != int(cur.get("hwnd") or 0)]
+    if not rest:
+        return ""
+    txt = "; ".join(f"{p['kind']} — «{p['title'][:35]}» (экран {p['monitor']})"
+                    for p in rest[:4])
+    return " Ещё открыто и уже обжито: " + txt + "."
 
 
 _ANAPHORA = re.compile(
@@ -2657,6 +2744,13 @@ def _place_name_from_phrase() -> str:
     return " ".join(words[:3]).strip().lower()
 
 
+def _hwnd_of(shell_window) -> int:
+    try:
+        return int(shell_window.HWND)
+    except Exception:
+        return 0
+
+
 def open_folder(path: str = "") -> str:
     """Открыть папку в проводнике. Рабочую директорию (files.roots) —
     свободно; всё остальное только если владелец разрешил гулять по диску."""
@@ -2850,7 +2944,14 @@ def open_folder(path: str = "") -> str:
         try:
             import win32com.client            # ставится с pywinauto (pywin32)
             shell = win32com.client.Dispatch("Shell.Application")
-            for w in shell.Windows():
+            # СНАЧАЛА ТО ОКНО, ГДЕ УЖЕ ХОДИЛИ (2026-08-19). Раньше брали
+            # первое попавшееся окно проводника — и прогулка перескакивала
+            # между окнами, хотя человек всё время смотрел в одно.
+            _mine = desk_for("проводник").get("hwnd", 0)
+            _wins = list(shell.Windows())
+            if _mine:
+                _wins.sort(key=lambda x: 0 if _hwnd_of(x) == _mine else 1)
+            for w in _wins:
                 try:
                     if "explorer" not in str(w.FullName).lower():
                         continue              # это вкладка IE, не проводник

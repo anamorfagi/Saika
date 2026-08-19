@@ -1166,6 +1166,23 @@ def _pick_monitor(arg) -> tuple:
     return max(0, mon), f"экран {max(0, mon) + 1} из {n}"
 
 
+# СКОЛЬКО СТОИТ ВЗГЛЯД (2026-08-19, владелец: «не хватает видеть нагрузку
+# от зрения в момент, когда она его юзает»). Зрение — самая дорогая её
+# способность: кадр снимается видеокартой, описывает его модель, и всё это
+# делит VRAM с голосом и мозгами. Раньше в интерфейсе не было ни секунды
+# этой работы — только общая полоска VRAM, по которой не понять, кто её ест.
+BUSY = {"on": False, "what": "", "since": 0.0}
+LAST = {"grab_ms": 0, "describe_ms": 0, "kb": 0, "backend": "", "model": "",
+        "where": "", "ts": 0.0}
+
+
+def busy() -> dict:
+    d = dict(BUSY)
+    if d["on"]:
+        d["for_s"] = round(time.time() - (d["since"] or time.time()), 1)
+    return d
+
+
 LAST_ERR = {"why": ""}       # почему не вышло посмотреть — для честного ответа
 
 
@@ -1309,19 +1326,40 @@ def call(name: str, arguments) -> str:
                     "Скажи честно и предложи переключить окно.")
     try:
         _seen = ""
+        _t0 = time.time()
+        BUSY.update(on=True, what="снимаю кадр", since=_t0)
         if name == "look_screen":
             _mon, _seen = _pick_monitor(
                 arguments.get("monitor", arguments.get("screen")))
             log.info("Зрение: смотрю %s (monitor=%s от модели)", _seen,
                      arguments.get("monitor", arguments.get("screen")))
+            # ВИДНО, КУДА ОНА СМОТРИТ (2026-08-19): рамка по краю монитора
+            # и след во «внимании» — человек проверяет ответ глазами, а не
+            # на слово.
+            try:
+                from server import highlight
+                highlight.show_monitor(_mon + 1, f"смотрю: {_seen}")
+            except Exception as _he:
+                log.debug("подсветка экрана: %s", _he)
             img = grab_screen(_mon)
         else:
             img = grab_camera(arguments.get("camera"))
         url = to_data_url(img)
+        LAST.update(grab_ms=int((time.time() - _t0) * 1000),
+                    kb=int(len(url) * 3 / 4 / 1024),
+                    backend=_ST.get("screen_backend", ""),
+                    where=_seen or "камера", ts=time.time())
+        BUSY.update(on=True, what="разглядываю", since=time.time())
     except Exception as e:
+        BUSY.update(on=False, what="", since=0.0)
         log.warning("%s: %s", name, e)
         return f"не получилось открыть глаза: {e}"
-    txt = _describe(url, str(arguments.get("question", ""))[:300])
+    _t1 = time.time()
+    try:
+        txt = _describe(url, str(arguments.get("question", ""))[:300])
+    finally:
+        LAST.update(describe_ms=int((time.time() - _t1) * 1000))
+        BUSY.update(on=False, what="", since=0.0)
     if not txt:
         why = LAST_ERR.get("why") or ""
         if why:
@@ -1332,4 +1370,11 @@ def call(name: str, arguments) -> str:
         return ("кадр сделан, но описать некому: ни у текущей модели, ни у "
                 "кого в парке сейчас нет зрения. Скажи честно.")
     where = ("на " + (_seen or "экране")) if name == "look_screen" else "в камере"
+    try:
+        from server import attention
+        attention.note_look(_seen or ("камера" if name == "look_camera"
+                                      else "экран"),
+                            str(arguments.get("question", ""))[:60], txt)
+    except Exception as _ae:
+        log.debug("след внимания: %s", _ae)
     return f"я посмотрела {where} и вижу: {txt}"

@@ -2714,6 +2714,20 @@ def pc_set(payload: dict):
     return {"ok": True, "trust": _trust.describe()}
 
 
+@app.get("/api/attention")
+def api_attention():
+    """ЧТО И ГДЕ ОНА ДЕЛАЕТ ПРЯМО СЕЙЧАС (2026-08-19, просьба владельца:
+    «должно быть визуально видно, что и где она работает, где читает, что
+    видит»). Места работы по программам, последний взгляд с миниатюрой
+    экрана и короткий след последних действий."""
+    try:
+        from server import attention
+        return attention.snapshot()
+    except Exception as e:
+        return {"places": [], "look": None, "read": None, "trace": [],
+                "error": str(e)}
+
+
 @app.get("/api/pc/windows")
 def pc_windows():
     """Карта рабочего стола — та же, что видит модель. В настройках она
