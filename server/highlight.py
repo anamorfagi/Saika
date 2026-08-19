@@ -5,12 +5,22 @@
 действие, чтобы оно масштабировалось по размерам окна, где она работает в
 текущем моменте».
 
-КАК УСТРОЕНО. Одно окно поверх всех, размером с цель (окно или целый
-монитор). Середина ПОЛНОСТЬЮ прозрачная — через -transparentcolor: пиксели
-волшебного цвета Windows не рисует и не ловит по ним мышь. Видна только
-рамка по краю и подпись, что она делает. Пока подсветка живёт, окно каждые
-100 мс перечитывает прямоугольник цели по hwnd и подстраивается — если
-человек двигает или масштабирует окно, рамка едет за ним.
+КАК УСТРОЕНО. Мягкое свечение по краю цели: по каждой стороне несколько
+узких полос, от плотной снаружи к почти невидимой внутрь — вместе они
+читаются как градиент. Полосы — обычные окна с общей прозрачностью
+(-alpha), поэтому чёрного прямоугольника не будет НИКОГДА.
+
+⚠️ ПОЧЕМУ НЕ ОДНО ОКНО НА ВСЮ ЦЕЛЬ (2026-08-19, живой инцидент). Первая
+версия накрывала цель одним окном и делала середину прозрачной через
+-transparentcolor. На машине владельца этот фокус не прошёл — и весь экран
+стал ЧЁРНЫМ, поверх всего: «у меня экран чёрный стал, не подскажешь, в чём
+дело». Урок простой: украшение не имеет права закрывать человеку работу,
+даже если что-то пошло не так. Полосы по краям физически не могут накрыть
+середину, что бы ни случилось с прозрачностью.
+
+Пока свечение живёт, каждые 100 мс перечитывается прямоугольник цели по
+hwnd — человек двигает или растягивает окно, свечение едет и
+масштабируется за ним.
 
 ЖИВЁТ ДОЛГО И ГАСНЕТ ПЛАВНО. Владелец: «сделай подсветку затухающей через
 некоторое время, скажем в течение 30 секунд — как у тебя в браузерной
@@ -37,7 +47,8 @@ log = logging.getLogger("saika.highlight")
 
 _Q = queue.Queue()
 _T = {"thread": None, "dead": False}
-_MAGIC = "#010203"        # цвет, который Windows делает полностью прозрачным
+GLOW_PX = 100             # ширина свечения по умолчанию, пиксели
+BANDS = 6                 # полос на сторону: больше — мягче градиент
 
 
 def enabled() -> bool:
@@ -64,7 +75,8 @@ def show(rect, label: str = "", ms: int = 0, color: str = "", hwnd: int = 0):
     _ensure()
     _Q.put({"rect": (x, y, w, h), "label": str(label or "")[:80],
             "ms": int(ms or CFG.get("pc.highlight_ms", 30000)),
-            "color": color or str(CFG.get("pc.highlight_color", "#5ad1ff")),
+            "color": color or str(CFG.get("pc.highlight_color", "#ff9a3c")),
+            "glow": int(CFG.get("pc.highlight_glow", GLOW_PX)),
             "hwnd": int(hwnd or 0)})
 
 
@@ -133,65 +145,96 @@ def _loop():
         import tkinter as tk
     except Exception as e:
         _T["dead"] = True
-        log.warning("Подсветка выключена: нет tkinter (%s). Действия всё "
+        log.warning("Свечение выключено: нет tkinter (%s). Действия всё "
                     "равно видны в интерфейсе, в блоке «Где я работаю».", e)
         return
     try:
         root = tk.Tk()
         root.withdraw()
-        ov = tk.Toplevel(root)
-        ov.overrideredirect(True)
-        ov.attributes("-topmost", True)
-        try:
-            ov.attributes("-transparentcolor", _MAGIC)
-        except Exception as e:      # старая Windows/Tk — тогда лёгкий тон
-            log.debug("прозрачный цвет недоступен (%s) — беру альфу", e)
-        try:
-            ov.attributes("-alpha", 1.0)
-        except Exception:
-            pass
-        cv = tk.Canvas(ov, highlightthickness=0, bd=0, bg=_MAGIC)
-        cv.pack(fill="both", expand=True)
-        ov.withdraw()
-        st = {"until": 0.0, "shown": False, "hwnd": 0, "rect": None,
-              "label": "", "color": "#5ad1ff", "life": 30.0, "alpha": 1.0}
+        # 4 стороны * BANDS полос. Полоса — крошечное окно с общей
+        # прозрачностью: чем ближе к центру, тем прозрачнее.
+        strips = []
+        for _ in range(4 * BANDS):
+            b = tk.Toplevel(root)
+            b.overrideredirect(True)
+            b.attributes("-topmost", True)
+            b.attributes("-alpha", 0.0)
+            b.configure(bg="#ff9a3c")
+            b.withdraw()
+            strips.append(b)
+        cap = tk.Toplevel(root)
+        cap.overrideredirect(True)
+        cap.attributes("-topmost", True)
+        lbl = tk.Label(cap, text="", font=("Segoe UI", 9, "bold"),
+                       padx=9, pady=3, fg="#141414", bg="#ff9a3c")
+        lbl.pack()
+        cap.withdraw()
 
-        def paint(w, h):
-            cv.delete("all")
-            c = st["color"]
-            for i, wide in enumerate((5, 3, 1)):
-                cv.create_rectangle(1 + i * 2, 1 + i * 2,
-                                    max(2, w - 1 - i * 2),
-                                    max(2, h - 1 - i * 2),
-                                    outline=c, width=wide)
-            if st["label"]:
-                pad = 8
-                t = cv.create_text(pad + 6, pad + 11, text=st["label"],
-                                   anchor="w", fill="#0b0d12",
-                                   font=("Segoe UI", 9, "bold"))
-                x1, y1, x2, y2 = cv.bbox(t)
-                cv.create_rectangle(x1 - 6, y1 - 4, x2 + 6, y2 + 4,
-                                    fill=c, outline=c)
-                cv.tag_raise(t)
+        st = {"until": 0.0, "shown": False, "hwnd": 0, "rect": None,
+              "label": "", "color": "#ff9a3c", "life": 30.0, "fade": 1.0,
+              "glow": GLOW_PX}
+
+        def band_alpha(i: int) -> float:
+            """Снаружи плотнее, внутрь — в ноль. Квадратичный спад читается
+            глазом как мягкое свечение, линейный — как ступеньки."""
+            k = 1.0 - (i / float(BANDS))
+            return 0.34 * (k ** 2)
 
         def place(rect):
             x, y, w, h = rect
-            ov.geometry(f"{max(w, 8)}x{max(h, 8)}+{x}+{y}")
-            paint(max(w, 8), max(h, 8))
+            # СВЕЧЕНИЕ НЕ ДОЛЖНО СЪЕДАТЬ МАЛЕНЬКОЕ ОКНО: у окна 200x150 сто
+            # пикселей с каждой стороны — это оно целиком. Ограничиваем
+            # четвертью меньшей стороны, чтобы середина всегда осталась
+            # чистой, что бы ни пришло в rect.
+            g = max(8, min(int(st["glow"]), w // 4, h // 4))
+            t = max(1, g // BANDS)
+            n = 0
+            for i in range(BANDS):
+                off = i * t
+                geo = ((x + off, y + off, max(w - 2 * off, 1), t),      # верх
+                       (x + off, y + h - off - t, max(w - 2 * off, 1), t),
+                       (x + off, y + off, t, max(h - 2 * off, 1)),      # лево
+                       (x + w - off - t, y + off, t, max(h - 2 * off, 1)))
+                for gx, gy, gw, gh in geo:
+                    b = strips[n]
+                    n += 1
+                    b.geometry(f"{max(gw, 1)}x{max(gh, 1)}+{gx}+{gy}")
+                    b.configure(bg=st["color"])
+                    try:
+                        b.attributes("-alpha", band_alpha(i) * st["fade"])
+                    except Exception:
+                        pass
+                    b.deiconify()
+                    b.lift()
+                    _click_through(b)
+            if st["label"]:
+                lbl.configure(text=st["label"], bg=st["color"])
+                cap.update_idletasks()
+                cw = cap.winfo_reqwidth()
+                cap.geometry(f"+{x + max(0, (w - cw) // 2)}+{max(0, y + 6)}")
+                try:
+                    cap.attributes("-alpha", min(1.0, 0.92 * st["fade"]))
+                except Exception:
+                    pass
+                cap.deiconify()
+                cap.lift()
+                _click_through(cap)
+            else:
+                cap.withdraw()
+
+        def hide():
+            for b in strips:
+                b.withdraw()
+            cap.withdraw()
+            st["shown"] = False
 
         def apply(job):
             st.update(until=time.time() + job["ms"] / 1000.0, shown=True,
-                      life=job["ms"] / 1000.0, alpha=1.0,
+                      life=max(0.5, job["ms"] / 1000.0), fade=1.0,
                       hwnd=job["hwnd"], rect=job["rect"],
-                      label=job["label"], color=job["color"])
-            try:
-                ov.attributes("-alpha", 1.0)
-            except Exception:
-                pass
+                      label=job["label"], color=job["color"],
+                      glow=job.get("glow") or GLOW_PX)
             place(job["rect"])
-            ov.deiconify()
-            ov.lift()
-            _click_through(ov)
 
         def tick():
             try:
@@ -200,37 +243,31 @@ def _loop():
             except queue.Empty:
                 pass
             except Exception as e:
-                log.debug("подсветка: %s", e)
+                log.debug("свечение: %s", e)
             if st["shown"]:
                 left = st["until"] - time.time()
                 if left <= 0:
-                    ov.withdraw()
-                    st["shown"] = False
-                    st["alpha"] = 0.0
+                    hide()
                 else:
                     # ЗАТУХАНИЕ: ярко, пока есть запас, и плавно в ноль на
                     # последней трети срока.
-                    fade = max(0.5, st["life"] * 0.35)
-                    a = 1.0 if left > fade else max(0.04, left / fade)
-                    if abs(a - st.get("alpha", 1.0)) > 0.02:
-                        st["alpha"] = a
-                        try:
-                            ov.attributes("-alpha", a)
-                        except Exception:
-                            pass
-                if st["shown"] and st["hwnd"]:
-                    # ЕДЕТ ЗА ОКНОМ: человек двигает или масштабирует —
-                    # рамка обязана оставаться на нём, иначе она врёт.
-                    r = _win_rect(st["hwnd"])
-                    if r and r != st["rect"] and r[2] > 0 and r[3] > 0:
-                        st["rect"] = r
-                        place(r)
-                        ov.lift()
+                    span = max(0.5, st["life"] * 0.35)
+                    f = 1.0 if left > span else max(0.0, left / span)
+                    moved = False
+                    if st["hwnd"]:
+                        r = _win_rect(st["hwnd"])
+                        if r and r != st["rect"] and r[2] > 0 and r[3] > 0:
+                            st["rect"] = r
+                            moved = True
+                    if moved or abs(f - st["fade"]) > 0.03:
+                        st["fade"] = f
+                        place(st["rect"])
             root.after(100, tick)
 
         root.after(100, tick)
-        log.info("Подсветка внимания готова (прозрачное окно поверх всех)")
+        log.info("Свечение внимания готово: %d полос, %dпx, цвет %s",
+                 len(strips), GLOW_PX, CFG.get("pc.highlight_color", "#ff9a3c"))
         root.mainloop()
     except Exception as e:
         _T["dead"] = True
-        log.warning("Подсветка выключилась: %s", e)
+        log.warning("Свечение выключилось: %s", e)
