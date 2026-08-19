@@ -148,6 +148,36 @@ def _hwnds(win) -> list:
     return out
 
 
+def _target_radius(hwnd: int) -> int:
+    """Скругление САМОЙ цели, чтобы рамка села по её углам (2026-08-19,
+    владелец: «нужно, чтобы окно подстраивало скругление под элемент, на
+    который смотрит»).
+
+    Windows 11 сама знает, скруглено ли окно: DWMWA_WINDOW_CORNER_PREFERENCE
+    отвечает «как обычно» (8пx), «маленькое» (4пx) или «не скруглять».
+    Развёрнутое окно углов не имеет вовсе, целый монитор — тем более.
+    Windows 10 на этот вопрос не отвечает — там просто нули, и это честно:
+    углы там прямые."""
+    if not hwnd:
+        return 0                       # монитор целиком — углы прямые
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        if user32.IsZoomed(int(hwnd)):
+            return 0                   # развёрнутое окно не скруглено
+        DWMWA_CORNER = 33
+        val = ctypes.c_int(0)
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            ctypes.c_void_p(int(hwnd)), ctypes.c_uint(DWMWA_CORNER),
+            ctypes.byref(val), ctypes.sizeof(val))
+        if hr != 0:
+            return 0                   # старая Windows — прямые углы
+        return {0: 8, 1: 8, 2: 0, 3: 8, 4: 4}.get(int(val.value), 8)
+    except Exception as e:
+        log.debug("скругление цели не спросилось: %s", e)
+        return 0
+
+
 def _click_through(win):
     """Окно не ловит мышь и не забирает фокус — на ВСЕХ его уровнях."""
     try:
@@ -173,11 +203,19 @@ def _ring_region(win, w: int, h: int, thick: int, radius: int) -> bool:
         import ctypes
         gdi32, user32 = ctypes.windll.gdi32, ctypes.windll.user32
         RGN_DIFF = 4
-        r = max(2, int(radius))
-        outer = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r)
-        inner = gdi32.CreateRoundRectRgn(thick, thick, w - thick + 1,
-                                         h - thick + 1,
-                                         max(2, r - thick), max(2, r - thick))
+        r = max(0, int(radius))
+
+        def rgn(x1, y1, x2, y2, rad):
+            # РОВНО ПРЯМОЙ УГОЛ, КОГДА У ЦЕЛИ ОН ПРЯМОЙ. CreateRoundRectRgn
+            # с нулевым эллипсом ведёт себя по-разному на разных сборках —
+            # для прямых углов честнее обычный прямоугольник.
+            if rad < 3:
+                return gdi32.CreateRectRgn(x1, y1, x2, y2)
+            return gdi32.CreateRoundRectRgn(x1, y1, x2, y2, rad * 2, rad * 2)
+
+        outer = rgn(0, 0, w + 1, h + 1, r)
+        inner = rgn(thick, thick, w - thick + 1, h - thick + 1,
+                    max(0, r - thick))
         if not outer or not inner:
             return False
         gdi32.CombineRgn(outer, outer, inner, RGN_DIFF)
@@ -238,6 +276,9 @@ def _loop():
             x, y, w, h = rect
             g = max(10, min(int(st["glow"]), w // 4, h // 4))
             t = max(3, g // BANDS)
+            # Углы берём у самой цели: у скруглённого окна Windows 11 рамка
+            # ляжет по его радиусу, у развёрнутого и у монитора — прямая.
+            base_r = _target_radius(st["hwnd"])
             for i, b in enumerate(rings):
                 off = i * t
                 rw, rh = w - 2 * off, h - 2 * off
@@ -251,7 +292,9 @@ def _loop():
                 # СНАЧАЛА ДЫРА, ПОТОМ ПОКАЗ. Не вышло вырезать середину —
                 # окно не показываем вовсе: плашка поверх работы хуже, чем
                 # отсутствие украшения (см. историю про чёрный экран).
-                if not _ring_region(b, rw, rh, t, 16 + i * 3):
+                # у вложенных рамок радиус убывает ровно на отступ —
+                # иначе внутренние углы «распухают» и рамка выглядит кривой
+                if not _ring_region(b, rw, rh, t, max(0, base_r - off)):
                     b.withdraw()
                     continue
                 try:
