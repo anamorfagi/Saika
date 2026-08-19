@@ -9272,6 +9272,20 @@ def main():
         # llamacpp/gemma в памяти оказался locallm/T-lite. Действуем как
         # человек: убираем ЛИШНЕЕ, ждём, меряем заново, и только если не
         # помогло — рубим по-настоящему.
+        # СТУПЕНИ УЖЕ РАБОТАЮТ (2026-08-19): если triage успел спустить
+        # хотя бы на ступень, топор не нужен — он для случая, когда
+        # ступени не справились.
+        try:
+            from server import triage as _tri
+            if _tri.ST.get("level", 0) >= 3:
+                log.info("Защита: ступени уже на уровне %s — рублю всё",
+                         _tri.ST["level"])
+            else:
+                _tri.tick(dict(g))
+                if _tri.ST.get("level", 0) < 3:
+                    return
+        except Exception as e:
+            log.debug("ступени в защите: %s", e)
         try:
             from server.llm import manager as _mgr
             _cb, _cm = CFG.get("llm.backend", ""), CFG.get("llm.model", "")
@@ -9298,6 +9312,14 @@ def main():
             asyncio.run(panic_unload())
         except Exception as e:
             log.warning("Защитная выгрузка не удалась: %s", e)
+    try:
+        # ступени разгрузки говорят человеку сами — через тот же канал,
+        # что и Беймакс, чтобы это было видно в чате, а не только в логе
+        from server import triage as _tri0
+        _tri0.ANNOUNCE["fn"] = lambda t: broadcast_event(
+            {"type": "baymax", "mood": "meh", "text": "🩺 " + t})
+    except Exception as e:
+        log.debug("объявлялка ступеней не встала: %s", e)
     try:
         GUARD.start(on_warn=_guard_warn, on_critical=_guard_crit)
         atexit.register(GUARD.stop)

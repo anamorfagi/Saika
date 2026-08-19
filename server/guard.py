@@ -166,6 +166,15 @@ class Guard:
                 continue
             t = self._thresholds()
             frac = gpu["vram_mb"] / max(gpu["vram_total_mb"], 1)
+            # СТУПЕНИ РАЗГРУЗКИ (2026-08-19): гасим по одному и сами
+            # возвращаем, когда железо успокоилось (см. server/triage.py).
+            # Держим ДО решения о критичности: если ступени справились,
+            # до топора дело не дойдёт.
+            try:
+                from server import triage
+                triage.tick(dict(gpu))
+            except Exception as e:
+                log.debug("ступени разгрузки: %s", e)
             crit = gpu["temp"] >= t["temp_crit"] or frac >= t["vram_crit"]
             warn = gpu["temp"] >= t["temp_warn"] or frac >= t["vram_warn"]
             if crit and self.warn_state != "critical":
