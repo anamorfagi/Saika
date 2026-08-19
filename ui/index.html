@@ -169,6 +169,18 @@
   #sysbar .attn .pl .mon{color:#5ad1ff;white-space:nowrap}
   #sysbar .attn .look{font-size:11px;color:rgba(233,233,237,.72)}
   #sysbar .attn .tr{font-size:10px;color:var(--dim);line-height:1.6}
+  /* цвет свечения меняется прямо отсюда (2026-08-19) */
+  #sysbar .attn-glow{display:flex;gap:6px;margin-top:3px}
+  #sysbar .attn-glow button{flex:1;background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.14);border-radius:7px;padding:5px;
+    cursor:pointer;font-size:11px}
+  #sysbar .attn-glow label{position:relative;width:30px;border-radius:7px;
+    border:1px solid rgba(255,255,255,.14);cursor:pointer;overflow:hidden;
+    display:flex;align-items:center;justify-content:center}
+  #sysbar .attn-glow label span{width:16px;height:16px;border-radius:5px;
+    display:block;box-shadow:0 0 8px rgba(0,0,0,.5) inset}
+  #sysbar .attn-glow input[type=color]{position:absolute;inset:0;opacity:0;
+    width:100%;height:100%;border:0;padding:0;cursor:pointer}
   #sysbar .attn .eyes-on{color:#5ad1ff;animation:eyespulse 1.1s ease-in-out
     infinite}
   @keyframes eyespulse{0%,100%{opacity:.55}50%{opacity:1}}
@@ -2800,11 +2812,15 @@ function attnBlock(){
        + '<span><b>' + esc(p.kind) + '</b> · ' + esc(p.title || '') + '</span>'
        + '<span class="mon">экран ' + (p.monitor || '?') + '</span></div>';
   });
-  h += '<button id="attn-spot" title="Показать рамкой окно, в котором она '
-     + 'сейчас работает" style="margin-top:2px;width:100%;'
-     + 'background:rgba(90,209,255,.10);border:1px solid rgba(90,209,255,.3);'
-     + 'color:#5ad1ff;border-radius:7px;padding:5px;cursor:pointer;'
-     + 'font-size:11px">🔦 Показать, где работаю</button>';
+  const gl = a.glow || {}, gc = gl.color || '#ff9a3c';
+  h += '<div class="attn-glow">'
+     + '<button id="attn-spot" title="Показать рамкой окно, в котором она '
+     + 'сейчас работает" style="border-color:' + esc(gc) + '55;color:'
+     + esc(gc) + '">🔦 Показать, где работаю</button>'
+     + '<label title="Цвет свечения внимания" style="border-color:'
+     + esc(gc) + '55"><input type="color" id="attn-color" value="'
+     + esc(gc) + '"><span style="background:' + esc(gc) + '"></span></label>'
+     + '</div>';
   if(a.trace && a.trace.length){
     h += '<div class="tr">' + a.trace.slice(0, 3).map(t =>
       esc(t.kind) + ': ' + esc(t.what) + (t.where ? ' — ' + esc(t.where) : '')
@@ -2875,6 +2891,7 @@ async function pollSystem(){
                      (_a.places||[]).map(p=>p.kind+p.hwnd+p.monitor+p.current).join(','),
                      _a.look ? (_a.look.what+_a.look.where+(_a.look.thumb||'').length) : '',
                      _e.on ? 'eyes:'+_e.what : ((_e.last||{}).ts||''),
+                     (_a.glow||{}).color||'',
                      (_a.trace||[]).length ? _a.trace[0].what : ''].join('|');
         const vals = {};
         if(c.percent!=null) vals.cpu = {text: Math.round(c.percent)+'%', pct: c.percent};
@@ -2903,6 +2920,11 @@ async function pollSystem(){
         if(r.state && r.state.dead) sp.textContent = '⚠ подсветка недоступна';
       }catch(e){ sp.textContent='⚠ не отвечает'; }
       setTimeout(()=>{ sp.textContent=was; sp.disabled=false; }, 4000);
+    };
+    const ac=$('#attn-color');
+    if(ac) ac.onchange=async()=>{
+      // цвет применяется на лету: сервер сразу рисует прицел новым цветом
+      try{ await api('/api/attention/glow',{color: ac.value}); }catch(e){}
     };
     const pb=$('#panic-unload');
     if(pb) pb.onclick=async()=>{

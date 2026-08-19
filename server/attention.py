@@ -122,7 +122,18 @@ def snapshot() -> dict:
                 "ago": _ago(vision.LAST.get("ts", 0))}
     except Exception as e:
         log.debug("нагрузка зрения недоступна: %s", e)
+    glow = {}
+    try:
+        from server import highlight
+        from server.config import CFG as _C
+        glow = {**highlight.state(),
+                "color": str(_C.get("pc.highlight_color", "#ff9a3c")),
+                "px": int(_C.get("pc.highlight_glow", highlight.GLOW_PX)),
+                "ms": int(_C.get("pc.highlight_ms", 30000))}
+    except Exception as e:
+        log.debug("состояние свечения недоступно: %s", e)
     return {
+        "glow": glow,
         "eyes": eyes,
         "places": places,
         "look": {**_LOOK, "ago": _ago(_LOOK["ts"])} if _LOOK["ts"] else None,

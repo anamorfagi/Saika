@@ -2714,6 +2714,36 @@ def pc_set(payload: dict):
     return {"ok": True, "trust": _trust.describe()}
 
 
+@app.post("/api/attention/glow")
+def api_attention_glow(payload: dict = None):
+    """Цвет и толщина свечения внимания (2026-08-19, просьба владельца:
+    «сделай кнопку выбора цвета подсветки её внимания»). Меняется на лету:
+    следующий же прицел рисуется новым цветом, перезапуск не нужен."""
+    payload = payload or {}
+    from server.config import CFG as _C
+    col = str(payload.get("color") or "").strip()
+    if col:
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", col):
+            return JSONResponse({"ok": False, "error": "цвет ждём как #rrggbb"},
+                                status_code=400)
+        _C.set("pc.highlight_color", col)
+    if payload.get("px"):
+        try:
+            _C.set("pc.highlight_glow", max(4, min(120, int(payload["px"]))))
+        except Exception:
+            pass
+    # сразу показать, как оно теперь выглядит — на текущем рабочем месте
+    try:
+        from server import highlight, pc_control
+        w = pc_control.work_window()
+        if w:
+            highlight.show_window(w, "цвет внимания")
+    except Exception as e:
+        log.debug("показ нового цвета: %s", e)
+    return {"ok": True, "color": _C.get("pc.highlight_color"),
+            "px": _C.get("pc.highlight_glow")}
+
+
 @app.post("/api/attention/highlight")
 def api_attention_highlight(payload: dict = None):
     """Кнопка «покажи, где ты работаешь» (2026-08-19). Владелец не увидел
