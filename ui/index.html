@@ -430,6 +430,9 @@
     padding:8px 10px;font-size:13px;box-sizing:border-box;outline:none}
   #git-push,#git-pull{width:100%;justify-content:center;height:38px}
   #git-pull{margin-bottom:4px}
+  #git-head{font-size:11px;padding:0 11px 6px;color:var(--dim);
+    max-width:290px;line-height:1.45}
+  #git-head b{color:rgba(233,233,237,.72);font-weight:600}
   #git-result{font-size:12px;margin-top:7px;white-space:pre-wrap;max-width:290px;
     color:var(--dim)}
 
@@ -1169,6 +1172,7 @@
       style="width:30px;height:30px;font-size:14px">⬆<span class="badge" id="git-badge"></span><span class="pulldot" id="git-pulldot" title="Есть обновления с другого ПК"></span></button>
     <div class="pop top" id="pop-git">
       <div class="title" id="git-branch">ветка…</div>
+      <div id="git-head">коммит…</div>
       <button class="chip" id="git-pull">⬇ Подтянуть обновления</button>
       <input id="git-msg" placeholder="Сообщение коммита (необязательно)">
       <button class="chip" id="git-push">⬆ Закоммитить и запушить</button>
@@ -3582,6 +3586,20 @@ async function fillGitPop(){
     if(st.behind>0) info += ` · ⬇${st.behind} с другого ПК`;
     if(st.ahead>0) info += ` · ⬆${st.ahead} не запушено`;
     $('#git-branch').textContent = info;
+    // ГДЕ Я СЕЙЧАС: хэш+сообщение последнего коммита. Раньше панель знала
+    // только «сколько НЕ хватает», и после ручного git pull в терминале по
+    // ней нельзя было понять, что обновление уже приехало.
+    // Фразы обёрнуты в <span>, чтобы их подхватывал переводчик интерфейса:
+    // он переводит ЦЕЛЫЕ текстовые узлы по словарю.
+    const headEl = $('#git-head'), h = st.head || {};
+    if(h.hash){
+      const tail = [];
+      if(h.date) tail.push(esc(h.date));
+      if(st.synced) tail.push('<span>совпадает с GitHub</span>');
+      else if(st.behind>0) tail.push('<span>на GitHub есть новее</span>');
+      headEl.innerHTML = `<span>на коммите</span> <b>${esc(h.hash)}</b> `
+        + esc(h.msg||'') + (tail.length ? '<br>' + tail.join(' · ') : '');
+    } else headEl.textContent = '';
     if(st.changed>0){
       badge.textContent = st.changed>99?'99+':st.changed;
       badge.classList.add('show');
@@ -3599,7 +3617,8 @@ $('#git-pull').onclick = async()=>{
     const r = await api('/api/git/pull', {});
     if(r.ok){
       res.style.color='var(--ok)';
-      res.textContent = '✓ ' + (r.message || 'обновлено');
+      res.textContent = '✓ ' + (r.message || 'обновлено')
+        + (r.note ? '\n⚠ ' + r.note : '');
     } else {
       res.style.color='var(--err)';
       res.textContent = '⚠ ' + (r.error||'ошибка');
@@ -4833,6 +4852,9 @@ eqFrame();
     'не дублировать':'do not duplicate',
     // git
     'ветка…':'branch…', '⬇ Подтянуть обновления':'⬇ Pull updates',
+    'коммит…':'commit…', 'на коммите':'on commit',
+    'совпадает с GitHub':'matches GitHub',
+    'на GitHub есть новее':'GitHub has newer commits',
     'Сообщение коммита (необязательно)':'Commit message (optional)',
     '⬆ Закоммитить и запушить':'⬆ Commit and push',
     '📖 Шпаргалка по Git':'📖 Git cheat sheet', 'Закрыть':'Close',

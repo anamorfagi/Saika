@@ -15,6 +15,7 @@ git add/commit/push/fetch/pull в корне проекта. Если push/pull 
 по клику на свою кнопку в UI (осознанный выбор — на другом ПК может не
 быть смысла тянуть гигабайты того, что там не нужно)."""
 import logging
+import re
 import subprocess
 import time
 
@@ -69,16 +70,123 @@ def status() -> dict:
             if len(parts) == 2:
                 ahead, behind = int(parts[0]), int(parts[1])
 
+    # ГДЕ Я СЕЙЧАС. Без этого панель показывала только «ветка dev · ⬇164»:
+    # после ручного пула в терминале она молчала о том, что уже приехало, и
+    # понять «я на fix7 или нет» было негде. Теперь отдаём сам HEAD.
+    head = {}
+    code4, line, _ = _run(["log", "-1", "--pretty=%h|%ad|%s",
+                           "--date=format:%d.%m %H:%M"])
+    if code4 == 0 and "|" in line:
+        parts = line.split("|", 2)
+        head = {"hash": parts[0], "date": parts[1],
+                "msg": parts[2] if len(parts) > 2 else ""}
+
     return {"is_repo": True, "branch": branch, "changed": changed,
-            "has_remote": has_remote, "ahead": ahead, "behind": behind}
+            "has_remote": has_remote, "ahead": ahead, "behind": behind,
+            "head": head,
+            "synced": has_remote and ahead == 0 and behind == 0}
+
+
+# Файлы, которые Сайка переписывает САМА на каждой машине, но которые лежат
+# в репозитории. Из-за них «Подтянуть обновления» упиралось в «Your local
+# changes to the following files would be overwritten by merge … Aborting» —
+# кнопка не могла ничего, и человек шёл в терминал.
+AUTO_STASH = ("config.json", "DEVBOARD.md", "devboard.json")
+# Из отложенного возвращаем своё: config.json машинно-специфичен (окно
+# контекста под VRAM, микрофон, выбранные движки). Доску пусть приезжает
+# общая — её ведут с обеих машин.
+KEEP_LOCAL = ("config.json",)
+
+
+def _porcelain_paths(out: str) -> list:
+    """Пути из `git status --porcelain`. ВАЖНО: _run() отдаёт stdout уже
+    .strip()-нутым, поэтому у ПЕРВОЙ строки съеден ведущий пробел статуса —
+    наивный ln[3:] откусывал первую букву имени файла («onfig.json»). Режем
+    по регэкспу и разворачиваем переименования «R old -> new»."""
+    paths = []
+    for ln in out.splitlines():
+        if not ln.strip():
+            continue
+        name = re.sub(r"^\s*[A-Z?!ADMRCU ]{1,2}\s+", "", ln, count=1)
+        name = name.split(" -> ")[-1].strip().strip('"')
+        if name:
+            paths.append(name)
+    return sorted(set(paths))
+
+
+def _dirty_among(files) -> list:
+    """Изменённые (в индексе или в дереве) из перечисленных — именно они и
+    мешают перемотке. Через diff, без разбора статусных префиксов."""
+    _, out, _ = _run(["diff", "--name-only", "HEAD", "--", *files])
+    return sorted({ln.strip().strip('"') for ln in out.splitlines()
+                   if ln.strip()})
+
+
+def _pull_autostash(files) -> dict:
+    """Отложить свои правки в этих файлах → перемотать → вернуть своё.
+    Стеш НЕ сбрасываем, если что-то пошло не так: лучше «лежит в stash»,
+    чем «потерялось»."""
+    code, out, err = _run(["stash", "push", "--", *files], timeout=60)
+    if code != 0:
+        return {"ok": False, "error": "не смогла отложить свои правки: "
+                                      + (err or out)}
+    _, sha, _ = _run(["rev-parse", "stash@{0}"])
+
+    code, out, err = _run(["pull", "--ff-only"], timeout=120)
+    if code != 0:
+        _run(["stash", "pop"], timeout=60)   # вернули как было
+        return {"ok": False, "error": err or out}
+
+    kept, lost = [], []
+    for f in files:
+        if f not in KEEP_LOCAL:
+            continue
+        c, o, e = _run(["checkout", sha, "--", f])
+        if c == 0:
+            _run(["reset", "--quiet", "--", f])   # не оставлять в индексе
+            kept.append(f)
+        else:
+            lost.append(f + ": " + (e or o))
+
+    if lost:
+        return {"ok": True, "message": out, "note":
+                "своё осталось в git stash (вернуть: git stash pop) — "
+                + "; ".join(lost)}
+
+    _run(["stash", "drop"])
+    _fetch_cache["t"] = time.time()
+    msg = out or "обновлено"
+    tail = ", ".join(f for f in files if f not in KEEP_LOCAL)
+    if kept:
+        msg += "\nсвой " + ", ".join(kept) + " оставила как был"
+    if tail:
+        msg += "\n" + tail + " — взяла с GitHub"
+    return {"ok": True, "message": msg, "stash_sha": sha}
 
 
 def pull() -> dict:
     """git pull --ff-only — только перемотка вперёд. Если история разошлась
     (например, коммитили на обоих ПК без синка) — честно отказывается и
-    отдаёт ошибку git, не пытается сама мержить/ребейзить."""
+    отдаёт ошибку git, не пытается сама мержить/ребейзить.
+
+    Единственное, что делает сама: если перемотке мешают ТОЛЬКО файлы из
+    AUTO_STASH (их Сайка и переписывает), откладывает их в stash, тянет и
+    возвращает своё. Всё остальное — по-прежнему честный отказ."""
     code, out, err = _run(["pull", "--ff-only"], timeout=120)
     if code != 0:
+        low = (out + err).lower()
+        blocked = ("would be overwritten by merge" in low
+                   or "would be overwritten by checkout" in low
+                   or "local changes to the following files" in low)
+        if blocked:
+            dirty = _dirty_among(AUTO_STASH)
+            others = [f for f in _dirty_among(["."]) if f not in AUTO_STASH]
+            mentioned = [f for f in AUTO_STASH if f.lower() in low]
+            if dirty and mentioned and not any(
+                    f.lower() in low for f in others):
+                log.info("git pull: мешают только мои файлы %s — откладываю",
+                         dirty)
+                return _pull_autostash(dirty)
         return {"ok": False, "error": err or out}
     _fetch_cache["t"] = time.time()
     log.info("git pull: %s", out)
@@ -165,7 +273,7 @@ def incoming() -> dict:
                 commits.append({"hash": parts[0], "date": parts[1],
                                 "author": parts[2], "msg": parts[3]})
     _, porcelain, _ = _run(["status", "--porcelain"])
-    dirty = [ln[3:].strip() for ln in porcelain.splitlines() if ln.strip()]
+    dirty = _porcelain_paths(porcelain)
     # исходящие — для честной картины «мы разошлись», а не просто «их N»
     _, ahead_out, _ = _run(["log", "--pretty=%h %s", "-n", "10",
                             f"origin/{branch}..HEAD"])
