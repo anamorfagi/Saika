@@ -3869,6 +3869,9 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # about:blank в случайном окне; «закрой этот браузер» -> закрыла не тот.
     try:
         from server import pc_control as _pcw
+        # Фраза сама назначает рабочее место: «на втором экране открыт
+        # браузер» — это и есть ответ на вопрос «где работать».
+        _pcw.claim_from_phrase(user_text)
         _wn = _pcw.work_note()
         if _wn:
             dyn_parts.append("### " + _wn)

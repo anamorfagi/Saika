@@ -1074,15 +1074,94 @@ def work_window() -> dict:
     return {}
 
 
+# ЧЕЛОВЕК САМ СКАЗАЛ, ГДЕ РАБОТАТЬ (2026-08-19). Владелец: «я ей явно
+# говорю, что есть открытый браузер, и даю подсказку, на каком монике —
+# естественно, это должно дать понять, где я хочу, чтобы она работала».
+# Раньше эти слова жили только в тексте для модели: инструмент их не
+# видел, окно выбиралось «которое впереди», и подсказка пропадала зря.
+# Теперь фраза сама назначает рабочее место — ДО того, как модель начнёт
+# думать. Ничего не двигаем и не выводим вперёд: только запоминаем, где.
+_SCREEN_WORD = re.compile(
+    r"(?:на\s+)?(перв|втор|трет|четв[её]рт|пят)\w*\s*"
+    r"(?:экран\w*|монитор\w*|моник\w*|диспле\w*)"
+    r"|(?:экран\w*|монитор\w*|моник\w*|диспле\w*)\s*(\d)", re.I)
+_SIDE_WORD = re.compile(r"\b(слева|левом|левый|справа|правом|правый)\b", re.I)
+_ORD = {"перв": 1, "втор": 2, "трет": 3, "четвёрт": 4, "четверт": 4, "пят": 5}
+
+
+def screen_from_phrase(text: str) -> int:
+    """Номер экрана, названный словами. 0 — не назвали."""
+    t = (text or "").lower()
+    m = _SCREEN_WORD.search(t)
+    if m:
+        if m.group(1):
+            return _ORD.get(m.group(1), 0)
+        if m.group(2):
+            try:
+                return int(m.group(2))
+            except Exception:
+                return 0
+    m = _SIDE_WORD.search(t)
+    if m:
+        info = sorted(_mon_info(), key=lambda d: d["rect"][0])
+        if len(info) > 1:
+            left = m.group(1).lower().startswith(("слев", "лев"))
+            return int((info[0] if left else info[-1])["num"])
+    return 0
+
+
+def claim_from_phrase(text: str) -> str:
+    """Прочитать во фразе «на втором экране открыт браузер» и назначить
+    рабочее место. Возвращает пояснение для лога, "" — ничего не поняла."""
+    if not _IS_WIN:
+        return ""
+    t = (text or "").lower()
+    scr = screen_from_phrase(t)
+    # какое приложение назвали: браузер, проводник, конкретная программа
+    app = ""
+    for word, proc in _aliases().items():
+        if word and word in t:
+            app = proc
+            break
+    if not app and any(k in t for k in _BROWSER_HINT):
+        app = "chrome"
+    if not scr and not app:
+        return ""
+    best, why = None, ""
+    for w in windows(include_minimized=False):
+        if _is_self_window(w):
+            continue
+        hay = ((w.get("proc") or "") + " " + (w.get("title") or "")).lower()
+        if app and app not in hay:
+            continue
+        if scr and int(w.get("monitor") or 0) != scr:
+            continue
+        # своё окно-пустышка — в последнюю очередь
+        if (w.get("title") or "").strip().lower().startswith("about:blank"):
+            continue
+        best = w
+        break
+    if not best:
+        return ""
+    note_work(best)
+    why = (f"человек назвал: {app or 'окно'}"
+           + (f" на экране {scr}" if scr else "")
+           + f" -> «{best.get('title', '')[:50]}»")
+    log.info("Рабочее место со слов человека: %s", why)
+    return why
+
+
 def work_note() -> str:
     """Строчка для промпта: где мы сейчас работаем. Пусто — не работали."""
     w = work_window()
     if not w:
         return ""
     return (f"Рабочее место: окно «{w.get('title', '')[:60]}» "
-            f"({w.get('proc', '')}), экран {w.get('monitor') or '?'}. "
-            "Продолжай ЗДЕСЬ. Новое окно, вкладку или ещё один проводник "
-            "заводи, только если человек прямо об этом просит.")
+            f"({w.get('proc', '')}), ЭКРАН {w.get('monitor') or '?'}. "
+            "Работай ЗДЕСЬ и не спрашивай, где это, — человек уже показал. "
+            "Инструментам окон и вкладок передавай screen="
+            f"{w.get('monitor') or 1}. Новое окно, вкладку или ещё один "
+            "проводник заводи, только если человек прямо об этом просит.")
 
 
 _ANAPHORA = re.compile(
