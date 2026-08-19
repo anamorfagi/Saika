@@ -2230,9 +2230,30 @@ def window_place(query: str, position: str = "center",
 
 
 # ──────────────────────────────── звук ────────────────────────────────
+_VOL_ERR = {"why": ""}
+
+
+def _com_ready():
+    """COM в ЭТОМ потоке (2026-08-19). Инструменты выполняются в потоках
+    пула FastAPI, а Core Audio — это COM: без CoInitialize в потоке любой
+    вызов падает с «CoInitialize has not been called». Ровно поэтому на
+    «сделай громкость 10%» она отвечала «нет библиотеки pycaw», хотя
+    pycaw стоял: исключение ловилось и толковалось как отсутствие пакета."""
+    try:
+        import comtypes
+        comtypes.CoInitialize()
+    except Exception as e:
+        log.debug("CoInitialize: %s", e)
+
+
 def _pycaw_volume():
+    _com_ready()
     from comtypes import CLSCTX_ALL
-    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    try:
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    except ImportError:                     # новые сборки без слоя совместимости
+        from pycaw.api.endpointvolume import IAudioEndpointVolume
+        from pycaw.utils import AudioUtilities
     dev = AudioUtilities.GetSpeakers()
     iface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
     import comtypes
@@ -2359,7 +2380,11 @@ _APP_SOUND = {
 
 
 def _sound_sessions():
-    from pycaw.pycaw import AudioUtilities
+    _com_ready()
+    try:
+        from pycaw.pycaw import AudioUtilities
+    except ImportError:
+        from pycaw.utils import AudioUtilities
     return AudioUtilities.GetAllSessions()
 
 
@@ -2375,10 +2400,9 @@ def app_volume(app: str, percent=None, delta=None, mute=None) -> str:
     try:
         sessions = _sound_sessions()
     except Exception as e:
-        log.debug("микшер недоступен: %s", e)
-        return ("Микшер по программам не работает без pycaw — поставь его "
-                "(setup/install_pc_control.bat), и я смогу крутить звук "
-                "отдельным программам. Общую громкость меняю и так.")
+        log.warning("Микшер по программам недоступен: %s", e)
+        return (f"К микшеру Windows сейчас не пробилась: {str(e)[:140]}. "
+                "Общую громкость поменять могу.")
     hit = []
     for sess in sessions:
         try:
@@ -2438,17 +2462,22 @@ def volume(percent=None, mute=None, delta=None) -> str:
         vol.SetMasterVolumeLevelScalar(percent / 100.0, None)
         return f"Громкость {percent}%."
     except Exception as e:
-        log.debug("pycaw недоступен (%s) — работаю клавишами", e)
+        _VOL_ERR["why"] = str(e)[:200]
+        log.warning("Точная громкость не вышла (%s) — работаю клавишами", e)
     VK_MUTE, VK_DOWN, VK_UP = 0xAD, 0xAE, 0xAF
     if mute is not None:
         _tap_key(VK_MUTE)
         return "Переключила звук (точное состояние без pycaw не знаю)."
     step = int(delta if delta is not None else (10 if percent is None else 0))
     if percent is not None:
-        # без pycaw абсолютное значение не выставить — честно говорим
-        return ("Без библиотеки pycaw умею только «громче/тише». "
-                "Поставь её — тогда смогу выставлять точный процент "
-                "(setup/install_pc_control.bat).")
+        # ЧТО ИМЕННО СЛОМАЛОСЬ, А НЕ «НЕТ БИБЛИОТЕКИ» (2026-08-19). Раньше
+        # тут всегда писалось «поставь pycaw», хотя он стоял и падал по
+        # другой причине — человек шёл ставить уже поставленное.
+        why = _VOL_ERR.get("why") or ""
+        return ("Точный процент выставить не смогла"
+                + (f": {why}. " if why else ". ")
+                + "Могу «громче/тише» шагами. Если это повторяется — скажи, "
+                  "покажу строку из лога.")
     _tap_key(VK_UP if step > 0 else VK_DOWN, abs(step) // 2 or 1)
     return "Сделала " + ("громче." if step > 0 else "тише.")
 
