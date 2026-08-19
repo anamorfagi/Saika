@@ -1033,6 +1033,56 @@ def _touch(w: dict):
         _last_target.update(title=w.get("title", ""), ts=time.time())
     except Exception:
         pass
+    note_work(w)
+
+
+# ═══════════ РАБОЧЕЕ МЕСТО (2026-08-19, правило владельца) ═══════════
+# «Сайка должна учитывать контекстно, где в каком окне работает, на чём
+# остановилась, чтобы продолжать последовательные действия, а не открывать
+# каждый раз новые. Логика должна работать везде — и в системе, и в
+# приложениях. Если я прошу создать окно, вкладку или ещё один проводник —
+# тогда другое дело.»
+#
+# Живой провал 19.08: «на втором экране включи Пинтерест вкладку» -> Ctrl+T
+# в то окно, что случайно было впереди, пустая about:blank не на том
+# экране; следом «закрой этот браузер» -> закрыла не тот. Память об окне
+# была только на имя (_last_target), а нужен hwnd и экран.
+_WORK = {"hwnd": 0, "title": "", "proc": "", "monitor": 0, "ts": 0.0}
+WORK_LIFE_S = 900.0          # четверть часа: дольше — это уже другая работа
+
+
+def note_work(w: dict):
+    """Запомнить окно, в котором только что работали."""
+    try:
+        if not w or _is_self_window(w) or not w.get("hwnd"):
+            return
+        _WORK.update(hwnd=int(w.get("hwnd") or 0),
+                     title=str(w.get("title") or ""),
+                     proc=str(w.get("proc") or ""),
+                     monitor=int(w.get("monitor") or 0), ts=time.time())
+    except Exception:
+        pass
+
+
+def work_window() -> dict:
+    """Окно, в котором работали, — если оно ещё живо и не остыло."""
+    if not _WORK["hwnd"] or time.time() - _WORK["ts"] > WORK_LIFE_S:
+        return {}
+    for w in windows():
+        if int(w.get("hwnd") or 0) == _WORK["hwnd"]:
+            return w
+    return {}
+
+
+def work_note() -> str:
+    """Строчка для промпта: где мы сейчас работаем. Пусто — не работали."""
+    w = work_window()
+    if not w:
+        return ""
+    return (f"Рабочее место: окно «{w.get('title', '')[:60]}» "
+            f"({w.get('proc', '')}), экран {w.get('monitor') or '?'}. "
+            "Продолжай ЗДЕСЬ. Новое окно, вкладку или ещё один проводник "
+            "заводи, только если человек прямо об этом просит.")
 
 
 _ANAPHORA = re.compile(
@@ -1969,31 +2019,181 @@ def _own_tab(a: str, index: int):
         return None
 
 
-def tab(action: str, index: int = 0) -> str:
+_CHROMIUM = ("chrome", "chromium", "edge", "opera", "yandex", "brave",
+             "vivaldi")
+
+
+def browser_windows(screen: int = 0) -> list:
+    """Окна браузера ЧЕЛОВЕКА. screen — номер экрана по-человечески (1, 2…),
+    0 — любой."""
+    out = []
+    for w in windows(include_minimized=True):
+        hay = ((w.get("proc") or "") + " " + (w.get("title") or "")).lower()
+        cls = (w.get("cls") or "").lower()
+        if not (any(k in hay for k in _BROWSER_HINT)
+                or cls in ("chrome_widgetwin_1", "mozillawindowclass")):
+            continue
+        if _is_self_window(w):
+            continue
+        if screen and int(w.get("monitor") or 0) != int(screen):
+            continue
+        out.append(w)
+
+    # ЕЁ СОБСТВЕННОЕ ОКНО-ПУСТЫШКА — В САМЫЙ КОНЕЦ (2026-08-19). Playwright
+    # держит на столе окно с about:blank; человек его своим не считает
+    # («ты не тот браузер закрыла»), а по z-порядку оно часто впереди.
+    def key(w):
+        blank = (w.get("title") or "").strip().lower().startswith("about:blank")
+        return (blank, bool(w.get("minimized")), not w.get("front"),
+                w.get("z", 99))
+    out.sort(key=key)
+    return out
+
+
+def _pick_browser(screen: int = 0):
+    """(окно, пояснение). Порядок: названный экран -> рабочее место ->
+    то, что впереди."""
+    wins = browser_windows(screen)
+    if screen and not wins:
+        others = browser_windows(0)
+        if others:
+            where = ", ".join(f"«{w.get('title', '')[:35]}» (экран "
+                              f"{w.get('monitor')})" for w in others[:4])
+            return None, (f"На экране {screen} окна браузера нет. Браузер "
+                          f"открыт тут: {where}. Скажи, в каком работать.")
+        return None, (f"На экране {screen} браузера нет, да и вообще ни "
+                      "одного окна браузера не открыто.")
+    if not wins:
+        return None, ("Ни одного окна браузера не открыто. Могу открыть "
+                      "сайт сама — это web_open.")
+    if not screen:
+        wk = work_window()
+        for w in wins:
+            if wk and w.get("hwnd") == wk.get("hwnd"):
+                return w, "то окно, где мы работали"
+    return wins[0], f"окно на экране {wins[0].get('monitor') or '?'}"
+
+
+def _type(text: str) -> bool:
+    try:
+        import keyboard
+    except Exception:
+        return False
+    try:
+        keyboard.write(text, delay=0.01)
+        return True
+    except Exception as e:
+        log.debug("не напечаталось «%s»: %s", text[:40], e)
+        return False
+
+
+def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
+        url: str = "", screen: int = 0) -> str:
+    """Вкладки браузера. Новое (2026-08-19): можно назвать ЭКРАН, ИМЯ уже
+    открытой вкладки и АДРЕС — раньше умела только вслепую жать Ctrl+T в то
+    окно, что оказалось впереди."""
     if not _IS_WIN:
         return "Управление вкладками есть только в Windows."
-    a = (action or "").lower()
-    own = _own_tab(a, index)
-    if own is not None:
-        return own
-    is_br, title = _front_is_browser()
-    if is_br is False:
-        return (f"Впереди сейчас не браузер, а «{title}» — вкладки трогать "
-                "НЕ БУДУ, иначе нажатие уйдёт в чужое приложение (уже так "
-                "переключала человеку чат в другой программе). Скажи "
-                "человеку, чтобы он вывел браузер вперёд, или сперва зови "
-                "window_focus с именем браузера.")
+    a = (action or "").lower().strip()
+    name, site, url = (name or "").strip(), (site or "").strip(), (url or "").strip()
+    try:
+        screen = int(screen or 0)
+    except Exception:
+        screen = 0
+
+    # ПОКАЗАЛИ ПАЛЬЦЕМ — ЗНАЧИТ, В ЕГО ОКНО. Своё окно Playwright годится
+    # для «полистай/закрой» без уточнений, но когда человек назвал экран,
+    # сайт или вкладку — речь про ЕГО браузер, и лезть в своё нельзя.
+    if not (screen or name or site or url):
+        own = _own_tab(a, index)
+        if own is not None:
+            return own
+
+    if screen or name or site or url:
+        w, why = _pick_browser(screen)
+        if not w:
+            return why
+        if not _force_front(int(w["hwnd"])):
+            return (f"Не смогла вывести вперёд «{w.get('title', '')[:50]}» — "
+                    "окно не отдаёт фокус (так бывает у окон, запущенных от "
+                    "администратора). Ткни в него мышкой, и я продолжу.")
+        note_work(w)
+        time.sleep(0.15)
+        where = f"экран {w.get('monitor') or '?'}"
+        chromium = any(k in ((w.get("proc") or "") + " "
+                             + (w.get("title") or "")).lower()
+                       for k in _CHROMIUM)
+    else:
+        is_br, title = _front_is_browser()
+        if is_br is False:
+            return (f"Впереди сейчас не браузер, а «{title}» — вкладки "
+                    "трогать НЕ БУДУ, иначе нажатие уйдёт в чужое "
+                    "приложение (уже так переключала человеку чат в другой "
+                    "программе). Скажи человеку, чтобы он вывел браузер "
+                    "вперёд, или сперва зови window_focus с именем браузера.")
+        where, chromium = "то окно, что впереди", True
+
     try:
         import keyboard
     except Exception:
         return ("Нет модуля keyboard — не могу нажимать клавиши. "
                 "Поставь его: setup/install_pc_control.bat")
+
+    # ── ПЕРЕЙТИ НА УЖЕ ОТКРЫТУЮ ВКЛАДКУ ПО НАЗВАНИЮ ──────────────────
+    # «открой вкладочку Пинтерест… она вон по центру… хз какая по счёту»:
+    # у Chrome есть свой поиск по вкладкам (Ctrl+Shift+A), и это ровно то,
+    # что делает человек в такой ситуации, — а не считает вкладки по
+    # порядку и не открывает ещё одну.
+    if name and a in ("", "find", "switch", "go", "перейти", "открыть",
+                      "open", "искать"):
+        if not chromium:
+            return ("Поиск вкладки по названию есть только в Chrome и Edge, "
+                    f"а тут «{where}». Могу перейти по номеру.")
+        keyboard.send("ctrl+shift+a")
+        time.sleep(0.35)
+        if not _type(name):
+            keyboard.send("esc")
+            return "Не смогла напечатать название — клавиатура не отдалась."
+        time.sleep(0.45)
+        keyboard.send("enter")
+        time.sleep(0.3)
+        return (f"Нашла вкладку по слову «{name}» и перешла на неё ({where}). "
+                "Если открылась не та — скажи, поищу иначе.")
+
+    # ── ОТКРЫТЬ АДРЕС ────────────────────────────────────────────────
+    if site or url:
+        target = url
+        if not target:
+            try:
+                from server import ui_hands
+                target = ui_hands.site_url(site)
+            except Exception as e:
+                log.debug("адрес сайта не собрался: %s", e)
+                target = site
+        if not target:
+            return "Не поняла, какой сайт открыть."
+        # НОВАЯ ВКЛАДКА — ТОЛЬКО ЕСЛИ ПОПРОСИЛИ (правило владельца).
+        if a in ("new", "новая", "новую"):
+            keyboard.send("ctrl+t")
+            time.sleep(0.25)
+            tail = "в новой вкладке"
+        else:
+            keyboard.send("ctrl+l")
+            time.sleep(0.2)
+            tail = "в той же вкладке"
+        if not _type(target):
+            keyboard.send("esc")
+            return "Не смогла напечатать адрес — клавиатура не отдалась."
+        time.sleep(0.15)
+        keyboard.send("enter")
+        return f"Открыла {target} {tail} — {where}."
+
     if a in ("open", "new", "открыть"):
         keyboard.send("ctrl+t")
-        return "Открыла новую вкладку."
+        return f"Открыла новую вкладку ({where})."
     if a in ("close", "закрыть"):
         keyboard.send("ctrl+w")
-        return "Закрыла вкладку."
+        return f"Закрыла вкладку ({where})."
     if a in ("next", "следующая"):
         keyboard.send("ctrl+tab")
         return "Перешла на следующую."

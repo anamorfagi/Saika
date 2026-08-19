@@ -377,6 +377,8 @@ _CATALOG = [
     ("https://huggingface.co/models?search={q}", "https://huggingface.co",
      ("хаггингфейс", "huggingface", "обнимашки")),
     # почта
+    ("https://ru.pinterest.com/search/pins/?q={q}", "https://ru.pinterest.com",
+     ("пинтерест", "пинтрест", "pinterest", "пинтерес")),
     ("", "https://mail.google.com", ("гугл почта", "gmail", "джимейл")),
     ("", "https://mail.yandex.ru", ("яндекс почта",)),
     ("", "https://mail.ru", ("почта", "майл", "mail")),
@@ -424,6 +426,27 @@ _PLATFORM_WORDS = {
 }
 
 
+def site_url(site: str, query: str = "") -> str:
+    """Название площадки словами -> адрес. Вынесено из web_open (2026-08-19),
+    потому что тот же перевод нужен вкладкам в ЧУЖОМ окне браузера
+    (pc_control.tab): «включи Пинтерест» — это адрес, а не пустая вкладка."""
+    s = (site or "").strip().lower().rstrip("/")
+    q = (query or "").strip()
+    if not s:
+        return ""
+    if q and s in _SITES:
+        return _SITES[s].format(q=urllib.parse.quote_plus(q))
+    if s in _HOME:
+        return _HOME[s]
+    if "." in s:                            # прямой адрес: kinopoisk.ru
+        if q:
+            return ("https://www.google.com/search?q=" +
+                    urllib.parse.quote_plus(q + " site:" + s))
+        return s if s.startswith("http") else "https://" + s
+    return ("https://www.google.com/search?q=" +
+            urllib.parse.quote_plus((q + " " + s).strip()))
+
+
 def web_open(site: str, query: str = "") -> str:
     """Открыть сайт, сразу с поиском, если есть запрос.
 
@@ -443,18 +466,7 @@ def web_open(site: str, query: str = "") -> str:
     if _ql and (_ql == s or _ql in _PLATFORM_WORDS
                 or _ql.replace(" ", "") == s.replace(" ", "")):
         q = ""
-    if q and s in _SITES:
-        url = _SITES[s].format(q=urllib.parse.quote_plus(q))
-    elif s in _HOME:
-        url = _HOME[s]
-    elif "." in s:                          # прямой адрес: kinopoisk.ru
-        url = s if s.startswith("http") else "https://" + s
-        if q:
-            url = ("https://www.google.com/search?q=" +
-                   urllib.parse.quote_plus(q + " site:" + s))
-    else:                                   # неизвестный сайт — через гугл
-        url = ("https://www.google.com/search?q=" +
-               urllib.parse.quote_plus((q + " " + s).strip()))
+    url = site_url(s, q)
     # ОДНО ОКНО, А НЕ ДВА (2026-08-13, живой отказ владельца: «если уж
     # открыла окно, то там и работала»). Было так: web_open запускал
     # СИСТЕМНЫЙ браузер через startfile, а web_research/web_list работали в

@@ -312,6 +312,38 @@ def note_fail(backend: str, model: str, why: str = ""):
     _SICK[(backend, model)] = time.time() + wait
     log.info("Мозг %s/%s отложен на %dс (%s): %s", backend, model, wait,
              human, text[:120])
+    # ВЫКЛЮЧАЮТ НЕ МОДЕЛЬ, А ПРОВАЙДЕРА (2026-08-19, второй заход). Первый
+    # фикс убирал из лестницы ровно ту модель, что упала, — и следующим
+    # ходом руки уходили на gpt-4.1-mini ТОГО ЖЕ мёртвого GitHub Models,
+    # ловили те же 410 и те же 6 секунд ожидания. Ретаймент — это про весь
+    # сервис: гасим все его модели разом.
+    if wait == _GONE_S and backend == "cloud":
+        try:
+            for c in _cloud_candidates():
+                same = (c.get("provider") and c["provider"] == _provider_of(model)) \
+                    or (c.get("base_url") and c["base_url"] == _base_url_of(model))
+                if same and (("cloud", c["model"]) not in _SICK
+                             or _SICK[("cloud", c["model"])] < time.time() + wait):
+                    _SICK[("cloud", c["model"])] = time.time() + wait
+                    if c["model"] != model:
+                        log.info("…и вместе с ним %s — тот же провайдер %s",
+                                 c["model"], c.get("provider") or c["base_url"])
+        except Exception as e:
+            log.debug("гашение провайдера целиком: %s", e)
+
+
+def _provider_of(model: str) -> str:
+    for c in _cloud_candidates():
+        if c["model"] == model:
+            return c.get("provider", "")
+    return ""
+
+
+def _base_url_of(model: str) -> str:
+    for c in _cloud_candidates():
+        if c["model"] == model:
+            return c.get("base_url", "")
+    return ""
 
 
 def is_sick(backend: str, model: str) -> bool:

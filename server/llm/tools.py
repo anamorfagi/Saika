@@ -270,12 +270,29 @@ _PC_SCHEMAS = [
             "required": ["action"]}}},
     {"type": "function", "function": {
         "name": "tab_control",
-        "description": ("Вкладки активного окна браузера: open, close, next, "
-                        "prev, go (с номером). Работает клавишами, поэтому "
-                        "нужное окно должно быть впереди."),
+        "description": ("Вкладки в браузере ЧЕЛОВЕКА. Умеет три разные "
+                        "вещи, не путай их: find — перейти на УЖЕ ОТКРЫТУЮ "
+                        "вкладку по слову из названия (name=\"pinterest\"); "
+                        "open — открыть адрес В ТОЙ ЖЕ вкладке "
+                        "(site=\"пинтерест\" или url); new — именно НОВАЯ "
+                        "вкладка, зови только если человек прямо просит "
+                        "создать/открыть ещё одну. Плюс close, next, prev, "
+                        "go (по номеру). Назвали экран («на втором экране») "
+                        "— передай screen=2, иначе попаду не в то окно. Без "
+                        "screen продолжаю в том окне, где мы работали."),
         "parameters": {"type": "object", "properties": {
             "action": {"type": "string",
-                       "enum": ["open", "close", "next", "prev", "go"]},
+                       "enum": ["find", "open", "new", "close", "next",
+                                "prev", "go"]},
+            "name": {"type": "string",
+                     "description": "слово из названия уже открытой вкладки "
+                                    "(для find)"},
+            "site": {"type": "string",
+                     "description": "куда идти: «пинтерест», «ютуб», "
+                                    "kinopoisk.ru (для open/new)"},
+            "url": {"type": "string", "description": "готовый адрес"},
+            "screen": {"type": "integer",
+                       "description": "номер экрана по-человечески: 1, 2…"},
             "index": {"type": "integer", "description": "номер для go, с 1"}},
             "required": ["action"]}}},
     {"type": "function", "function": {
@@ -2043,8 +2060,16 @@ def _call(name: str, arguments) -> str:
                     return _np.start()
                 return _np.status_text()
             if name == "tab_control":
+                try:
+                    _scr = int(a.get("screen") or a.get("monitor") or 0)
+                except Exception:
+                    _scr = 0
                 return _pc.tab(str(a.get("action", "")),
-                               int(a.get("index") or 0))
+                               int(a.get("index") or 0),
+                               name=str(a.get("name") or a.get("tab") or ""),
+                               site=str(a.get("site") or ""),
+                               url=str(a.get("url") or ""),
+                               screen=_scr)
             if name == "open_folder":
                 return _pc.open_folder(str(a.get("path", "")))
             if name == "folder_list":
