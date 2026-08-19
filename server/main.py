@@ -2714,6 +2714,31 @@ def pc_set(payload: dict):
     return {"ok": True, "trust": _trust.describe()}
 
 
+@app.post("/api/attention/highlight")
+def api_attention_highlight(payload: dict = None):
+    """Кнопка «покажи, где ты работаешь» (2026-08-19). Владелец не увидел
+    подсветку и не мог понять — она сломана или просто повода не было.
+    Теперь повод есть по кнопке, а ответ честно говорит, жива ли она."""
+    payload = payload or {}
+    from server import highlight, pc_control
+    try:
+        scr = int(payload.get("screen") or 0)
+    except Exception:
+        scr = 0
+    w = pc_control.work_window() or (pc_control.pick_on_screen(scr)
+                                     if scr else {})
+    if w:
+        highlight.show_window(w, "здесь я работаю")
+        return {"ok": True, "where": w.get("title", "")[:60],
+                "monitor": w.get("monitor"), "state": highlight.state()}
+    if scr:
+        highlight.show_monitor(scr, f"экран {scr}")
+        return {"ok": True, "where": f"экран {scr}", "state": highlight.state()}
+    return {"ok": False, "error": "рабочего окна пока нет — сделай что-нибудь "
+                                  "с окном, папкой или вкладкой",
+            "state": highlight.state()}
+
+
 @app.get("/api/attention")
 def api_attention():
     """ЧТО И ГДЕ ОНА ДЕЛАЕТ ПРЯМО СЕЙЧАС (2026-08-19, просьба владельца:

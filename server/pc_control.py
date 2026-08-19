@@ -2209,6 +2209,22 @@ _MEDIA_SAY = {"play": "нажала «играть»", "pause": "постави�
               "louder": "прибавила", "quieter": "убавила"}
 
 
+def _spot(title_part: str, what: str = ""):
+    """Показать рамкой, по какому окну пришлось действие. Пульт и микшер
+    работают БЕЗ фокуса — значит человек иначе и не узнает, куда именно
+    ушла команда."""
+    try:
+        from server import highlight
+        for w in windows(include_minimized=False):
+            if title_part and title_part[:30].lower() in (
+                    w.get("title") or "").lower():
+                highlight.show_window(w, what or "сюда")
+                note_work(w)
+                return
+    except Exception as e:
+        log.debug("прицел не показался: %s", e)
+
+
 def media_key(action: str = "toggle") -> str:
     """Мультимедийная клавиша — тому, что играет в системе."""
     if not _IS_WIN:
@@ -2236,6 +2252,7 @@ def media_key(action: str = "toggle") -> str:
         pass
     said = _MEDIA_SAY.get(a, "нажала кнопку пульта")
     if who:
+        _spot(who, said)
         return f"{said} мультимедийной клавишей — играет «{who}»."
     return (f"{said} мультимедийной клавишей. Окна с плеером не вижу, так "
             "что подтвердить не могу — скажи, сработало ли.")
@@ -2308,6 +2325,7 @@ def app_volume(app: str, percent=None, delta=None, mute=None) -> str:
     if mute is not None:
         return (f"{'Заглушила' if mute else 'Вернула звук'} «{app}» "
                 f"({', '.join(sorted(set(hit)))}).")
+    _spot(proc, f"звук: {app}")
     if percent is None and delta is None:
         return f"Громкость «{app}»: {', '.join(sorted(set(hit)))}."
     val = percent if percent is not None else f"на {delta:+d}%"

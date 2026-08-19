@@ -2800,6 +2800,11 @@ function attnBlock(){
        + '<span><b>' + esc(p.kind) + '</b> · ' + esc(p.title || '') + '</span>'
        + '<span class="mon">экран ' + (p.monitor || '?') + '</span></div>';
   });
+  h += '<button id="attn-spot" title="Показать рамкой окно, в котором она '
+     + 'сейчас работает" style="margin-top:2px;width:100%;'
+     + 'background:rgba(90,209,255,.10);border:1px solid rgba(90,209,255,.3);'
+     + 'color:#5ad1ff;border-radius:7px;padding:5px;cursor:pointer;'
+     + 'font-size:11px">🔦 Показать, где работаю</button>';
   if(a.trace && a.trace.length){
     h += '<div class="tr">' + a.trace.slice(0, 3).map(t =>
       esc(t.kind) + ': ' + esc(t.what) + (t.where ? ' — ' + esc(t.where) : '')
@@ -2887,6 +2892,18 @@ async function pollSystem(){
           if(top) sb.scrollTop = top;
         }
       } }
+    const sp=$('#attn-spot');
+    if(sp) sp.onclick=async()=>{
+      sp.disabled=true; const was=sp.textContent;
+      try{
+        const r=await api('/api/attention/highlight',{});
+        sp.textContent = r.ok ? ('🔦 ' + (r.where||'показала'))
+          : ('⚠ ' + (r.error||'не вышло'));
+        // подсветка может быть мертва (нет tkinter) — говорим об этом прямо
+        if(r.state && r.state.dead) sp.textContent = '⚠ подсветка недоступна';
+      }catch(e){ sp.textContent='⚠ не отвечает'; }
+      setTimeout(()=>{ sp.textContent=was; sp.disabled=false; }, 4000);
+    };
     const pb=$('#panic-unload');
     if(pb) pb.onclick=async()=>{
       if(!confirm('Выгрузить ВСЕ модели из памяти? Сайка останется работать, но следующая фраза будет ждать загрузку заново.')) return;
