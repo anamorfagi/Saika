@@ -20,6 +20,8 @@
       "model": "mistral-medium-3-5"
     },
     "tools_broken": [
+      "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "@cf/qwen/qwen3-30b-a3b-fp8",
       "gemma-4-e4b-it",
       "google/gemma-4-12b-qat",
       "llama3.2:latest",
@@ -149,7 +151,7 @@
     ]
   },
   "stt": {
-    "engine": "gigaam",
+    "engine": "off",
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
@@ -231,7 +233,8 @@
       "max_grow": 1.25,
       "min_len": 18,
       "max_sound_edit": 0.22
-    }
+    },
+    "engine_was": "gigaam"
   },
   "tts": {
     "engine": "qwen3",

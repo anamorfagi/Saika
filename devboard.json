@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-19T12:33:34",
+  "updated": "2026-08-19T12:59:33",
   "items": [
     {
       "id": "s01",
@@ -819,41 +819,6 @@
     }
   ],
   "log": [
-    {
-      "ts": "2026-08-15T15:21:37",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:21:38",
-      "text": "⚠ llm: переключилась на cloud/openai/gpt-4.1",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:21:44",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:21:49",
-      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:21:55",
-      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:22:08",
-      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:22:27",
-      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
-      "kind": "problem"
-    },
     {
       "ts": "2026-08-15T15:22:41",
       "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
@@ -1818,14 +1783,49 @@
       "ts": "2026-08-19T12:33:34",
       "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:41:17",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:41:56",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:44:22",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:58:02",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:58:24",
+      "text": "⚠ контекст: бюджет держит потолок облака llm.cloud.context_chars=25200 (модель «@cf/meta/llama-3.3-70b-instruct-fp8-fast») — подними его до 45000 или убери совсем (правится при ОСТАНОВЛЕННОЙ Сайке)",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:58:34",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:59:33",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "основной бэкенд не ответил: 400 от https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1: {\"errors\":[{\"message\":\"AiError: Bad input: Error: oneOf at '/' not met, 0 matches: required properties at '/' are 'prompt', Typ",
-      "count": 546,
+      "text": "основной бэкенд не ответил: (\"Connection broken: ConnectionResetError(10054, 'Удаленный хост принудительно разорвал существующее подключение', None, 10054, None)\", ConnectionResetError(10054, 'Удаленный хост принудительно разорвал существующее подк",
+      "count": 552,
       "resolved": false,
-      "last": "2026-08-19T12:33"
+      "last": "2026-08-19T12:59"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
@@ -1913,9 +1913,9 @@
     },
     "контекст": {
       "text": "окно 32768 токенов, а системный промпт с инструментами съедают его почти целиком — на разговор остаётся ~1500 символов, поэтому она забывает нить и отвечает странно",
-      "count": 62,
+      "count": 63,
       "resolved": false,
-      "last": "2026-08-19T12:25"
+      "last": "2026-08-19T12:58"
     },
     "железо": {
       "text": "Перед прошлым выключением: видеопамять 90%. Полная запись — logs/blackbox.prev.jsonl и blackbox.jsonl",
