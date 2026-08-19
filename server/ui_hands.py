@@ -777,6 +777,83 @@ def _click_impl(q: str, double: bool) -> str:
         return f"Нашла «{nm}», но кликнуть не смогла: {e}"
 
 
+def aim_field(field: str = "", clear: bool = True,
+              submit: bool = False) -> str:
+    """Перевести взгляд на поле ввода и ЖДАТЬ, что человек продиктует.
+
+    2026-08-19, владелец: «когда я попрошу ввести что-то в поисковую
+    строку — она туда переводит взгляд и, удаляя оттуда ввод, ждёт мой
+    голос, что я туда хочу вписать. Должно работать с любыми прогами».
+    UI Automation — системный механизм, поэтому поле ищется одинаково в
+    браузере, телеге, проводнике и любом другом окне."""
+    return _guarded(lambda: _aim_field_impl(field, clear, submit),
+                    "прицелиться в поле")
+
+
+def _aim_field_impl(field: str, clear: bool, submit: bool) -> str:
+    from server import dictation, highlight
+    win, err = _uia_window()
+    if win is None:
+        return (f"Не вижу дерева окна ({err}) — не могу найти поле. Попроси "
+                "человека кликнуть в нужную строку, и я впишу туда, где "
+                "стоит курсор.")
+    try:
+        title = win.window_text()
+    except Exception:
+        title = ""
+    fields = [(nm, ct, el) for nm, ct, el in _elements(win)
+              if ct in ("Edit", "ComboBox", "Document")]
+    if not fields:
+        return "В этом окне не вижу полей ввода."
+    q = (field or "").strip().lower()
+    target = None
+    if q:
+        from server.pc_control import _score
+        scored = [(nm, ct, el, _score(nm, q)) for nm, ct, el in fields]
+        scored.sort(key=lambda x: -x[3])
+        if scored[0][3] > 0:
+            target = scored[0][:3]
+    if target is None:
+        if len(fields) == 1:
+            target = fields[0]
+        else:
+            lst = "; ".join(f"«{nm}»" for nm, _c, _e in fields[:5])
+            return (f"Не поняла, в какое поле смотреть: вижу {lst}. "
+                    "Спроси человека, какое из них.")
+    nm, ct, el = target
+    try:
+        el.set_focus()
+        el.click_input()
+        time.sleep(0.15)
+    except Exception as e:
+        return f"Нашла поле «{nm}», но кликнуть в него не смогла: {e}"
+    if clear:
+        # ЧИСТИМ РОВНО ПОЛЕ, А НЕ ЧТО ПОПАЛО: Ctrl+A действует внутри
+        # сфокусированного поля, курсор в него мы уже поставили.
+        try:
+            press("ctrl+a")
+            press("delete")
+        except Exception as e:
+            log.debug("поле не очистилось: %s", e)
+    rect = None
+    try:
+        r = el.rectangle()
+        rect = (int(r.left), int(r.top), int(r.right - r.left),
+                int(r.bottom - r.top))
+    except Exception as e:
+        log.debug("прямоугольник поля не достался: %s", e)
+    try:
+        if rect:
+            highlight.show(rect, f"жду, что вписать в «{nm[:30]}»", ms=45000)
+    except Exception as e:
+        log.debug("подсветка поля: %s", e)
+    dictation.arm(nm, rect, title, submit)
+    return (f"Смотрю на «{nm}»"
+            + (" (очистила)" if clear else "")
+            + ". Скажи человеку КОРОТКО, что ждёшь, что вписать, и молчи — "
+              "его следующая фраза уедет прямо в это поле.")
+
+
 def type_into(field: str, text: str) -> str:
     """Найти ПОЛЕ ВВОДА по имени, кликнуть в него и напечатать текст
     (2026-07-29, просьба владельца: «чтобы можно было голосом просить
@@ -830,6 +907,14 @@ def _type_into_impl(field: str, t: str) -> str:
         time.sleep(0.15)
     except Exception as e:
         return f"Нашла поле «{nm}», но кликнуть в него не смогла: {e}"
+    try:
+        from server import highlight
+        _r = el.rectangle()
+        highlight.show((int(_r.left), int(_r.top), int(_r.right - _r.left),
+                        int(_r.bottom - _r.top)), f"вписываю в «{nm[:30]}»",
+                       ms=8000)
+    except Exception as _he:
+        log.debug("подсветка поля: %s", _he)
     r = type_text(t)
     if r.startswith("Напечатала"):
         return f"Вписала в «{nm}»: «{t[:60]}». НЕ отправлено — спроси " \

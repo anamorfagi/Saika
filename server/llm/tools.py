@@ -474,6 +474,25 @@ _UIH_SCHEMAS = [
                        "description": "двойной клик, по умолчанию нет"}},
             "required": ["name"]}}},
     {"type": "function", "function": {
+        "name": "dictate_into",
+        "description": ("Перевести взгляд на поле ввода и ЖДАТЬ, что человек "
+                        "продиктует. Зови, когда просят «впиши в поиск», "
+                        "«введи в строку», «набери в чате», а САМ ТЕКСТ ещё "
+                        "не назван. Я найду поле в любой программе, поставлю "
+                        "курсор, очищу его и обведу свечением; следующая "
+                        "фраза человека уедет прямо в поле, а не в разговор. "
+                        "Если текст уже назван — это type_into, не это."),
+        "parameters": {"type": "object", "properties": {
+            "field": {"type": "string",
+                      "description": "имя поля: «поиск», «адрес», «сообщение»"},
+            "clear": {"type": "boolean",
+                      "description": "очистить поле перед вводом (по "
+                                     "умолчанию да)"},
+            "submit": {"type": "boolean",
+                       "description": "нажать enter сразу после ввода "
+                                      "(по умолчанию нет)"}},
+            "required": []}}},
+    {"type": "function", "function": {
         "name": "type_into",
         "description": ("Вписать текст в КОНКРЕТНОЕ поле ввода активного "
                         "окна: найду поле по имени (как в screen_read), "
@@ -2203,6 +2222,10 @@ def _call(name: str, arguments) -> str:
                                  bool(a.get("double")))
             if name == "keyboard_type":
                 return _uh.type_text(str(a.get("text", "")))
+            if name == "dictate_into":
+                return _uh.aim_field(str(a.get("field", "")),
+                                     bool(a.get("clear", True)),
+                                     bool(a.get("submit", False)))
             if name == "type_into":
                 return _uh.type_into(str(a.get("field", "")),
                                      str(a.get("text", "")))

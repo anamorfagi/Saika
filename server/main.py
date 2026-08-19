@@ -3906,6 +3906,14 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
     # новые. Логика должна работать везде — и в системе, и в приложениях»).
     # Живой провал: «на втором экране включи Пинтерест вкладку» -> пустая
     # about:blank в случайном окне; «закрой этот браузер» -> закрыла не тот.
+    # ЖДЁМ ДИКТОВКУ — модель не должна отвечать на текст для поля.
+    try:
+        from server import dictation as _dic0
+        _dn = _dic0.note()
+        if _dn:
+            dyn_parts.append("### " + _dn)
+    except Exception as e:
+        log.debug("заметка о диктовке пропущена: %s", e)
     try:
         from server import pc_control as _pcw
         # Фраза сама назначает рабочее место: «на втором экране открыт
@@ -7466,6 +7474,29 @@ async def ws_endpoint(ws: WebSocket):
         # Теперь рефлекс исполняется ПЕРВОЙ строкой, ещё до всех проверок:
         # звук меняется мгновенно, а модель потом прокомментирует уже
         # сделанное (результат уезжает в EARLY_REFLEX и оттуда в промпт).
+        # ДИКТОВКА ИДЁТ ПЕРЕД ВСЕМ (2026-08-19). Если она смотрит на поле
+        # и ждёт, что туда вписать, — следующая фраза человека это ТЕКСТ, а
+        # не команда и не реплика. Отдать её модели значит получить ответ
+        # «хорошо, вписываю» и пустое поле; пропустить через рефлексы —
+        # получить «громче» вместо слова «громче» в строке поиска.
+        try:
+            from server import dictation as _dic
+            if _dic.armed():
+                if _dic.is_cancel(user_text):
+                    _dic.cancel("человек передумал")
+                    broadcast_event({"type": "tool", "name": "✍ диктовка",
+                                     "args": "отменена"})
+                else:
+                    _typed = _dic.feed(user_text)
+                    # МОЛЧА И ВИДНО. Отвечать словами тут нечего — человек
+                    # диктовал, а не разговаривал; результат он видит в
+                    # строке действий и свечением на самом поле.
+                    broadcast_event({"type": "tool", "name": "✍ диктовка",
+                                     "args": (_typed or user_text)[:200]})
+                    if _typed:
+                        return
+        except Exception as _de:
+            log.debug("диктовка пропущена: %s", _de)
         try:
             from server import reflex as _rx0
             _hit0 = _rx0.match(user_text)
