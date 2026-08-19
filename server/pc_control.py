@@ -557,7 +557,21 @@ def _asked_by_human(q: str) -> bool:
         if tl in ql or ql.startswith(tl[:5]):
             return True
         try:
-            if _score(q, tl) >= 55 or phon_score(q, tl) >= 60:
+            # КОРОТКОЕ СЛОВО ЛЕГКО СОВПАДАЕТ СЛУЧАЙНО: «потише» звучит как
+            # «photoshop» на 60 из 100. Для коротких требуем больше.
+            need = 65 if len(tl) < 7 else 60
+            if _score(q, tl) >= 55 or phon_score(q, tl) >= need:
+                return True
+        except Exception:
+            pass
+        # СЛУХ КОВЕРКАЕТ НАЗВАНИЯ (2026-08-19, живой отказ: «давай ты
+        # просто запустишь Ром» — это «Хром», но проверка не узнала его и
+        # ответила «не поняла, чем открыть». Запрет на выдумку не должен
+        # превращаться в запрет на работу.) Слово сверяем с каталогом
+        # площадок и кличек по ЗВУЧАНИЮ — тем же путём, что имена вкладок.
+        try:
+            canon, known = _canon_tab_name(tl)
+            if known and canon and canon in ql:
                 return True
         except Exception:
             pass
@@ -620,13 +634,31 @@ def launch(query: str) -> str:
     # 0а. ЭТО ВООБЩЕ ПРОСИЛИ? Тяжёлую программу нельзя запускать по
     # догадке модели: см. _asked_by_human и историю про After Effects.
     if not _asked_by_human(q):
+        # УЖЕ ОТКРЫТО — ПРОСТО ПОКАЖИ (2026-08-19). Отказ по подозрению не
+        # должен мешать очевидному: если окно этой программы на столе,
+        # вывести его вперёд безопасно и почти наверняка то, что нужно.
+        w = None
+        try:
+            for cand in windows(include_minimized=True):
+                hay = ((cand.get("proc") or "") + " "
+                       + (cand.get("title") or "")).lower()
+                if _is_self_window(cand):
+                    continue
+                if q.lower()[:6] in hay or _score(cand.get("title", ""), q) >= 60:
+                    w = cand
+                    break
+        except Exception as e:
+            log.debug("поиск уже открытого окна: %s", e)
+        if w:
+            log.info("Запуск «%s» не понадобился — окно уже открыто", q)
+            return window_focus(w.get("title", "")[:40]) + (
+                " (запускать заново не стала — оно уже было открыто)")
         log.warning("Запуск «%s» отклонён: человек этого не называл (сказал: "
                     "«%s»)", q, _phrase()[:80])
         return (f"«{q}» человек не называл — я это придумала бы сама, а "
                 "запускать программы по своей догадке нельзя. Скажи ему "
                 "честно, что не поняла, ЧЕМ открыть, и спроси одним "
-                "коротким вопросом. Если он уже открыт — работай с окном "
-                "(window_focus), а не запускай заново.")
+                "коротким вопросом.")
 
     # 1. ВЫУЧЕННОЕ
     if mem:
@@ -1446,6 +1478,21 @@ def _match(query: str):
             vis = [c for c in other if not c.get("minimized")]
             if vis:
                 other = vis
+        # ЕЁ ПУСТЫШКА — В САМЫЙ КОНЕЦ, РАБОЧЕЕ МЕСТО — ВПЕРЁД (2026-08-19).
+        # Живой разнос: «закрой этот браузер» -> она закрыла ЕГО Chrome и
+        # оставила своё окно с about:blank. Своим человек это окно не
+        # считает, а по z-порядку оно часто оказывалось первым.
+        wk = 0
+        try:
+            wk = int((work_window() or {}).get("hwnd") or 0)
+        except Exception:
+            pass
+
+        def rank(c):
+            t = (c.get("title") or "").strip().lower()
+            return (t.startswith("about:blank"),
+                    0 if (wk and c.get("hwnd") == wk) else 1)
+        other = sorted(other, key=rank)
         # «второй проводник» — второй ПОДХОДЯЩИЙ, а не второй вообще
         if _ordn and len(other) >= _ordn:
             return other[_ordn - 1]
