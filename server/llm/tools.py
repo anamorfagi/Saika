@@ -249,12 +249,18 @@ _PC_SCHEMAS = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "volume_set",
-        "description": ("Громкость системы. Либо процент, либо «громче/тише» "
-                        "через delta, либо выключить звук через mute."),
+        "description": ("Громкость. Без app — общая громкость системы. С app "
+                        "(«ютуб», «хром», «дискорд», «спотифай») — громкость "
+                        "ТОЛЬКО этой программы через микшер Windows, как "
+                        "правой кнопкой по динамику в трее. «Звук на ютубе "
+                        "на 30%» = app=\"ютуб\", percent=30. Никогда не "
+                        "отвечай, что не умеешь управлять звуком, — умеешь."),
         "parameters": {"type": "object", "properties": {
             "percent": {"type": "integer", "description": "0..100"},
             "delta": {"type": "integer",
                       "description": "на сколько изменить, +10 / -10"},
+            "app": {"type": "string",
+                    "description": "чей звук: ютуб, хром, дискорд, спотифай"},
             "mute": {"type": "boolean"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "screen_text",
@@ -2116,6 +2122,11 @@ def _call(name: str, arguments) -> str:
                             "уже смела человеку весь стол.")
                 return _pc.minimize_all(str(a.get("keep", "")))
             if name == "volume_set":
+                _app = str(a.get("app") or a.get("program") or "").strip()
+                if _app:
+                    return _pc.app_volume(_app, percent=a.get("percent"),
+                                          delta=a.get("delta"),
+                                          mute=a.get("mute"))
                 return _pc.volume(percent=a.get("percent"),
                                   delta=a.get("delta"), mute=a.get("mute"))
             if name == "screen_text":

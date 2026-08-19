@@ -1236,7 +1236,23 @@ def work_note() -> str:
             "Инструментам окон и вкладок передавай screen="
             f"{w.get('monitor') or 1}. Новое окно, вкладку или ещё один "
             "проводник заводи, только если человек прямо об этом просит."
-            + _other_places(w))
+            + _media_hint(w) + _other_places(w))
+
+
+def _media_hint(w: dict) -> str:
+    """Если в рабочем окне что-то играет, «потише» и «останови» относятся к
+    НЕМУ (2026-08-19, владелец: «ты же понимаешь, что я попросил сделать
+    звук потише на ютубе… ну это в контексте понятно»). Без этой строчки
+    модель переспрашивала, какой звук имеется в виду, хотя ролик только что
+    запустили вместе."""
+    t = ((w.get("title") or "") + " " + (w.get("proc") or "")).lower()
+    if not any(k in t for k in ("youtube", "ютуб", "chrome", "firefox",
+                                "edge", "opera", "vlc", "spotify", "twitch",
+                                "плеер", "player")):
+        return ""
+    return (" Здесь же играет звук: «потише», «громче», «останови», «дальше» "
+            "без уточнений — про ЭТО окно. Громкость именно его меняй через "
+            "volume_set с app (например app=\"ютуб\"), а не общесистемную.")
 
 
 def _other_places(cur: dict) -> str:
@@ -2200,6 +2216,82 @@ def media_key(action: str = "toggle") -> str:
         return f"{said} мультимедийной клавишей — играет «{who}»."
     return (f"{said} мультимедийной клавишей. Окна с плеером не вижу, так "
             "что подтвердить не могу — скажи, сработало ли.")
+
+
+# ГРОМКОСТЬ ОТДЕЛЬНОЙ ПРОГРАММЫ (2026-08-19). Живой отказ: «звук на
+# YouTube сделай на 30%» -> «я не могу управлять системной громкостью
+# через этот интерфейс». Во-первых, могла (volume_set есть). Во-вторых,
+# человек просил НЕ системную: у Windows свой микшер по приложениям, и
+# YouTube там — это сессия chrome.exe. Ровно то, что человек делает
+# правой кнопкой по динамику в трее.
+_APP_SOUND = {
+    "ютуб": "chrome", "youtube": "chrome", "браузер": "chrome",
+    "хром": "chrome", "chrome": "chrome", "edge": "msedge",
+    "фаерфокс": "firefox", "firefox": "firefox", "опера": "opera",
+    "яндекс": "browser", "телеграм": "telegram", "discord": "discord",
+    "дискорд": "discord", "спотифай": "spotify", "spotify": "spotify",
+    "игра": "", "игру": "",
+}
+
+
+def _sound_sessions():
+    from pycaw.pycaw import AudioUtilities
+    return AudioUtilities.GetAllSessions()
+
+
+def app_volume(app: str, percent=None, delta=None, mute=None) -> str:
+    """Громкость ОДНОЙ программы через микшер Windows."""
+    if not _IS_WIN:
+        return "Микшер по программам есть только в Windows."
+    want = (app or "").strip().lower()
+    proc = _APP_SOUND.get(want, want).replace(".exe", "")
+    if not proc:
+        return ("Не поняла, у какой программы менять звук. Скажи название — "
+                "«ютуб», «хром», «дискорд», «спотифай».")
+    try:
+        sessions = _sound_sessions()
+    except Exception as e:
+        log.debug("микшер недоступен: %s", e)
+        return ("Микшер по программам не работает без pycaw — поставь его "
+                "(setup/install_pc_control.bat), и я смогу крутить звук "
+                "отдельным программам. Общую громкость меняю и так.")
+    hit = []
+    for sess in sessions:
+        try:
+            nm = (sess.Process.name() if sess.Process else "").lower()
+        except Exception:
+            nm = ""
+        if not nm or proc not in nm.replace(".exe", ""):
+            continue
+        try:
+            v = sess.SimpleAudioVolume
+            if mute is not None:
+                v.SetMute(bool(mute), None)
+            else:
+                cur = round((v.GetMasterVolume() or 0) * 100)
+                val = cur + int(delta) if delta is not None else percent
+                if val is None:
+                    hit.append(f"{nm}: {cur}%")
+                    continue
+                val = max(0, min(100, int(val)))
+                v.SetMasterVolume(val / 100.0, None)
+            hit.append(nm)
+        except Exception as e:
+            log.debug("сессия %s: %s", nm, e)
+    if not hit:
+        return (f"В микшере нет ничего от «{app}» — возможно, программа "
+                "сейчас молчит (Windows показывает только тех, кто звучал "
+                "недавно). Могу поменять общую громкость.")
+    if mute is not None:
+        return (f"{'Заглушила' if mute else 'Вернула звук'} «{app}» "
+                f"({', '.join(sorted(set(hit)))}).")
+    if percent is None and delta is None:
+        return f"Громкость «{app}»: {', '.join(sorted(set(hit)))}."
+    val = percent if percent is not None else f"на {delta:+d}%"
+    return (f"Звук «{app}» теперь {val}"
+            + ("%" if percent is not None else "")
+            + f" (это {', '.join(sorted(set(hit)))}), общая громкость не "
+              "тронута.")
 
 
 def volume(percent=None, mute=None, delta=None) -> str:
