@@ -2074,6 +2074,58 @@ def _pick_browser(screen: int = 0):
     return wins[0], f"окно на экране {wins[0].get('monitor') or '?'}"
 
 
+def _title_of(hwnd) -> str:
+    """Заголовок окна прямо сейчас. Нужен, чтобы ПРОВЕРИТЬ, что переход по
+    вкладкам действительно случился, а не отрапортовать в пустоту."""
+    try:
+        ctypes, wintypes, user32 = _win32()
+        buf = ctypes.create_unicode_buffer(512)
+        user32.GetWindowTextW(int(hwnd), buf, 512)
+        return buf.value or ""
+    except Exception:
+        return ""
+
+
+def _canon_tab_name(name: str) -> tuple:
+    """«Pintros», «Пинтерест», «Pintrest» -> ('pinterest', True).
+
+    2026-08-19, живой провал: слух отдал «Pintros», она честно набрала это
+    в поиске вкладок Chrome — «Ничего не найдено», и всё равно отчиталась
+    «перешла на вкладку Pintros». Голос почти никогда не приносит
+    латиницу без ошибок, поэтому имя сперва сверяем с каталогом площадок
+    (ui_hands) по звучанию, и ищем КАНОН, а не то, что послышалось.
+    Возвращает (что искать, известная ли это площадка)."""
+    import difflib
+    raw = (name or "").strip()
+    if not raw:
+        return "", False
+    low = raw.lower()
+    try:
+        from server import ui_hands
+        keys = list(ui_hands._HOME.keys())
+    except Exception:
+        return raw, False
+    best, score = "", 0.0
+    for k in keys:
+        r = difflib.SequenceMatcher(None, low, k.lower()).ratio()
+        # звучание важнее написания: «пинтрест»/«pintros» -> pinterest
+        r = max(r, phon_score(k, low) / 100.0)
+        if r > score:
+            best, score = k, r
+    if score < 0.6:
+        return raw, False
+    try:
+        from server import ui_hands
+        host = ui_hands._HOME.get(best, "")
+        word = host.split("//")[-1].split("/")[0]
+        word = word.replace("www.", "")
+        word = word.split(".")[-2] if word.count(".") >= 1 else word
+    except Exception:
+        word = best
+    log.info("Вкладка: «%s» -> ищу «%s» (совпадение %.2f)", raw, word, score)
+    return word or raw, True
+
+
 def _type(text: str) -> bool:
     try:
         import keyboard
@@ -2109,6 +2161,7 @@ def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
         if own is not None:
             return own
 
+    w = None
     if screen or name or site or url:
         w, why = _pick_browser(screen)
         if not w:
@@ -2149,16 +2202,42 @@ def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
         if not chromium:
             return ("Поиск вкладки по названию есть только в Chrome и Edge, "
                     f"а тут «{where}». Могу перейти по номеру.")
+        query, known = _canon_tab_name(name)
+        hwnd = int(w["hwnd"]) if w else 0
+        before = _title_of(hwnd) if hwnd else ""
         keyboard.send("ctrl+shift+a")
         time.sleep(0.35)
-        if not _type(name):
+        if not _type(query):
             keyboard.send("esc")
             return "Не смогла напечатать название — клавиатура не отдалась."
-        time.sleep(0.45)
+        time.sleep(0.5)
         keyboard.send("enter")
-        time.sleep(0.3)
-        return (f"Нашла вкладку по слову «{name}» и перешла на неё ({where}). "
-                "Если открылась не та — скажи, поищу иначе.")
+        time.sleep(0.5)
+        after = _title_of(hwnd) if hwnd else ""
+        hit = (query.lower() in after.lower()
+               or (after and after != before))
+        if hit:
+            return (f"Перешла на вкладку «{after[:60]}» ({where}).")
+        # НЕ НАШЛОСЬ — И СКАЗАТЬ ОБ ЭТОМ ПРЯМО (2026-08-19). Раньше здесь
+        # рапортовалось «перешла», хотя Chrome писал «Ничего не найдено».
+        keyboard.send("esc")
+        time.sleep(0.15)
+        if known:
+            try:
+                from server import ui_hands
+                target = ui_hands.site_url(name) or ui_hands.site_url(query)
+            except Exception:
+                target = ""
+            if target:
+                keyboard.send("ctrl+l")
+                time.sleep(0.2)
+                if _type(target):
+                    keyboard.send("enter")
+                    return (f"Вкладки со словом «{query}» в этом окне нет — "
+                            f"открыла {target} в текущей вкладке ({where}).")
+        return (f"Искала вкладку по слову «{query}» — Chrome не нашёл ни "
+                f"одной ({where}). Ничего не открыла. Скажи точнее, как она "
+                "называется, или скажи «открой сайт», и я открою адресом.")
 
     # ── ОТКРЫТЬ АДРЕС ────────────────────────────────────────────────
     if site or url:
