@@ -9277,12 +9277,16 @@ def main():
         # ступени не справились.
         try:
             from server import triage as _tri
-            if _tri.ST.get("level", 0) >= 3:
+            # Порог считаем ОТ ЛЕСТНИЦЫ, а не числом: 19.08 между
+            # «лишними движками» и «озвучкой» появилась ступень «лёгкий
+            # голос», и зашитая тройка стала значить не то, что значила.
+            _deep = max(1, _tri.LAST - 1)     # последняя ступень перед «всё»
+            if _tri.ST.get("level", 0) >= _deep:
                 log.info("Защита: ступени уже на уровне %s — рублю всё",
                          _tri.ST["level"])
             else:
                 _tri.tick(dict(g))
-                if _tri.ST.get("level", 0) < 3:
+                if _tri.ST.get("level", 0) < _deep:
                     return
         except Exception as e:
             log.debug("ступени в защите: %s", e)
