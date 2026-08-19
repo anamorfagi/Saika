@@ -82,15 +82,27 @@ _PC_SCHEMAS = [
             "match": {"type": "string"}}, "required": ["match"]}}},
     {"type": "function", "function": {
         "name": "window_focus",
-        "description": "Показать окно поверх остальных, развернуть свёрнутое.",
+        "description": ("Показать окно поверх остальных, развернуть "
+                        "свёрнутое. Имя окна — в match (не в name/title). "
+                        "Назвали экран («на втором экране») — передай "
+                        "screen=2, и тогда match можно не заполнять: возьму "
+                        "главное окно того экрана."),
         "parameters": {"type": "object", "properties": {
-            "match": {"type": "string"}}, "required": ["match"]}}},
+            "match": {"type": "string", "description": "часть заголовка или "
+                      "имя программы"},
+            "screen": {"type": "integer",
+                       "description": "номер экрана: 1, 2…"}},
+            "required": []}}},
     {"type": "function", "function": {
         "name": "window_close",
         "description": ("Попросить окно закрыться. Программа сама спросит "
-                        "про несохранённое — это не принудительное снятие."),
+                        "про несохранённое — это не принудительное снятие. "
+                        "Можно указать screen, если человек назвал экран."),
         "parameters": {"type": "object", "properties": {
-            "match": {"type": "string"}}, "required": ["match"]}}},
+            "match": {"type": "string"},
+            "screen": {"type": "integer",
+                       "description": "номер экрана: 1, 2…"}},
+            "required": []}}},
     {"type": "function", "function": {
         "name": "window_maximize",
         "description": ("Развернуть окно во весь экран. Без match — то окно, "
@@ -98,6 +110,7 @@ _PC_SCHEMAS = [
                         "F11 (настоящий полноэкранный режим браузеров и "
                         "плееров)."),
         "parameters": {"type": "object", "properties": {
+            "screen": {"type": "integer", "description": "номер экрана: 1, 2…"},
             "match": {"type": "string"},
             "full": {"type": "boolean"}}, "required": []}}},
     {"type": "function", "function": {
@@ -1610,6 +1623,26 @@ def _workshop_call(arguments) -> str:
     return f"создала workshop/{fname}{shown}"
 
 
+def _win_args(a: dict) -> tuple:
+    """Имя окна и экран из чего угодно, что прислала модель (2026-08-19).
+    Живой промах: window_focus:{"screen": 2, "name": "Я сделал НАСТОЯЩЕГО
+    ДЖАРВИСА…"} — в схеме поле называется match, поэтому в инструмент
+    уходила ПУСТАЯ строка, и он «фокусировался» непонятно на чём. Спорить
+    с моделью об именах полей дороже, чем принять синонимы."""
+    q = ""
+    for k in ("match", "name", "title", "window", "query", "app",
+              "программа", "окно"):
+        v = a.get(k)
+        if v:
+            q = str(v)
+            break
+    try:
+        scr = int(a.get("screen") or a.get("monitor") or a.get("экран") or 0)
+    except Exception:
+        scr = 0
+    return q, scr
+
+
 def _browser_call(name: str, arguments) -> str:
     import json as _json
     from server import browser_hands
@@ -1647,7 +1680,17 @@ def _browser_call(name: str, arguments) -> str:
             # СВОЁ ОКНО -> ЕСЛИ ТАМ ПУСТО, ПУЛЬТ СИСТЕМЫ (2026-08-19).
             # «останови ролик на YouTube» умирало на том, что её
             # окно Playwright пустое, а ролик играл в окне человека.
-            _r = browser_hands.media(str(arguments.get("action") or ""))
+            # СВОЁ ОКНО — ТОЛЬКО ЕСЛИ ОНО УЖЕ ОТКРЫТО (2026-08-19).
+            # browser_hands.media зовёт _ensure_page, а тот СОЗДАЁТ
+            # страницу, если её нет: отсюда «ты запустила ролик, но
+            # открыла ещё одну пустую вкладку — на хрена?».
+            _r = ""
+            try:
+                if browser_hands.is_open():
+                    _r = browser_hands.media(
+                        str(arguments.get("action") or ""))
+            except Exception as _me:
+                log.debug("свой пульт недоступен: %s", _me)
             _bad = ("ничего не играет", "не готов", "пульт не сработал",
                     "нет плеера")
             if _r and not any(b in _r for b in _bad):
@@ -1928,14 +1971,25 @@ def _call(name: str, arguments) -> str:
                         log.info("%s без имени окна — беру фразу человека: "
                                  "«%s»", name, _said[:60])
             if name == "window_minimize":
-                return _pc.window_minimize(str(a.get("match", "")))
+                _q, _ = _win_args(a)
+                return _pc.window_minimize(_q)
             if name == "window_focus":
-                return _pc.window_focus(str(a.get("match", "")))
+                _q, _scr = _win_args(a)
+                if _scr:
+                    return _pc.window_focus_on(_scr, _q)
+                return _pc.window_focus(_q)
             if name == "window_close":
-                return _pc.window_close(str(a.get("match", "")))
+                _q, _scr = _win_args(a)
+                if _scr and not _q:
+                    _w = _pc.pick_on_screen(_scr)
+                    _q = (_w.get("title") or "") if _w else _q
+                return _pc.window_close(_q)
             if name == "window_maximize":
-                return _pc.window_maximize(str(a.get("match", "")),
-                                           bool(a.get("full")))
+                _q, _scr = _win_args(a)
+                if _scr and not _q:
+                    _w = _pc.pick_on_screen(_scr)
+                    _q = (_w.get("title") or "") if _w else _q
+                return _pc.window_maximize(_q, bool(a.get("full")))
             if name == "window_restore":
                 _mt = str(a.get("match", "")).strip().lower()
                 # «разверни всё» (2026-07-29): и в аргументе, и в фразе

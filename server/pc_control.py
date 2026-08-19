@@ -1693,6 +1693,49 @@ def _force_front(hwnd) -> bool:
     return False
 
 
+def pick_on_screen(screen: int = 0, hint: str = "") -> dict:
+    """Главное окно человека на этом экране: не своё, не свёрнутое, не
+    пустышка about:blank; при равных — то, где мы уже работали, потом
+    переднее, потом самое большое."""
+    cand = []
+    for w in windows(include_minimized=False):
+        if _is_self_window(w):
+            continue
+        if screen and int(w.get("monitor") or 0) != int(screen):
+            continue
+        t = (w.get("title") or "")
+        if t.strip().lower().startswith("about:blank"):
+            continue
+        if hint:
+            hay = (t + " " + (w.get("proc") or "")).lower()
+            if _score(t, hint) < 40 and hint.lower()[:12] not in hay:
+                continue
+        cand.append(w)
+    if not cand:
+        return {}
+    wk = work_window()
+    cand.sort(key=lambda w: (
+        0 if (wk and w.get("hwnd") == wk.get("hwnd")) else 1,
+        0 if w.get("front") else 1,
+        -(int(w.get("w") or 0) * int(w.get("h") or 0))))
+    return cand[0]
+
+
+def window_focus_on(screen: int = 0, hint: str = "") -> str:
+    """«Переключись на второй экран» — без имени окна. Раньше такое
+    приходило как window_focus(match="") и не делало ничего осмысленного."""
+    w = pick_on_screen(screen, hint)
+    if not w:
+        return (f"На экране {screen} я не вижу подходящего окна"
+                + (f" по слову «{hint}»" if hint else "") + ".")
+    if not _force_front(int(w["hwnd"])):
+        return (f"«{w.get('title', '')[:50]}» не отдаёт фокус — ткни в него "
+                "мышкой, и я продолжу.")
+    _touch(w)
+    return (f"Вывела вперёд «{w.get('title', '')[:60]}» — экран "
+            f"{w.get('monitor')}. " + state_note(int(w["hwnd"])))
+
+
 def window_focus(query: str) -> str:
     query = _resolve_pronoun(query)
     # «покажи его» — предмет берём со стола разговора, если своей памяти
