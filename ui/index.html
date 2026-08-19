@@ -170,15 +170,16 @@
   #sysbar .attn .look{font-size:11px;color:rgba(233,233,237,.72)}
   #sysbar .attn .tr{font-size:10px;color:var(--dim);line-height:1.6}
   /* цвет свечения меняется прямо отсюда (2026-08-19) */
-  #sysbar .attn-glow{display:flex;gap:6px;margin-top:3px}
-  #sysbar .attn-glow button{flex:1;background:rgba(255,255,255,.04);
-    border:1px solid rgba(255,255,255,.14);border-radius:7px;padding:5px;
-    cursor:pointer;font-size:11px}
-  #sysbar .attn-glow label{position:relative;width:30px;border-radius:7px;
-    border:1px solid rgba(255,255,255,.14);cursor:pointer;overflow:hidden;
-    display:flex;align-items:center;justify-content:center}
-  #sysbar .attn-glow label span{width:16px;height:16px;border-radius:5px;
-    display:block;box-shadow:0 0 8px rgba(0,0,0,.5) inset}
+  /* кнопка и кружок цвета — одной высоты, иначе строка выглядит кривой */
+  #sysbar .attn-glow{display:flex;gap:6px;margin-top:3px;align-items:stretch;
+    height:28px}
+  #sysbar .attn-glow button{flex:1;height:100%;background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.14);border-radius:7px;padding:0 6px;
+    cursor:pointer;font-size:11px;line-height:1}
+  /* просто кружок цвета: квадрат в рамке смотрелся кривовато */
+  #sysbar .attn-glow label{position:relative;width:28px;height:28px;
+    flex:none;border-radius:50%;cursor:pointer;overflow:hidden;
+    box-shadow:0 0 0 1px rgba(255,255,255,.18),0 2px 8px rgba(0,0,0,.35)}
   #sysbar .attn-glow input[type=color]{position:absolute;inset:0;opacity:0;
     width:100%;height:100%;border:0;padding:0;cursor:pointer}
   #sysbar .attn .eyes-on{color:#5ad1ff;animation:eyespulse 1.1s ease-in-out
@@ -2822,9 +2823,8 @@ function attnBlock(){
      + '<button id="attn-spot" title="Показать рамкой окно, в котором она '
      + 'сейчас работает" style="border-color:' + esc(gc) + '55;color:'
      + esc(gc) + '">🔦 Показать, где работаю</button>'
-     + '<label title="Цвет свечения внимания" style="border-color:'
-     + esc(gc) + '55"><input type="color" id="attn-color" value="'
-     + esc(gc) + '"><span style="background:' + esc(gc) + '"></span></label>'
+     + '<label title="Цвет свечения внимания" style="background:' + esc(gc)
+     + '"><input type="color" id="attn-color" value="' + esc(gc) + '"></label>'
      + '</div>';
   if(a.trace && a.trace.length){
     h += '<div class="tr">' + a.trace.slice(0, 3).map(t =>

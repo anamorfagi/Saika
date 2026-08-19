@@ -1148,7 +1148,19 @@ def _pick_monitor(arg) -> tuple:
     real = [m for m in mons if int(m.get("id", 0)) >= 0]
     n = len(real) or 1
     if arg is None or arg == "":
+        # НЕ СКАЗАЛИ КАКОЙ — СМОТРИМ ТУДА, ГДЕ РАБОТАЕМ (2026-08-19).
+        # Живой случай: «посмотри на своё окно на первом экране» -> она
+        # сняла экран 1, потом экран 2 и запуталась. Рабочее место мы
+        # знаем; брать вместо него первый попавшийся экран — значит
+        # смотреть мимо разговора.
         mon = int(CFG.get("vision.monitor", 0))
+        try:
+            from server import pc_control as _pcv
+            w = _pcv.work_window()
+            if w and int(w.get("monitor") or 0) > 0:
+                mon = int(w["monitor"]) - 1
+        except Exception as e:
+            log.debug("экран рабочего места не спросился: %s", e)
     else:
         try:
             mon = int(arg)

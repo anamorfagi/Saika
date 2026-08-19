@@ -5,11 +5,18 @@
 можно же сделать мягче сглаживание, а не вот эти полоски… и оно почему-то
 зашло на первый экран немного».
 
-КАК УСТРОЕНО СЕЙЧАС. Четыре полосы по краям цели, каждая — окно с
-ПОПИКСЕЛЬНОЙ прозрачностью (UpdateLayeredWindow с 32-битным ARGB). Альфа
-считается для каждого пикселя по расстоянию от края: у самой границы почти
-непрозрачно, к середине — плавно в ноль. Никаких ступенек: градиент
-настоящий, а не набор колец с разной общей прозрачностью.
+КАК УСТРОЕНО СЕЙЧАС. ОДНО окно размером с цель, с ПОПИКСЕЛЬНОЙ
+прозрачностью (UpdateLayeredWindow, 32-битный ARGB). Альфа каждого пикселя
+считается от расстояния до границы: у самого края почти непрозрачно, вглубь
+плавно в ноль, дальше контура — ноль. Углы получаются сами собой, потому
+что расстояние честное, двумерное: скругление задаётся одной формулой
+(signed distance скруглённого прямоугольника) и берётся у самой цели.
+
+⚠️ ПОЧЕМУ НЕ ЧЕТЫРЕ ПОЛОСЫ (2026-08-19, владелец: «почему контуры в углах
+прерывисты? Должен быть полностью объединённый контур»). Полосы знают
+только своё направление: верхняя гаснет вниз, левая — вправо. В углу обе
+уже почти прозрачны, и контур там разрывается. Одно окно с двумерным
+расстоянием такой проблемы не имеет.
 
 Побочная выгода: пиксели с нулевой альфой мышь не ловят вообще — по центру
 цели можно спокойно работать.
@@ -107,6 +114,27 @@ def _ensure():
 
 
 # ─────────────────────── геометрия цели ───────────────────────
+def _target_radius(hwnd: int) -> int:
+    """Скругление САМОЙ цели: у окна Windows 11 — 8 пикселей (или 4 у
+    маленьких), у развёрнутого и у монитора — прямой угол. Контур ложится
+    по её углам, а не по своим."""
+    if not hwnd:
+        return 0
+    try:
+        import ctypes
+        if ctypes.windll.user32.IsZoomed(int(hwnd)):
+            return 0
+        val = ctypes.c_int(0)
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            ctypes.c_void_p(int(hwnd)), ctypes.c_uint(33),
+            ctypes.byref(val), ctypes.sizeof(val))
+        if hr != 0:
+            return 0
+        return {0: 8, 1: 8, 2: 0, 3: 8, 4: 4}.get(int(val.value), 8)
+    except Exception:
+        return 0
+
+
 def _visible_rect(hwnd: int):
     """Видимая рамка окна. GetWindowRect отдаёт её ВМЕСТЕ с невидимой
     границей изменения размера (несколько пикселей с каждой стороны) — из-за
@@ -158,34 +186,68 @@ def _rgb(color: str):
         return 255, 154, 60
 
 
-def _fall(t: float) -> float:
-    """Плавность: у края 1, к середине 0. Куб даёт мягкий хвост — именно
-    его человек и называет «сглаживанием», в отличие от линейной ступеньки."""
-    k = max(0.0, min(1.0, 1.0 - t))
-    return k * k * (3 - 2 * k) * k      # smoothstep * k — мягче к нулю
+def _alpha_profile(t: float, peak: float):
+    """Профиль яркости поперёк контура: 1 у края, мягко в ноль на глубине t."""
+    import numpy as np
+    d = np.arange(int(t) + 1, dtype=np.float32)
+    k = np.clip(1.0 - d / max(1.0, t), 0.0, 1.0)
+    return (peak * (k * k * (3.0 - 2.0 * k)) * k).astype(np.float32)
 
 
-def _strip_bits(w: int, h: int, thick: int, rgb, fade: float, side: str):
-    """Премультиплицированный ARGB для полосы. Альфа меняется поперёк
-    полосы, вдоль — постоянна, поэтому строим одну строку и повторяем."""
+def _contour_bits(w: int, h: int, thick: int, rgb, fade: float,
+                  radius: int):
+    """Премультиплицированный ARGB всего окна: контур по краю, середина —
+    прозрачная дыра.
+
+    СЧИТАЕМ ТОЛЬКО КРАЙ. Честная двумерная формула по всей площади — это
+    треть секунды на 1920x1080, а нам надо успевать за движением окна.
+    Поэтому стороны заполняются одномерным профилем (быстрое размножение
+    строки), и лишь четыре угловых квадрата считаются двумерно — там, где
+    контур поворачивает и где полосы когда-то и рвались."""
+    import numpy as np
     r, g, b = rgb
-    peak = 0.92 * max(0.0, min(1.0, fade))
-    if side in ("top", "bottom"):
-        rows = []
-        for i in range(h):
-            d = i if side == "top" else (h - 1 - i)
-            a = peak * _fall(d / float(max(1, thick - 1)))
-            ai = int(a * 255)
-            px = bytes((int(b * a), int(g * a), int(r * a), ai))
-            rows.append(px * w)
-        return b"".join(rows)
-    row = bytearray()
-    for i in range(w):
-        d = i if side == "left" else (w - 1 - i)
-        a = peak * _fall(d / float(max(1, thick - 1)))
-        ai = int(a * 255)
-        row += bytes((int(b * a), int(g * a), int(r * a), ai))
-    return bytes(row) * h
+    peak = 0.95 * max(0.0, min(1.0, fade))
+    t = int(max(1, thick))
+    rad = int(max(0, radius))
+    prof = _alpha_profile(t, peak)                    # длина t+1
+
+    a = np.zeros((h, w), dtype=np.float32)
+    band = min(t + 1, h // 2, w // 2)
+    if band > 0:
+        col = prof[:band][:, None]                    # сверху вниз
+        a[:band, :] = np.maximum(a[:band, :], col)
+        a[h - band:, :] = np.maximum(a[h - band:, :], col[::-1])
+        row = prof[:band][None, :]
+        a[:, :band] = np.maximum(a[:, :band], row)
+        a[:, w - band:] = np.maximum(a[:, w - band:], row[:, ::-1])
+
+    # УГЛЫ: двумерное расстояние до скруглённой границы. Квадрат стороной
+    # rad + t — больше не нужно, дальше начинается ровная сторона.
+    c = min(rad + t + 1, h // 2, w // 2)
+    if c > 0:
+        yy = np.arange(c, dtype=np.float32)[:, None]
+        xx = np.arange(c, dtype=np.float32)[None, :]
+        # центр скругления в углу
+        dx, dy = np.maximum(rad - xx, 0.0), np.maximum(rad - yy, 0.0)
+        d = np.where(rad > 0,
+                     rad - np.sqrt(dx * dx + dy * dy),   # внутри скругления
+                     np.minimum(xx, yy))
+        d = np.where((xx >= rad) | (yy >= rad), np.minimum(xx, yy), d)
+        k = np.clip(1.0 - np.maximum(d, 0.0) / float(t), 0.0, 1.0)
+        ca = (peak * (k * k * (3.0 - 2.0 * k)) * k).astype(np.float32)
+        ca[d < 0] = 0.0                                 # снаружи скругления
+        ca[d > t] = 0.0
+        a[:c, :c] = ca
+        a[:c, w - c:] = ca[:, ::-1]
+        a[h - c:, :c] = ca[::-1, :]
+        a[h - c:, w - c:] = ca[::-1, ::-1]
+
+    out = np.empty((h, w, 4), dtype=np.uint8)
+    out[..., 0] = (b * a).astype(np.uint8)              # премультиплицировано
+    out[..., 1] = (g * a).astype(np.uint8)
+    out[..., 2] = (r * a).astype(np.uint8)
+    out[..., 3] = (a * 255.0).astype(np.uint8)
+    return out.tobytes()
 
 
 def _paint(hwnd: int, x: int, y: int, w: int, h: int, bits: bytes) -> bool:
@@ -305,14 +367,12 @@ def _loop():
     try:
         root = tk.Tk()
         root.withdraw()
-        strips = []
-        for _ in range(4):
-            b = tk.Toplevel(root)
-            b.overrideredirect(True)
-            b.attributes("-topmost", True)
-            b.geometry("1x1+0+0")
-            b.update_idletasks()
-            strips.append({"win": b, "hwnd": _make_layered(b), "shown": False})
+        glass = tk.Toplevel(root)
+        glass.overrideredirect(True)
+        glass.attributes("-topmost", True)
+        glass.geometry("1x1+0+0")
+        glass.update_idletasks()
+        g_hwnd = _make_layered(glass)
         cap = tk.Toplevel(root)
         cap.overrideredirect(True)
         cap.attributes("-topmost", True)
@@ -326,27 +386,20 @@ def _loop():
               "glow": GLOW_PX, "drawn": None}
 
         def place(rect, fade):
+            nonlocal g_hwnd
             x, y, w, h = rect
             t = max(3, min(int(st["glow"]), w // 4, h // 4))
-            rgb = _rgb(st["color"])
-            geo = (("top", x, y, w, t), ("bottom", x, y + h - t, w, t),
-                   ("left", x, y + t, t, max(1, h - 2 * t)),
-                   ("right", x + w - t, y + t, t, max(1, h - 2 * t)))
-            for s, (side, gx, gy, gw, gh) in zip(strips, geo):
-                if gw < 1 or gh < 1:
-                    continue
-                win = s["win"]
-                win.geometry(f"{gw}x{gh}+{gx}+{gy}")
-                win.deiconify()
-                win.update_idletasks()
-                if not s["hwnd"]:
-                    s["hwnd"] = _make_layered(win)
-                bits = _strip_bits(gw, gh, t, rgb, fade, side)
-                if not _paint(s["hwnd"], gx, gy, gw, gh, bits):
-                    win.withdraw()
-                    continue
-                win.lift()
-                s["shown"] = True
+            rad = _target_radius(st["hwnd"])
+            glass.geometry(f"{w}x{h}+{x}+{y}")
+            glass.deiconify()
+            glass.update_idletasks()
+            if not g_hwnd:
+                g_hwnd = _make_layered(glass)
+            bits = _contour_bits(w, h, t, _rgb(st["color"]), fade, rad)
+            if not _paint(g_hwnd, x, y, w, h, bits):
+                glass.withdraw()
+            else:
+                glass.lift()
             if st["label"]:
                 lbl.configure(text=st["label"], bg=st["color"])
                 cap.configure(bg=st["color"])
@@ -364,9 +417,7 @@ def _loop():
             st["drawn"] = (rect, round(fade, 2))
 
         def hide():
-            for s in strips:
-                s["win"].withdraw()
-                s["shown"] = False
+            glass.withdraw()
             cap.withdraw()
             st["shown"] = False
 
@@ -407,8 +458,9 @@ def _loop():
             root.after(100, tick)
 
         root.after(100, tick)
-        log.info("Свечение внимания готово: попиксельный градиент, %dпx, "
-                 "цвет %s", int(CFG.get("pc.highlight_glow", GLOW_PX)),
+        log.info("Свечение внимания готово: единый контур, попиксельный "
+                 "градиент, %dпx, цвет %s",
+                 int(CFG.get("pc.highlight_glow", GLOW_PX)),
                  CFG.get("pc.highlight_color", "#ff9a3c"))
         root.mainloop()
     except Exception as e:
