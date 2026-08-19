@@ -3,7 +3,7 @@
 > Файл СГЕНЕРИРОВАН: `python -m tools.config_map`. Руками не править —
 > перезапишется. Правится код или `config.json`.
 
-Всего ключей: **615**. Из них в коде читается 448, в конфигах лежит 339.
+Всего ключей: **633**. Из них в коде читается 466, в конфигах лежит 343.
 
 Как это работает: `config.local.json` накладывается поверх `config.json` при загрузке, поэтому личные настройки машины переживают `git pull`. Ключа нет нигде — берётся значение по умолчанию прямо из кода, колонка «по умолчанию».
 
@@ -35,6 +35,7 @@
 - `browser.ask_after_min`
 - `browser.cdp_port`
 - `browser.channel`
+- `browser.chrome_profile`
 - `browser.enabled`
 - `browser.idle_close_min`
 - `browser.use_system_chrome`
@@ -80,18 +81,17 @@
 - `guard.auto_free_engine`
 - `guard.period_s`
 - `guard.protect`
+- `guard.temp_calm`
 - `guard.temp_crit`
 - `guard.temp_warn`
+- `guard.triage`
+- `guard.vram_calm`
 - `guard.vram_crit`
 - `guard.vram_warn`
 - `heal.enabled`
 - `heal.interval_sec`
 - `hearing.clap.enabled`
-- `hearing.clap.every_s`
-- `hearing.clap.labels`
-- `hearing.clap.min`
-- `hearing.enabled`
-- …и ещё 196
+- …и ещё 210
 
 ## ⚠ Лежит в конфиге, но код его не читает
 
@@ -99,48 +99,48 @@
 
 - `_comment` = "Настройки ЭТОЙ машины. Файл в .gitignore…
 - `avatar.desk.ghost` = false
-- `avatar.desk.h` = 877
-- `avatar.desk.slots.saika_v1.h` = 877
+- `avatar.desk.h` = 918
+- `avatar.desk.slots.saika_v1.h` = 918
 - `avatar.desk.slots.saika_v1.view.az` = 0.0
 - `avatar.desk.slots.saika_v1.view.dist` = 0.0
 - `avatar.desk.slots.saika_v1.view.el` = 0.0
 - `avatar.desk.slots.saika_v1.view.headFollow` = true
 - `avatar.desk.slots.saika_v1.view.lean` = 0.0
 - `avatar.desk.slots.saika_v1.view.ortho` = false
-- `avatar.desk.slots.saika_v1.view.ox` = 0.0
-- `avatar.desk.slots.saika_v1.view.oy` = 0.0
+- `avatar.desk.slots.saika_v1.view.ox` = 0.001412315484514749
+- `avatar.desk.slots.saika_v1.view.oy` = 0.0805019826173407
 - `avatar.desk.slots.saika_v1.view.oz` = 0.0
 - `avatar.desk.slots.saika_v1.view.rx` = 0.0
 - `avatar.desk.slots.saika_v1.view.ry` = 0.0
 - `avatar.desk.slots.saika_v1.view.rz` = 0.0
 - `avatar.desk.slots.saika_v1.view.snap` = 0.0
-- `avatar.desk.slots.saika_v1.view.x` = -0.003810586893795583
-- `avatar.desk.slots.saika_v1.view.y` = 7.806255641895632e-18
+- `avatar.desk.slots.saika_v1.view.x` = -0.007489694230383152
+- `avatar.desk.slots.saika_v1.view.y` = 0.001412315484514749
 - `avatar.desk.slots.saika_v1.view.z` = 0.0
-- `avatar.desk.slots.saika_v1.view.zoom` = 0.9638914870709868
-- `avatar.desk.slots.saika_v1.w` = 687
-- `avatar.desk.slots.saika_v1.x` = 1330
-- `avatar.desk.slots.saika_v1.y` = 289
+- `avatar.desk.slots.saika_v1.view.zoom` = 1.0
+- `avatar.desk.slots.saika_v1.w` = 434
+- `avatar.desk.slots.saika_v1.x` = 3317
+- `avatar.desk.slots.saika_v1.y` = 262
 - `avatar.desk.view.az` = 0.0
 - `avatar.desk.view.dist` = 0.0
 - `avatar.desk.view.el` = 0.0
 - `avatar.desk.view.headFollow` = true
 - `avatar.desk.view.lean` = 0.0
 - `avatar.desk.view.ortho` = false
-- `avatar.desk.view.ox` = 0.0
-- `avatar.desk.view.oy` = 0.0
+- `avatar.desk.view.ox` = 0.001412315484514749
+- `avatar.desk.view.oy` = 0.0805019826173407
 - `avatar.desk.view.oz` = 0.0
 - `avatar.desk.view.rx` = 0.0
 - `avatar.desk.view.ry` = 0.0
 - `avatar.desk.view.rz` = 0.0
 - `avatar.desk.view.snap` = 0.0
-- `avatar.desk.view.x` = -0.003810586893795583
-- `avatar.desk.view.y` = 7.806255641895632e-18
+- `avatar.desk.view.x` = -0.007489694230383152
+- `avatar.desk.view.y` = 0.001412315484514749
 - `avatar.desk.view.z` = 0.0
-- `avatar.desk.view.zoom` = 0.9638914870709868
-- `avatar.desk.w` = 687
-- `avatar.desk.x` = 1330
-- `avatar.desk.y` = 289
+- `avatar.desk.view.zoom` = 1.0
+- `avatar.desk.w` = 434
+- `avatar.desk.x` = 3317
+- `avatar.desk.y` = 262
 - `avatar.gestures.tone_map.flirt` = "fun"
 - `avatar.gestures.tone_map.hostile` = "angry"
 - `avatar.gestures.tone_map.praise` = "joy"
@@ -249,32 +249,32 @@
 |---|---|---|---|
 | `avatar` | — | `—` | `tools/desk_avatar.py` |
 | `avatar.desk` | — | `{}` | `server/desk_avatar.py` |
-| `avatar.desk.frame` | true | `—` | `server/desk_avatar.py` |
+| `avatar.desk.frame` | false | `—` | `server/desk_avatar.py` |
 | `avatar.desk.ghost` | false | `—` | — |
-| `avatar.desk.h` | 877 | `—` | — |
-| `avatar.desk.lock` | false | `False` | `server/desk_avatar.py` |
+| `avatar.desk.h` | 918 | `—` | — |
+| `avatar.desk.lock` | true | `False` | `server/desk_avatar.py` |
 | `avatar.desk.on` | true | `—` | `server/desk_avatar.py` |
-| `avatar.desk.slots.saika_v1.h` | 877 | `—` | — |
+| `avatar.desk.slots.saika_v1.h` | 918 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.az` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.dist` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.el` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.headFollow` | true | `—` | — |
 | `avatar.desk.slots.saika_v1.view.lean` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.ortho` | false | `—` | — |
-| `avatar.desk.slots.saika_v1.view.ox` | 0.0 | `—` | — |
-| `avatar.desk.slots.saika_v1.view.oy` | 0.0 | `—` | — |
+| `avatar.desk.slots.saika_v1.view.ox` | 0.001412315484514749 | `—` | — |
+| `avatar.desk.slots.saika_v1.view.oy` | 0.0805019826173407 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.oz` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.rx` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.ry` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.rz` | 0.0 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.snap` | 0.0 | `—` | — |
-| `avatar.desk.slots.saika_v1.view.x` | -0.003810586893795583 | `—` | — |
-| `avatar.desk.slots.saika_v1.view.y` | 7.806255641895632e-18 | `—` | — |
+| `avatar.desk.slots.saika_v1.view.x` | -0.007489694230383152 | `—` | — |
+| `avatar.desk.slots.saika_v1.view.y` | 0.001412315484514749 | `—` | — |
 | `avatar.desk.slots.saika_v1.view.z` | 0.0 | `—` | — |
-| `avatar.desk.slots.saika_v1.view.zoom` | 0.9638914870709868 | `—` | — |
-| `avatar.desk.slots.saika_v1.w` | 687 | `—` | — |
-| `avatar.desk.slots.saika_v1.x` | 1330 | `—` | — |
-| `avatar.desk.slots.saika_v1.y` | 289 | `—` | — |
+| `avatar.desk.slots.saika_v1.view.zoom` | 1.0 | `—` | — |
+| `avatar.desk.slots.saika_v1.w` | 434 | `—` | — |
+| `avatar.desk.slots.saika_v1.x` | 3317 | `—` | — |
+| `avatar.desk.slots.saika_v1.y` | 262 | `—` | — |
 | `avatar.desk.span` | — | `—` | `server/desk_avatar.py` |
 | `avatar.desk.top` | true | `True` | `server/desk_avatar.py` |
 | `avatar.desk.view.az` | 0.0 | `—` | — |
@@ -283,20 +283,20 @@
 | `avatar.desk.view.headFollow` | true | `—` | — |
 | `avatar.desk.view.lean` | 0.0 | `—` | — |
 | `avatar.desk.view.ortho` | false | `—` | — |
-| `avatar.desk.view.ox` | 0.0 | `—` | — |
-| `avatar.desk.view.oy` | 0.0 | `—` | — |
+| `avatar.desk.view.ox` | 0.001412315484514749 | `—` | — |
+| `avatar.desk.view.oy` | 0.0805019826173407 | `—` | — |
 | `avatar.desk.view.oz` | 0.0 | `—` | — |
 | `avatar.desk.view.rx` | 0.0 | `—` | — |
 | `avatar.desk.view.ry` | 0.0 | `—` | — |
 | `avatar.desk.view.rz` | 0.0 | `—` | — |
 | `avatar.desk.view.snap` | 0.0 | `—` | — |
-| `avatar.desk.view.x` | -0.003810586893795583 | `—` | — |
-| `avatar.desk.view.y` | 7.806255641895632e-18 | `—` | — |
+| `avatar.desk.view.x` | -0.007489694230383152 | `—` | — |
+| `avatar.desk.view.y` | 0.001412315484514749 | `—` | — |
 | `avatar.desk.view.z` | 0.0 | `—` | — |
-| `avatar.desk.view.zoom` | 0.9638914870709868 | `—` | — |
-| `avatar.desk.w` | 687 | `—` | — |
-| `avatar.desk.x` | 1330 | `—` | — |
-| `avatar.desk.y` | 289 | `—` | — |
+| `avatar.desk.view.zoom` | 1.0 | `—` | — |
+| `avatar.desk.w` | 434 | `—` | — |
+| `avatar.desk.x` | 3317 | `—` | — |
+| `avatar.desk.y` | 262 | `—` | — |
 | `avatar.enabled` | true | `False` | `server/avatar.py`, `server/llm/tools.py` |
 | `avatar.gestures.cooldown_s` | 8 | `8` | `server/avatar.py` |
 | `avatar.gestures.enabled` | true | `True` | `server/avatar.py` |
@@ -349,6 +349,7 @@
 | `browser.ask_after_min` | — | `3` | `server/main.py` |
 | `browser.cdp_port` | — | `9222` | `server/browser_hands.py` |
 | `browser.channel` | — | `'chrome'` | `server/browser_hands.py` |
+| `browser.chrome_profile` | — | `'Default'` | `server/browser_hands.py` |
 | `browser.enabled` | — | `True` | `server/llm/tools.py`, `server/main.py` |
 | `browser.idle_close_min` | — | `15` | `server/browser_hands.py` |
 | `browser.use_system_chrome` | — | `True` | `server/browser_hands.py` |
@@ -501,12 +502,17 @@
 | ключ | сейчас | по умолчанию | где читается |
 |---|---|---|---|
 | `guard.auto_free_engine` | — | `True` | `server/main.py` |
+| `guard.calm_s` | 45 | `45` | `server/triage.py` |
 | `guard.period_s` | — | `5` | `server/guard.py` |
 | `guard.protect` | — | `True` | `server/guard.py` |
-| `guard.temp_crit` | — | `90` | `server/guard.py` |
-| `guard.temp_warn` | — | `83` | `server/guard.py` |
-| `guard.vram_crit` | — | `0.96` | `server/guard.py` |
-| `guard.vram_warn` | — | `0.9` | `server/guard.py` |
+| `guard.step_s` | 12 | `12` | `server/triage.py` |
+| `guard.temp_calm` | — | `70` | `server/triage.py` |
+| `guard.temp_crit` | — | `90 / 85 ⚠` | `server/guard.py`, `server/triage.py` |
+| `guard.temp_warn` | — | `83 / 78 ⚠` | `server/guard.py`, `server/triage.py` |
+| `guard.triage` | — | `True` | `server/triage.py` |
+| `guard.vram_calm` | — | `0.75` | `server/triage.py` |
+| `guard.vram_crit` | — | `0.96 / 0.93 ⚠` | `server/guard.py`, `server/main.py`, `server/triage.py` |
+| `guard.vram_warn` | — | `0.9` | `server/guard.py`, `server/triage.py` |
 
 ### heal
 
@@ -602,7 +608,7 @@
 
 | ключ | сейчас | по умолчанию | где читается |
 |---|---|---|---|
-| `llm.backend` | "cloud" | `'' / — / 'ollama' ⚠` | `server/browser_hands.py`, `server/cards.py`, `server/llm/brains.py` +7 |
+| `llm.backend` | "llamacpp" | `'' / — / 'ollama' ⚠` | `server/browser_hands.py`, `server/cards.py`, `server/llm/brains.py` +8 |
 | `llm.cache_prompt` | — | `True` | `server/llm/manager.py` |
 | `llm.catch_false_claims` | — | `True` | `server/model_dossier.py` |
 | `llm.cloud` | — | `{}` | `server/llm/autoconnect.py`, `server/llm/brains.py`, `server/llm/manager.py` +2 |
@@ -623,20 +629,21 @@
 | `llm.fast_context_chars` | 45000 | `12000` | `server/main.py` |
 | `llm.fast_memory_chars` | — | `700` | `server/main.py` |
 | `llm.fast_mode` | true | `False` | `server/main.py` |
+| `llm.hands_local_second` | — | `False` | `server/llm/brains.py` |
 | `llm.hands_min_rank` | — | `7` | `server/main.py` |
 | `llm.keep_alive` | — | `'30m'` | `server/llm/manager.py` |
-| `llm.keep_only_one` | — | `True` | `server/llm/manager.py` |
+| `llm.keep_only_one` | — | `True` | `server/llm/brains.py`, `server/llm/manager.py` |
 | `llm.light_max_chars` | — | `48` | `server/main.py` |
 | `llm.lmstudio_url` | "http://127.0.0.1:1234" | `'http://127.0.0.1:1234'` | `server/llm/manager.py` |
 | `llm.max_gen_seconds` | — | `180` | `server/main.py` |
 | `llm.max_history` | 14 | `—` | — |
 | `llm.max_tokens_hard` | — | `4000` | `server/main.py` |
 | `llm.max_tokens_short` | — | `300` | `server/llm/manager.py` |
-| `llm.model` | "mistral-medium-3-5" | `'' / 'local' / — ⚠` | `server/browser_hands.py`, `server/cards.py`, `server/llm/brains.py` +9 |
+| `llm.model` | "google/gemma-4-e4b" | `'' / 'local' / — ⚠` | `server/browser_hands.py`, `server/cards.py`, `server/llm/brains.py` +10 |
 | `llm.models_cache_s` | — | `5` | `server/llm/manager.py` |
 | `llm.n_ctx` | "32768" | `—` | — |
 | `llm.nothink_prefill` | — | `''` | `server/llm/manager.py` |
-| `llm.off` | true | `False / — ⚠` | `server/main.py` |
+| `llm.off` | false | `False / — ⚠` | `server/main.py` |
 | `llm.ollama_url` | "http://127.0.0.1:11434" | `'http://127.0.0.1:11434'` | `server/llm/manager.py` |
 | `llm.paid_ok` | — | `False` | `server/llm/brains.py` |
 | `llm.prefer_cheap` | — | `True` | `server/main.py`, `server/model_dossier.py` |
@@ -670,7 +677,14 @@
 | `llm.target_response_s` | — | `0` | `server/llm/manager.py` |
 | `llm.temperature` | 0.8 | `0.8` | `server/llm/manager.py` |
 | `llm.think` | false | `False` | `server/llm/manager.py`, `server/main.py` |
-| `llm.tools_broken` | ["gemma-4-e4b-it", "google/gemma-4-12b-qa… | `[]` | `server/capabilities.py`, `server/llm/manager.py`, `server/llm/passport.py` +4 |
+| `llm.tools_broken` | ["@cf/meta/llama-3.3-70b-instruct-fp8-fas… | `[]` | `server/capabilities.py`, `server/llm/manager.py`, `server/llm/passport.py` +4 |
+| `llm.trust_liars` | — | `False` | `server/capabilities.py` |
+
+### lmstudio
+
+| ключ | сейчас | по умолчанию | где читается |
+|---|---|---|---|
+| `lmstudio.cli` | — | `''` | `server/llm/manager.py` |
 
 ### locallm
 
@@ -774,6 +788,8 @@
 | `messengers.owner_ids.telegram` | [] | `—` | — |
 | `messengers.owner_ids.vk` | [] | `—` | — |
 | `messengers.pc_name` | "домашний-ПК" | `—` | — |
+| `messengers.reply_timeout_s` | — | `180` | `server/messengers.py` |
+| `messengers.speak_aloud` | — | `False` | `server/messengers.py` |
 | `messengers.telegram.enabled` | false | `—` | — |
 | `messengers.telegram.token` | "" | `—` | — |
 | `messengers.vk.enabled` | false | `—` | — |
@@ -843,6 +859,10 @@
 | `pc.enabled` | — | `True` | `server/llm/tools.py`, `server/main.py`, `server/trust.py` |
 | `pc.extra_scan_dirs` | — | `[]` | `server/pc_control.py` |
 | `pc.find_timeout_s` | — | `4.0` | `server/pc_control.py` |
+| `pc.highlight` | — | `True` | `server/highlight.py` |
+| `pc.highlight_color` | "#02a9ac" | `'#ff9a3c'` | `server/highlight.py` |
+| `pc.highlight_glow` | — | `'<выражение>'` | `server/highlight.py` |
+| `pc.highlight_ms` | — | `30000` | `server/highlight.py` |
 | `pc.index_ttl_h` | — | `24` | `server/pc_control.py` |
 | `pc.open_any_folder` | — | `True` | `server/main.py`, `server/pc_control.py` |
 | `pc.scan_timeout_s` | — | `8.0` | `server/explorer.py` |
@@ -965,7 +985,8 @@
 | `stt.draft` | true | `True` | `server/draft.py` |
 | `stt.echo_guard` | — | `True` | `server/main.py` |
 | `stt.echo_tail_s` | — | `0.9` | `server/main.py` |
-| `stt.engine` | "gigaam" | `'off' / 'gigaam' / '' ⚠` | `server/main.py`, `server/self_control.py`, `server/stt/manager.py` +1 |
+| `stt.engine` | "off" | `'off' / '' / 'gigaam' ⚠` | `server/main.py`, `server/self_control.py`, `server/stt/manager.py` +2 |
+| `stt.engine_was` | "gigaam" | `''` | `server/triage.py` |
 | `stt.engines.faster_whisper` | — | `{}` | `server/stt/engines.py` |
 | `stt.engines.faster_whisper.compute_type` | "auto" | `—` | — |
 | `stt.engines.faster_whisper.device` | "auto" | `—` | — |
@@ -991,11 +1012,12 @@
 | `stt.frontend.max_gain_db` | 30 | `—` | — |
 | `stt.frontend.pad_ms` | 100 | `—` | — |
 | `stt.frontend.target_dbfs` | -20 | `—` | — |
+| `stt.join_dup_words` | — | `4` | `server/main.py` |
 | `stt.junk_phrases` | — | `[]` | `server/stt/manager.py` |
 | `stt.language` | "ru" | `'ru'` | `server/stt/engines.py` |
 | `stt.live_polish` | true | `True` | `server/main.py` |
 | `stt.music_phantom_dbfs` | — | `-40.0` | `server/main.py` |
-| `stt.phantom_max_s` | 1.2 | `1.0` | `server/main.py` |
+| `stt.phantom_max_s` | 1.2 | `1.6` | `server/main.py` |
 | `stt.phantom_mech_min` | 0.35 | `0.3` | `server/main.py` |
 | `stt.polish_every_s` | 0.5 | `0.55` | `server/main.py` |
 | `stt.polish_grow_s` | — | `0.2` | `server/main.py` |
@@ -1116,12 +1138,12 @@
 | `tts` | — | `{}` | `server/tts/manager.py` |
 | `tts._hidden_note` | "xtts и f5ru требуют СВОЕГО venv: coqui-t… | `—` | — |
 | `tts.boot_stub` | — | `False` | `server/main.py` |
-| `tts.disabled` | ["qwen3"] | `[]` | `server/tts/manager.py` |
+| `tts.disabled` | [] | `[]` | `server/tts/manager.py` |
 | `tts.edge.voice` | "ru-RU-SvetlanaNeural" | `'' / 'ru-RU-SvetlanaNeural' ⚠` | `server/main.py`, `server/tts/manager.py` |
 | `tts.emotion` | true | `True` | `server/tts/manager.py` |
 | `tts.emotion_instruct` | "" | `''` | `server/tts/manager.py` |
 | `tts.enabled` | true | `True` | `server/main.py`, `server/tts/manager.py` |
-| `tts.engine` | "silero" | `— / 'qwen3' / '' ⚠` | `server/cards.py`, `server/main.py`, `server/self_control.py` +2 |
+| `tts.engine` | "qwen3" | `'' / — / 'qwen3' ⚠` | `server/cards.py`, `server/main.py`, `server/self_control.py` +3 |
 | `tts.f5ru.port` | 8771 | `8771` | `server/tts/extra.py` |
 | `tts.f5ru.setup` | "setup/install_f5.bat" | `—` | — |
 | `tts.f5ru.venv` | ".venv_f5" | `—` | — |
@@ -1180,7 +1202,7 @@
 | `vision.camera_autofallback` | true | `True` | `server/vision.py` |
 | `vision.camera_h` | 720 | `720` | `server/vision.py` |
 | `vision.camera_idle_release_s` | 60 | `60` | `server/vision.py` |
-| `vision.camera_index` | -1 | `0` | `server/vision.py` |
+| `vision.camera_index` | 0 | `0` | `server/vision.py` |
 | `vision.camera_probe` | 4 | `4` | `server/vision.py` |
 | `vision.camera_w` | 1280 | `1280` | `server/vision.py` |
 | `vision.debounce` | 2 | `2` | `server/vision.py` |
@@ -1215,8 +1237,9 @@
 | `voiceprint.encoder` | — | `'auto'` | `server/voiceprint/encoder.py` |
 | `voiceprint.group_new_min_s` | — | `1.2` | `server/main.py` |
 | `voiceprint.learn_names` | — | `True` | `server/voiceprint/__init__.py` |
-| `voiceprint.listen_self` | false | `True` | `server/voiceprint/__init__.py` |
+| `voiceprint.listen_self` | true | `True` | `server/voiceprint/__init__.py` |
 | `voiceprint.name_weight` | — | `6.0` | `server/voiceprint/registry.py` |
+| `voiceprint.no_meet_while_media` | — | `True` | `server/voiceprint/__init__.py` |
 | `voiceprint.pitch_band_max` | 1.5 | `1.5` | `server/main.py` |
 | `voiceprint.pitch_group_max` | 4 | `4` | `server/main.py` |
 | `voiceprint.pitch_group_tol` | 0.18 | `0.18` | `server/main.py` |

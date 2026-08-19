@@ -98,8 +98,9 @@ def main() -> int:
                  "командой\n> `python tools/make_modules_map.py`.\n\n")
         fh.write(f"Всего модулей: **{total}**. Проводка (HTTP, WebSocket, "
                  "конвейер ответа) живёт в `server/main.py` —\n"
-                 "он один на 9 тысяч строк, план распила в "
-                 "[ARCHITECTURE.md](../ARCHITECTURE.md).\n\n")
+                 "он один на 9 тысяч строк — навигация по нему в "
+                 "[MAIN_MAP.md](MAIN_MAP.md),\n"
+                 "план распила в [ARCHITECTURE.md](../ARCHITECTURE.md).\n\n")
         for title, rows in out:
             fh.write(f"## {title}\n\n")
             for f, d in rows:

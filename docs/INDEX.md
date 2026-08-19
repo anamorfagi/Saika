@@ -14,6 +14,8 @@
 | [../README.md](../README.md) | Вход: что это, как запустить, где что лежит |
 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | Устройство и план распила `main.py` |
 | [../server/MODULES.md](../server/MODULES.md) | Карта всех модулей (собирается из докстрингов) |
+| [../server/MAIN_MAP.md](../server/MAIN_MAP.md) | Навигация по `main.py`: разделы, ручки, большие куски |
+| [../tests/README.md](../tests/README.md) | Прогон логики без зависимостей и правило «поймал — оставь проверку» |
 | [../PLAN_BUILD.md](../PLAN_BUILD.md) | Что закрыть до рабочего билда: критерий и пять этапов |
 | [../ROADMAP.md](../ROADMAP.md) | Куда проект растёт дальше |
 | [../PHILOSOPHY.md](../PHILOSOPHY.md) | Принципы: почему решения приняты так |
