@@ -4617,7 +4617,29 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
         _cap = int(CFG.get("llm.cloud.context_chars", 9000))
         try:
             from server.llm import brains as _br
-            _win = _br.window_chars_of(CFG.get("llm.model", ""))
+            # ОКНО МЕРЯЕМ У ТОЙ МОДЕЛИ, В КОТОРУЮ РЕАЛЬНО ПОЙДЁМ
+            # (2026-08-19). Здесь стояло llm.model — имя ЛОКАЛЬНОЙ модели
+            # («google/gemma-4-e4b»). Для облачного маршрута оно незнакомо
+            # таблице окон, _win выходил 0, и потолок навсегда оставался
+            # 9000 символов — при системном промпте в 16.6к это значит
+            # «истории нет вовсе», история падала на пол в 1500 символов.
+            # Вот откуда весь день «она забывает нить и отвечает странно»,
+            # хотя у GigaChat-2-Pro окно 128 тысяч токенов.
+            _cm = ""
+            try:
+                _pb = locals().get("_prefer_brain") or globals().get(
+                    "_prefer_brain")
+                if _pb and _pb[0] == "cloud":
+                    _cm = _pb[1]
+            except Exception:
+                pass
+            if not _cm:
+                _cb, _cm2 = _br.current()
+                _cm = _cm2 if _cb == "cloud" else ""
+            if not _cm:
+                _cm = (CFG.get("llm.cloud", {}) or {}).get("model", "")
+            _win = _br.window_chars_of(_cm) or _br.window_chars_of(
+                CFG.get("llm.model", ""))
             if _win:
                 # 70% окна — остальное системе провайдера, инструментам и
                 # самому ответу. Занять окно целиком = получить молчаливую
@@ -4627,7 +4649,10 @@ def run_dialog(user_text: str, out: "queue.Queue", stop_event: threading.Event,
                     "llm.cloud.context_chars_max", 40000))))
         except Exception:
             pass
-        budget = min(budget, _cap)
+        if _cap < budget:
+            budget = _cap
+            budget_src = ("потолок облака llm.cloud.context_chars=%s "
+                          "(модель «%s»)" % (_cap, _cm or "?"))
     # размер схем инструментов (шаблон впишет их в промпт помимо system)
     tools_chars = 0
     try:
