@@ -286,16 +286,32 @@ _RATE_S = 60          # «слишком часто спрашиваешь» —
 _RATE_RE = re.compile(r'\b429\b|rate[ _-]?limit|too many requests|quota',
                       re.I)
 
+# «СНЯТ С ПРОИЗВОДСТВА» — ЭТО НЕ «НЕ ОТВЕТИЛ» (2026-08-19, живой лог).
+# GitHub Models отдал 410 «github_models_retirement_brownout» — сервис
+# выключают насовсем. Мы уводили его на 10 минут, он возвращался в
+# лестницу, снова забирал руки, снова падал — и так каждый ход: команда
+# «открой Пинтерест» умерла на пустом месте, потому что за рулём сидел
+# труп. Отключённый бэкенд ждём не минуты, а до перезапуска Сайки.
+_GONE_S = 30 * 24 * 3600
+_GONE_RE = re.compile(
+    r'\b410\b|retirement|brownout|decommission|sunset|'
+    r'(has been|is) (retired|removed|discontinued|deprecated)|'
+    r'no longer (available|supported)', re.I)
+
 
 def note_fail(backend: str, model: str, why: str = ""):
     """Мозг не ответил — уводим его из лестницы. Насколько — по причине:
     перебор запросов это «занят», всё остальное — «сломан»."""
-    rate = bool(_RATE_RE.search(str(why or "")))
-    wait = _RATE_S if rate else _SICK_S
+    text = str(why or "")
+    if _GONE_RE.search(text):
+        wait, human = _GONE_S, "выключен насовсем — больше не зову"
+    elif _RATE_RE.search(text):
+        wait, human = _RATE_S, "перебор запросов — вернусь к нему"
+    else:
+        wait, human = _SICK_S, "не ответил"
     _SICK[(backend, model)] = time.time() + wait
     log.info("Мозг %s/%s отложен на %dс (%s): %s", backend, model, wait,
-             "перебор запросов — вернусь к нему" if rate else "не ответил",
-             str(why)[:120])
+             human, text[:120])
 
 
 def is_sick(backend: str, model: str) -> bool:
@@ -431,6 +447,28 @@ def for_hands(min_rank: int = 7) -> dict | None:
         return None
     # среди годных — по задержке (0 = ещё не мерили, такие вперёд не лезут)
     good.sort(key=lambda c: (c["lat"] or 5.0, -c["rank"]))
+
+    # ВТОРУЮ ЛОКАЛЬНУЮ МОДЕЛЬ В ПАМЯТЬ РАДИ РУК НЕ ПОДНИМАЕМ (2026-08-19).
+    # Живой случай: облака отвалились (GitHub Models выключен), и руки ушли
+    # на lmstudio/zai-org/glm-4.6v-flash — а разговор в это время жил в
+    # llama.cpp. LM Studio грузит модель по первому же запросу, и в
+    # 16 ГБ VRAM встали ДВЕ модели разом (6.2 + 5.3 ГБ) рядом с голосом,
+    # слухом и аватаром. Владелец: «какого хера он грузит 2 LLM
+    # одновременно». Защита llm.keep_only_one тут не срабатывала: она
+    # живёт в switch_model, а этот путь идёт мимо него.
+    # Правило: руки — облаку или ТОМУ ЖЕ движку, в котором уже сидит мозг.
+    if (CFG.get("llm.keep_only_one", True)
+            and not CFG.get("llm.hands_local_second", False)):
+        cb, cm = current()
+        safe = [c for c in good
+                if c["backend"] == "cloud"
+                or (c["backend"], c["model"]) == (cb, cm)]
+        if safe:
+            return safe[0]
+        log.info("Руки: подходит только %s/%s, но это вторая локальная "
+                 "модель в память — остаюсь на %s (VRAM дороже)",
+                 good[0]["backend"], good[0]["model"], cm)
+        return None
     return good[0]
 
 

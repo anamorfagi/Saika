@@ -751,6 +751,72 @@ def warmup(backend: str, model: str) -> bool:
         return False
 
 
+# ВЫГРУЗКА ИЗ LM STUDIO (2026-08-19). Ручки /api/v1/models/unload у LM
+# Studio нет — она отдаёт 404, и мы девять раз подряд писали в лог
+# «нужна свежая версия», а 6.2 ГБ VRAM продолжали висеть занятыми рядом с
+# llama.cpp. Настоящий способ один: консоль lms (LM Studio → Developer →
+# Install CLI). REST оставлен вторым шансом на случай, что ручку вернут.
+_LMS_MISS = {"logged": False}
+
+
+def _lms_cli() -> str:
+    """Путь к консоли lms: конфиг → переменная среды → PATH → стандартные
+    места установки LM Studio."""
+    import os
+    import shutil
+    home = os.path.expanduser("~")
+    for p in (CFG.get("lmstudio.cli", ""), os.environ.get("LMS_PATH", ""),
+              os.path.join(home, ".lmstudio", "bin", "lms.exe"),
+              os.path.join(home, ".lmstudio", "bin", "lms.cmd"),
+              os.path.join(home, ".lmstudio", "bin", "lms"),
+              os.path.join(home, ".cache", "lm-studio", "bin", "lms.exe")):
+        if p and os.path.isfile(p):
+            return p
+    return shutil.which("lms") or ""
+
+
+def _lmstudio_unload(model: str) -> bool:
+    import subprocess
+    cli = _lms_cli()
+    if cli:
+        # сначала точечно, потом «всё» — имя ключа модели в lms может
+        # отличаться от имени в OpenAI-совместимом списке, и тогда точечная
+        # выгрузка не находит цель, а память надо освободить всё равно
+        for args in ([cli, "unload", model], [cli, "unload", "--all"]):
+            try:
+                r = subprocess.run(
+                    args, capture_output=True, text=True, timeout=60,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if r.returncode == 0:
+                    log.info("Модель %s выгружена (%s)", model,
+                             " ".join(args[1:]))
+                    _LMS_MISS["logged"] = False
+                    return True
+                log.debug("lms %s: %s", " ".join(args[1:]),
+                          (r.stderr or r.stdout or "")[:200])
+            except Exception as e:
+                log.debug("lms %s не отработал: %s", " ".join(args[1:]), e)
+    for path, payload in (("/api/v1/models/unload", {"instance_id": model}),
+                          ("/api/v0/models/unload", {"model": model})):
+        try:
+            r = requests.post(_lmstudio_url() + path, json=payload, timeout=30)
+            if r.ok:
+                log.info("Модель %s выгружена (LM Studio %s)", model, path)
+                _LMS_MISS["logged"] = False
+                return True
+        except Exception:
+            pass
+    if not _LMS_MISS["logged"]:
+        _LMS_MISS["logged"] = True
+        log.warning(
+            "LM Studio держит %s в памяти, а выгрузить нечем: консоли lms не "
+            "нашла (LM Studio → Developer → Install CLI, либо пропиши путь в "
+            "config lmstudio.cli), ручки выгрузки по HTTP в этой сборке тоже "
+            "нет. Пока — выгружай в самом LM Studio; повторяться в логе не "
+            "буду.", model)
+    return False
+
+
 def unload_model(backend: str, model: str) -> bool:
     """Выгружает модель из памяти.
     Ollama — keep_alive=0. LM Studio — REST API v1 (/api/v1/models/unload,
@@ -780,16 +846,7 @@ def unload_model(backend: str, model: str) -> bool:
         except Exception as e:
             log.warning("LocalLM: выгрузка не удалась: %s", e)
             return False
-    try:
-        r = requests.post(_lmstudio_url() + "/api/v1/models/unload",
-                          json={"instance_id": model}, timeout=30)
-        r.raise_for_status()
-        log.info("Модель %s выгружена (LM Studio)", model)
-        return True
-    except Exception as e:
-        log.warning("LM Studio: выгрузка %s не удалась (нужна свежая версия "
-                    "с REST API v1 /models/unload): %s", model, e)
-        return False
+    return _lmstudio_unload(model)
 
 
 def delete_model(backend: str, model: str) -> str:
