@@ -2708,6 +2708,18 @@ def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
             return ("Поиск вкладки по названию есть только в Chrome и Edge, "
                     f"а тут «{where}». Могу перейти по номеру.")
         query, known = _canon_tab_name(name)
+        # СНАЧАЛА ТОЧНЫЙ КЛИК ПО ВКЛАДКЕ (2026-08-19). UI Automation видит
+        # вкладки по именам — значит, можно не искать вслепую поиском
+        # Chrome, а ткнуть ровно в ту. Поиском пользуемся, только если
+        # дерево окна недоступно.
+        try:
+            from server import ui_hands as _uht
+            _r = _uht.pick_tab(name, int(index or 1))
+            if _r and _r.startswith("Перешла"):
+                return _r
+            log.debug("точный клик по вкладке не вышел: %s", _r)
+        except Exception as _pe:
+            log.debug("вкладки через UIA недоступны: %s", _pe)
         hwnd = int(w["hwnd"]) if w else 0
         before = _title_of(hwnd) if hwnd else ""
         keyboard.send("ctrl+shift+a")

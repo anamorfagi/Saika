@@ -296,7 +296,11 @@ _PC_SCHEMAS = [
                         "(site=\"пинтерест\" или url); new — именно НОВАЯ "
                         "вкладка, зови только если человек прямо просит "
                         "создать/открыть ещё одну. Плюс close, next, prev, "
-                        "go (по номеру). Назвали экран («на втором экране») "
+                        "go (по номеру ленты — почти всегда НЕ то, что "
+                        "человек имеет в виду: сперва посмотри tabs_list). "
+                        "При find index — какая из ПОДХОДЯЩИХ вкладок нужна: "
+                        "«первая ютубовская» = name=\"youtube\", index=1. "
+                        "Назвали экран («на втором экране») "
                         "— передай screen=2, иначе попаду не в то окно. Без "
                         "screen продолжаю в том окне, где мы работали."),
         "parameters": {"type": "object", "properties": {
@@ -473,6 +477,14 @@ _UIH_SCHEMAS = [
             "double": {"type": "boolean",
                        "description": "двойной клик, по умолчанию нет"}},
             "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "tabs_list",
+        "description": ("Показать вкладки окна ПО НАЗВАНИЯМ, по порядку. "
+                        "Зови, когда человек говорит «первая вкладка "
+                        "ютуба», «та, где почта», «вторая такая» — номер он "
+                        "почти всегда считает среди СВОИХ вкладок, а не в "
+                        "ленте, и вслепую по Ctrl+N ты промахнёшься."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "dictate_into",
         "description": ("Перевести взгляд на поле ввода и ЖДАТЬ, что человек "
@@ -2222,6 +2234,8 @@ def _call(name: str, arguments) -> str:
                                  bool(a.get("double")))
             if name == "keyboard_type":
                 return _uh.type_text(str(a.get("text", "")))
+            if name == "tabs_list":
+                return _uh.list_tabs()
             if name == "dictate_into":
                 return _uh.aim_field(str(a.get("field", "")),
                                      bool(a.get("clear", True)),

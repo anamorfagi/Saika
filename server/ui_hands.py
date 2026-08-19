@@ -789,6 +789,92 @@ def _click_impl(q: str, double: bool) -> str:
         return f"Нашла «{nm}», но кликнуть не смогла: {e}"
 
 
+def list_tabs() -> str:
+    """Список вкладок браузера ПО ИМЕНАМ (2026-08-19).
+
+    Живой провал: «открой первую вкладку Ютуба» -> она нажала Ctrl+1 и
+    открыла почту. Ctrl+N считает вкладки по порядку в ленте, а человек
+    считает их среди СВОИХ, по названию: «первая ютубовская». Сама Сайка
+    в том же разговоре сказала правильную вещь: «лучше бы был какой-то
+    визуальный маркер, чтобы я не путалась между вкладками».
+
+    UI Automation отдаёт вкладки как TabItem с настоящими заголовками —
+    значит, можно не гадать, а видеть. Работает в любом окне с вкладками,
+    не только в браузере."""
+    return _guarded(_list_tabs_impl, "перечислить вкладки")
+
+
+def _tab_items(win):
+    out = []
+    for nm, ct, el in _elements(win, limit=200):
+        if ct == "TabItem" and nm:
+            out.append((nm, el))
+    return out
+
+
+def _list_tabs_impl() -> str:
+    win, err = _uia_window()
+    if win is None:
+        return f"Не вижу дерева окна ({err}) — вкладки перечислить нечем."
+    items = _tab_items(win)
+    if not items:
+        return ("Вкладок в этом окне не вижу. Возможно, впереди не браузер "
+                "или окно ещё не отрисовалось.")
+    lines = [f"{i + 1}. {nm[:70]}" for i, (nm, _e) in enumerate(items)]
+    return ("вкладки этого окна по порядку:\n" + "\n".join(lines)
+            + "\nЧтобы перейти — tab_control(action=\"find\", name=…) с "
+              "куском НАЗВАНИЯ, а не с номером: номер человек почти всегда "
+              "имеет в виду среди СВОИХ вкладок, а не в ленте.")
+
+
+def pick_tab(query: str = "", nth: int = 1) -> str:
+    """Перейти на вкладку по КУСКУ НАЗВАНИЯ. nth — какая из подходящих
+    (1 — первая). Клик по самой вкладке, а не горячая клавиша: так не
+    промахнёшься мимо счёта."""
+    return _guarded(lambda: _pick_tab_impl(query, nth), "перейти на вкладку")
+
+
+def _pick_tab_impl(query: str, nth: int) -> str:
+    from server import highlight
+    win, err = _uia_window()
+    if win is None:
+        return f"не вижу дерева окна ({err})"
+    items = _tab_items(win)
+    if not items:
+        return "вкладок в этом окне не вижу"
+    q = (query or "").strip().lower()
+    hits = items
+    if q:
+        from server.pc_control import _canon_tab_name, _score
+        canon, _known = _canon_tab_name(q)
+        cl = canon.lower()
+        hits = [(nm, el) for nm, el in items
+                if cl in nm.lower() or q in nm.lower()
+                or _score(nm, canon) >= 55]
+    if not hits:
+        lst = "; ".join(f"«{nm[:40]}»" for nm, _e in items[:8])
+        return (f"вкладки со словом «{query}» тут нет. Открыты: {lst}. "
+                "Назови точнее — или скажи «открой сайт», и я открою адресом")
+    n = max(1, int(nth or 1))
+    nm, el = hits[min(n, len(hits)) - 1]
+    try:
+        el.click_input()
+        time.sleep(0.2)
+    except Exception as e:
+        return f"нашла вкладку «{nm[:50]}», но кликнуть не смогла: {e}"
+    try:
+        r = el.rectangle()
+        highlight.show((int(r.left), int(r.top), int(r.right - r.left),
+                        int(r.bottom - r.top)), f"вкладка: {nm[:30]}",
+                       ms=8000)
+    except Exception as e:
+        log.debug("подсветка вкладки: %s", e)
+    tail = ""
+    if q and len(hits) > 1:
+        tail = f" (подходящих было {len(hits)}, взяла {n}-ю)"
+    return f"Перешла на вкладку «{nm[:60]}»{tail}."
+
+
 def aim_field(field: str = "", clear: bool = True,
               submit: bool = False) -> str:
     """Перевести взгляд на поле ввода и ЖДАТЬ, что человек продиктует.
