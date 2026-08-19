@@ -1107,12 +1107,17 @@ SCHEMAS = [
                         "сейчас и получить описание того, что там. Зови "
                         "ТОЛЬКО когда человек прямо просит посмотреть на "
                         "экран или спрашивает, что у него открыто. Никогда — "
-                        "по своей инициативе."),
+                        "по своей инициативе. ЕСЛИ ЧЕЛОВЕК НАЗВАЛ ЭКРАН "
+                        "(«на втором экране», «справа», «на другом мониторе») "
+                        "— ОБЯЗАТЕЛЬНО передай monitor, иначе снимешь первый "
+                        "и ответишь про чужой экран. monitor считается как у "
+                        "людей: 1 — первый, 2 — второй; 0 или -1 — все разом."),
         "parameters": {"type": "object", "properties": {
             "question": {"type": "string",
                          "description": "что именно нужно разглядеть"},
             "monitor": {"type": "integer",
-                        "description": "номер дисплея, если их несколько"}},
+                        "description": "номер экрана по-человечески: 1, 2, "
+                                       "3…; -1 — все сразу"}},
             "required": []}}},
     {"type": "function", "function": {
         "name": "look_camera",
@@ -1127,6 +1132,38 @@ SCHEMAS = [
             "required": []}}},
 ]
 NAMES = {"look_screen", "look_camera"}
+
+
+# КАКОЙ ЭКРАН СНИМАЕМ (2026-08-19, живой разбор).
+# «А что ты видишь на втором экране?» -> «Второй экран пуст» -> «вот ты мне
+# врёшь». Она не врала: monitor модель не передавала вовсе, и кадр всегда
+# снимался с первого дисплея. Плюс нумерация расходилась: внутри дисплеи
+# считаются с нуля (vision.monitor=0 — это ПЕРВЫЙ), а человек и модель
+# говорят «второй». Теперь на границе инструмента переводим по-людски и
+# ГОВОРИМ ВСЛУХ, какой экран сняли, — тогда ошибка видна сразу, а не
+# выглядит как враньё.
+def _pick_monitor(arg) -> tuple:
+    """Номер от модели -> (внутренний индекс, как назвать вслух)."""
+    mons = list_monitors()
+    real = [m for m in mons if int(m.get("id", 0)) >= 0]
+    n = len(real) or 1
+    if arg is None or arg == "":
+        mon = int(CFG.get("vision.monitor", 0))
+    else:
+        try:
+            mon = int(arg)
+        except Exception:
+            mon = int(CFG.get("vision.monitor", 0))
+        if mon < 0:
+            return -1, "все экраны разом"
+        if mon == 0:
+            mon = int(CFG.get("vision.monitor", 0))
+        else:
+            mon = mon - 1          # человек считает с единицы
+    if mon >= n:
+        return min(mon, n - 1), (f"экран {min(mon, n - 1) + 1} (просили "
+                                 f"{mon + 1}-й, а всего их {n})")
+    return max(0, mon), f"экран {max(0, mon) + 1} из {n}"
 
 
 LAST_ERR = {"why": ""}       # почему не вышло посмотреть — для честного ответа
@@ -1271,8 +1308,13 @@ def call(name: str, arguments) -> str:
                     "банк, пароли или приватный просмотр. Кадр НЕ сделан. "
                     "Скажи честно и предложи переключить окно.")
     try:
+        _seen = ""
         if name == "look_screen":
-            img = grab_screen(arguments.get("monitor"))
+            _mon, _seen = _pick_monitor(
+                arguments.get("monitor", arguments.get("screen")))
+            log.info("Зрение: смотрю %s (monitor=%s от модели)", _seen,
+                     arguments.get("monitor", arguments.get("screen")))
+            img = grab_screen(_mon)
         else:
             img = grab_camera(arguments.get("camera"))
         url = to_data_url(img)
@@ -1289,5 +1331,5 @@ def call(name: str, arguments) -> str:
                     "выдумывай.")
         return ("кадр сделан, но описать некому: ни у текущей модели, ни у "
                 "кого в парке сейчас нет зрения. Скажи честно.")
-    where = "на экране" if name == "look_screen" else "в камере"
+    where = ("на " + (_seen or "экране")) if name == "look_screen" else "в камере"
     return f"я посмотрела {where} и вижу: {txt}"
