@@ -78,6 +78,14 @@ def _drop_extra() -> bool:
 def _drop_voice() -> bool:
     from server import tts
     ST["tts_was"] = str(CFG.get("tts.engine", "") or "")
+    # ГАСИТЬ НЕЧЕГО — НЕ СЧИТАЕМ ЭТО СТУПЕНЬЮ (2026-08-19, живой лог:
+    # «выключила ОЗВУЧКУ (выгружено движков: 0)» — голос уже был выключен
+    # прошлой разгрузкой, а ступень засчиталась и съела ход. Пустой шаг
+    # только оттягивает настоящую помощь.)
+    if not (getattr(tts, "engines", {}) or {}) and \
+            str(CFG.get("tts.engine", "")) in ("", "off", "none"):
+        log.info("Ступень «озвучка» пропущена: гасить нечего")
+        return False
     n = 0
     for name in list(getattr(tts, "engines", {}) or {}):
         try:
@@ -222,7 +230,11 @@ def _down(now: float):
     fn = DOWN.get(ST["level"])
     if fn:
         try:
-            fn()
+            if fn() is False and ST["level"] < 4:
+                # шаг оказался пустым — сразу пробуем следующий, иначе
+                # железу придётся ждать ещё один круг сторожа
+                ST["ts"] = now - float(CFG.get("guard.step_s", 12)) - 1
+                _down(now)
         except Exception as e:
             log.warning("ступень %s не сработала: %s", ST["level"], e)
 
