@@ -890,6 +890,18 @@ def _process(win: np.ndarray, rms: float):
     if S.enroll_name and not getattr(S, "enroll_paused", False):
         S.enroll_buf.append(emb)
         who = S.enroll_name                # свои же точки красим сразу
+        # ПАСПОРТ ГОЛОСА ведёт человека по шагам и сам решает, когда шаг
+        # засчитан (см. voiceprint/passport.py). Обычная запись эталона
+        # этого не знает и закрывается по счётчику, как раньше.
+        try:
+            from server.voiceprint import passport as _pp
+            if _pp.active():
+                _pp.note(emb, rms, f0)
+                ev = _pp.tick()
+                if ev:
+                    _emit({"type": "voiceprint_passport", **ev})
+        except Exception as e:
+            log.debug("паспорт голоса: %s", e)
         _emit(_enroll_event())
         if len(S.enroll_buf) >= S.enroll_need:
             enroll_finish()

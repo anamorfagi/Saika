@@ -521,6 +521,18 @@ class Registry:
             c, mu, sd = self._prof(name)
             s = cosine(e, c)
             thr = max(floor, mu - 2.5 * sd)
+            # ПОРОГ ИЗ ПАСПОРТА (2026-08-19). Общее правило mu-2.5sd берёт
+            # разброс ТОЛЬКО своих точек и ничего не знает о том, как
+            # близко подходят чужие. Паспорт голоса считает границу по
+            # обеим сторонам сразу (см. voiceprint/passport.py) — если она
+            # есть, слушаем её: это тот же человек, но проверенный против
+            # остальных, а не сам против себя.
+            own = v.get("thr")
+            if own is not None:
+                try:
+                    thr = max(floor, float(own))
+                except Exception:
+                    pass
             conf = (s - thr) / max(mu - thr, 1e-6)
             conf = float(np.clip(conf, 0.0, 1.0))
             if s > best[1]:

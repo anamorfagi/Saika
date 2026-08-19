@@ -1487,6 +1487,22 @@ def voiceprint_enroll(payload: dict):
     return voiceprint.enroll_cancel()
 
 
+@app.post("/api/voiceprint/passport")
+def api_voiceprint_passport(payload: dict = None):
+    """Паспорт голоса: знакомство по шагам с проверкой каждого куска и
+    СВОИМ порогом в конце (2026-08-19, просьба владельца: «хочу, чтобы она
+    гарантированно понимала, с кем говорит»). action: start | status |
+    cancel."""
+    payload = payload or {}
+    from server.voiceprint import passport
+    act = str(payload.get("action") or "status").lower()
+    if act == "start":
+        return passport.start(str(payload.get("name") or ""))
+    if act == "cancel":
+        return passport.cancel()
+    return {"ok": True, **passport.state()}
+
+
 @app.post("/api/voiceprint/rename")
 def voiceprint_rename(payload: dict):
     """Переименовать голос. По умолчанию имя ЗАКРЕПЛЯЕТСЯ: дальше она только

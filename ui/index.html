@@ -2103,6 +2103,11 @@ function handleJson(m){
     d.textContent='⏳ '+m.text;
     $('#chat').appendChild(d); $('#chat').scrollTop=1e9;
   }
+  else if(m.type==='voiceprint_passport'){
+    // финальный кадр паспорта приходит с ok:true и порогом
+    if(m.ok && m.on === false && window.ppFinal) window.ppFinal(m);
+    else if(window.ppPaint) window.ppPaint(m);
+  }
   else if(m.type==='baymax'){ addBaymax(m); }
   // НУМЕРОВАННАЯ ВЫДАЧА (2026-08-13): список ссылок приходит ОТДЕЛЬНЫМ
   // событием, а не текстом ответа. Смысл ровно в этом: текст ответа уходит
@@ -9237,6 +9242,15 @@ eqFrame();
       '<button class="vp-btn" id="vp-recstop" style="flex:none;width:34px" ' +
         'disabled title="Закончить и сохранить эталон">■</button>' +
     '</div>' +
+    '<button class="vp-btn" id="vp-passport" style="width:100%;margin-top:4px;' +
+      'font-size:12px" title="Знакомство по шагам: обычно, тише, громче, ' +
+      'дальше от микрофона, быстро, счёт, свободная речь. В конце считает ' +
+      'СВОЙ порог узнавания по твоим данным — это то, что превращает ' +
+      '«примерно узнаёт» в «узнаёт»">🎫 Паспорт голоса</button>' +
+    '<div id="vp-pp" style="display:none;font-size:12px;line-height:1.5;' +
+      'margin-top:6px;padding:8px 10px;border-radius:9px;' +
+      'background:rgba(255,154,60,.10);border:1px solid rgba(255,154,60,.32)">' +
+    '</div>' +
     '<div class="vp-dim" id="vp-toolst" style="font-size:10px;padding:0 2px">' +
     '</div>' +
     '<span id="vp-sysst" style="display:none"></span>' +
@@ -9414,6 +9428,62 @@ eqFrame();
     if(!name){ toast('Сначала имя — чей это голос', {kind: 'info'}); return; }
     startEnroll(name);
   }
+  // ПАСПОРТ ГОЛОСА (2026-08-19): знакомство по шагам. Сервер решает, засчитан
+  // ли шаг, и отдаёт следующую фразу; здесь только показываем и тикаем.
+  // Клик ловим делегированием: кнопка живёт внутри панели, которая
+  // перерисовывается целиком, и обычный onclick на ней теряется.
+  let PP = {on:false, t:null};
+  function ppPaint(st){
+    const box = $('#vp-pp'), b = $('#vp-passport');
+    if(!box) return;
+    if(!st || !st.on){
+      box.style.display='none'; PP.on=false;
+      if(PP.t){ clearInterval(PP.t); PP.t=null; }
+      if(b) b.textContent='🎫 Паспорт голоса';
+      return;
+    }
+    PP.on = true; box.style.display='block';
+    box.innerHTML = '<b>Шаг ' + st.step + ' из ' + st.steps_total + '</b>'
+      + (st.repeat ? ' <span style="color:var(--warn)">— повтори, речи не хватило</span>' : '')
+      + '<br>' + esc(st.say || '')
+      + '<div style="margin-top:4px;color:var(--dim)">осталось '
+      + (st.left_s != null ? st.left_s : st.need_s) + 'с · говори, не молчи</div>';
+    if(b) b.textContent='✕ прервать паспорт';
+  }
+  function ppFinal(r){
+    const box = $('#vp-pp'), b = $('#vp-passport');
+    if(!box) return;
+    box.style.display='block';
+    box.innerHTML = '<b>Паспорт готов: ' + esc(r.name||'') + '</b><br>'
+      + 'векторов ' + (r.n || r.vectors || '?') + ' · порог ' + (r.thr ?? '?')
+      + ' · запас ' + (r.gap ?? '?') + '<br><span style="color:var(--dim)">'
+      + esc(r.note || '') + '</span>';
+    if(b) b.textContent='🎫 Паспорт голоса';
+    PP.on=false; if(PP.t){ clearInterval(PP.t); PP.t=null; }
+  }
+  // наружу: обработчик событий WS живёт в другой области видимости
+  window.ppPaint = ppPaint; window.ppFinal = ppFinal;
+  async function ppPoll(){
+    try{
+      const st = await api('/api/voiceprint/passport', {action:'status'});
+      if(st && st.on) ppPaint(st);
+      else if(PP.on){ ppPaint(null); }
+    }catch(e){}
+  }
+  document.addEventListener('click', async (ev)=>{
+    const t = ev.target && ev.target.closest && ev.target.closest('#vp-passport');
+    if(!t) return;
+    if(PP.on){ await api('/api/voiceprint/passport', {action:'cancel'});
+               ppPaint(null); return; }
+    const name = (prompt('Чей голос записываем?', 'Виталя') || '').trim();
+    if(!name) return;
+    const r = await api('/api/voiceprint/passport', {action:'start', name});
+    if(!r || !r.ok){ toast('Паспорт не начался: ' + ((r&&r.error)||'?'),
+                           {kind:'err'}); return; }
+    ppPaint(r);
+    PP.t = setInterval(ppPoll, 1000);
+  });
+
   async function startEnroll(name){
     try{
       await api('/api/voiceprint/enroll', {action: 'start', name, need: 24});
