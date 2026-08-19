@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -475,6 +476,9 @@ def _start(item: dict) -> str:
                 break
     except Exception:
         pass
+    # ПРИЦЕЛ НА ЗАПУЩЕННОЕ: окно может подняться и через пару секунд —
+    # ждём его в фоне и обводим рамкой, ответ при этом не задерживаем.
+    _spot(seen or item["name"], f"запустила: {item['name']}", wait_s=6.0)
     return (f"Запустила {item['name']} — окно «{seen}» уже на экране." if seen
             else f"Запустила {item['name']}, но окна пока не вижу — она может "
                  "грузиться или живёт в трее. Скажи человеку как есть.")
@@ -2209,20 +2213,49 @@ _MEDIA_SAY = {"play": "нажала «играть»", "pause": "постави�
               "louder": "прибавила", "quieter": "убавила"}
 
 
-def _spot(title_part: str, what: str = ""):
-    """Показать рамкой, по какому окну пришлось действие. Пульт и микшер
-    работают БЕЗ фокуса — значит человек иначе и не узнает, куда именно
-    ушла команда."""
-    try:
-        from server import highlight
-        for w in windows(include_minimized=False):
-            if title_part and title_part[:30].lower() in (
-                    w.get("title") or "").lower():
-                highlight.show_window(w, what or "сюда")
-                note_work(w)
+def _spot(title_part: str, what: str = "", wait_s: float = 0.0,
+          proc: str = "") -> bool:
+    """Показать рамкой, по какому окну пришлось действие.
+
+    Нужно даже для мелочей (2026-08-19, владелец: «это можно визуализировать
+    и на маленькие действия — типа она смотрит на определённую папку,
+    которую я прошу открыть»). Пульт, микшер и запуск программ вообще идут
+    БЕЗ фокуса — там человек иначе никак не узнает, куда ушла команда.
+
+    wait_s > 0: окно могло ещё не появиться (только что запустили программу
+    или открыли папку) — ждём его в фоне, не задерживая ответ."""
+    def look() -> bool:
+        try:
+            from server import highlight
+            need = (title_part or "")[:30].lower()
+            for w in windows(include_minimized=False):
+                hay = (w.get("title") or "").lower()
+                pro = (w.get("proc") or "").lower()
+                if _is_self_window(w):
+                    continue
+                if (need and need in hay) or (proc and proc.lower() in pro):
+                    highlight.show_window(w, what or "сюда")
+                    note_work(w)
+                    return True
+        except Exception as e:
+            log.debug("прицел не показался: %s", e)
+        return False
+
+    if look():
+        return True
+    if wait_s <= 0:
+        return False
+
+    def job():
+        end = time.time() + wait_s
+        while time.time() < end:
+            time.sleep(0.35)
+            if look():
                 return
-    except Exception as e:
-        log.debug("прицел не показался: %s", e)
+        log.debug("прицел: окно «%s» так и не появилось", title_part[:40])
+
+    threading.Thread(target=job, daemon=True).start()
+    return False
 
 
 def media_key(action: str = "toggle") -> str:
@@ -3228,6 +3261,11 @@ def open_folder(path: str = "") -> str:
         window_focus(target_dir.name or "проводник")
     except Exception as e:
         log.debug("окно проводника не вышло вперёд: %s", e)
+    # ПРИЦЕЛ НА ПАПКУ: рамка вокруг окна проводника с именем папки — чтобы
+    # человек видел, КУДА она пришла, не вчитываясь в её ответ.
+    _spot(target_dir.name or "проводник",
+          f"папка: {target_dir.name or 'проводник'}", wait_s=2.5,
+          proc="explorer.exe")
     _go(target_dir)                         # запомнили, где стоим
     # что внутри — сразу, чтобы человек мог вести дальше не глядя на экран
     inner = ""

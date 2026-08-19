@@ -120,6 +120,16 @@ def tool_call(arguments) -> str:
     a = arguments or {}
     if isinstance(a, str):
         a = {}
+    # ВИДНО, ОТКУДА ЧИТАЕТ (2026-08-19). Мелкое действие, но человек должен
+    # видеть, с какого экрана она сняла текст, — иначе «я прочитала» звучит
+    # так же, как «я придумала». Номер экрана считаем по-человечески, как в
+    # vision._pick_monitor: 1 — первый.
+    try:
+        from server import highlight
+        _m = a.get("monitor") or a.get("screen")
+        highlight.show_monitor(int(_m) if _m else 1, "читаю текст")
+    except Exception as _he:
+        log.debug("прицел OCR: %s", _he)
     try:
         txt = read_screen(a.get("monitor"))
     except Exception as e:

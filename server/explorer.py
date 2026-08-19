@@ -214,6 +214,15 @@ def _open_new(target: str) -> bool:
                 os.startfile(target)            # noqa: S606
         else:
             subprocess.Popen(["xdg-open", target])
+        # ПРИЦЕЛ НА ОТКРЫТОЕ (2026-08-19): окно появится через мгновение —
+        # обводим его рамкой в фоне, чтобы человек видел, куда она пришла.
+        try:
+            from server import pc_control as _pcs
+            _name = os.path.basename(str(target).rstrip("\\/")) or "проводник"
+            _pcs._spot(_name, f"папка: {_name}", wait_s=3.0,
+                       proc="explorer.exe")
+        except Exception as _se:
+            log.debug("прицел на папку: %s", _se)
         return True
     except Exception as e:
         log.warning("не открыла %s: %s", target, e)
@@ -810,6 +819,10 @@ def start(path: str = "") -> str:
     except Exception as e:
         return f"Не запустилось: {e}"
     _pc.remember_app(p.stem)
+    try:
+        _pc._spot(p.stem, f"запустила: {p.name}", wait_s=6.0)
+    except Exception as _se:
+        log.debug("прицел на запуск: %s", _se)
     return f"Запустила {p.name}."
 
 
