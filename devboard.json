@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-19T01:03:43",
+  "updated": "2026-08-19T12:33:34",
   "items": [
     {
       "id": "s01",
@@ -820,301 +820,6 @@
   ],
   "log": [
     {
-      "ts": "2026-08-15T00:17:54",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:17:55",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:18:03",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:19:40",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:19:52",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:20:01",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:20:19",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:20:46",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:20:58",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:24:36",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:24:38",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:24:46",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:24:57",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:25:27",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:25:49",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:26:18",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:26:53",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:27:10",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:27:23",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:27:53",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:28:13",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:31:09",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:31:28",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:31:47",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:32:12",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:32:45",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:32:52",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:33:16",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:33:22",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T00:33:37",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T01:02:04",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T01:02:27",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T01:02:39",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T11:56:28",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T11:56:31",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T11:56:35",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T11:57:02",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T11:57:07",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T11:57:12",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T12:50:07",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T13:00:51",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T13:00:54",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T13:02:41",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T13:19:26",
-      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T13:19:31",
-      "text": "✓ stt.gigaam: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-08-15T13:20:53",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T13:23:08",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T14:49:26",
-      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T14:49:30",
-      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T14:49:34",
-      "text": "✓ stt.gigaam: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-08-15T14:49:36",
-      "text": "✓ stt.gigaam: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-08-15T14:52:05",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:00:44",
-      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:00:50",
-      "text": "✓ stt.gigaam: движок восстановлен",
-      "kind": "fix"
-    },
-    {
-      "ts": "2026-08-15T15:03:03",
-      "text": "⚠ stt: работаю на faster_whisper",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:04:42",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:04:54",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:21:30",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:21:37",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
       "ts": "2026-08-15T15:21:37",
       "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
       "kind": "problem"
@@ -1818,20 +1523,315 @@
       "ts": "2026-08-19T01:03:43",
       "text": "⚠ llm: переключилась на cloud/GigaChat-2",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T09:49:34",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T09:49:40",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T09:51:28",
+      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T09:52:11",
+      "text": "⚠ llm: выключила ей инструменты; ответы станут вдвое быстрее, поиск и руки возьмёт на себя сервер",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T09:59:41",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:00:25",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:01:42",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:02:18",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:04:38",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:04:38",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:06:53",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:08:19",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:08:46",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:21:34",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:21:40",
+      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:46:30",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:46:30",
+      "text": "⚠ stt: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:47:49",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:48:38",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:48:44",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:49:08",
+      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:49:11",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:55:19",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:56:49",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T10:56:50",
+      "text": "⚠ stt: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:05:13",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:05:13",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:10:32",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:10:40",
+      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:16:51",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:16:56",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:20:33",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:20:39",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:34:37",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:34:37",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:34:55",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:37:38",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:39:17",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:39:20",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:40:20",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:45:16",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:45:16",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:45:38",
+      "text": "⚠ tts.omni: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:46:03",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:46:44",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:46:45",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:47:07",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T11:50:51",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:09:27",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:09:27",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:10:45",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:10:57",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:15:04",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:25:58",
+      "text": "⚠ контекст: подними llamacpp.n_ctx в config.json (сейчас 24576) — правится при ОСТАНОВЛЕННОЙ Сайке, движок стартует с новым окном сам",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:26:05",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:26:17",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:28:48",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:30:23",
+      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-19T12:33:34",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "основной бэкенд не ответил: 410 от https://models.github.ai/inference: {\"error\":{\"code\":\"github_models_retirement_brownout\",\"message\":\"GitHub Models is temporarily unavailable as part of a scheduled retirement brownout.\"}}\n",
-      "count": 514,
+      "text": "основной бэкенд не ответил: 400 от https://api.cloudflare.com/client/v4/accounts/dc53e2c4a12c1fbde30d66faee5f5706/ai/v1: {\"errors\":[{\"message\":\"AiError: Bad input: Error: oneOf at '/' not met, 0 matches: required properties at '/' are 'prompt', Typ",
+      "count": 546,
       "resolved": false,
-      "last": "2026-08-19T01:03"
+      "last": "2026-08-19T12:33"
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
-      "count": 109,
+      "count": 114,
       "resolved": false,
-      "last": "2026-08-14T23:54"
+      "last": "2026-08-19T12:09"
     },
     "tts.edge": {
       "text": "Похоже, что-то с сетью, брат: «edge» не работает — сервис Microsoft (speech.platform.bing.com) недоступен — он неофициальный и режется провайдерами чаще всего. Проверь интернет или VPN.",
@@ -1840,10 +1840,10 @@
       "last": "2026-08-18T20:45"
     },
     "stt": {
-      "text": "основной движок недоступен",
-      "count": 1906,
+      "text": "gigaam: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.",
+      "count": 1909,
       "resolved": false,
-      "last": "2026-08-15T15:03"
+      "last": "2026-08-19T10:56"
     },
     "browser": {
       "text": "browser",
@@ -1877,9 +1877,9 @@
     },
     "stt.gigaam": {
       "text": "«gigaam» упал с незнакомой мне ошибкой.",
-      "count": 20,
-      "resolved": true,
-      "last": "2026-08-15T15:00"
+      "count": 22,
+      "resolved": false,
+      "last": "2026-08-19T10:56"
     },
     "stt.groq_whisper": {
       "text": "«groq_whisper» упал с незнакомой мне ошибкой.",
@@ -1889,9 +1889,9 @@
     },
     "tts.omni": {
       "text": "«omni» упал с незнакомой мне ошибкой.",
-      "count": 46,
+      "count": 48,
       "resolved": false,
-      "last": "2026-08-18T20:45"
+      "last": "2026-08-19T11:45"
     },
     "tts.silero": {
       "text": "«silero» упал с незнакомой мне ошибкой.",
@@ -1900,10 +1900,10 @@
       "last": "2026-08-13T17:46"
     },
     "tts": {
-      "text": "qwen3: qwen3 отключён (нативно роняет процесс на этом ПК). Выбери его в списке голосов — по клику я сниму отключение и попробую загрузить.",
-      "count": 63,
+      "text": "qwen3: cannot import name 'AutoConfig' from 'transformers' (C:\\AI\\Saika\\.venv\\Lib\\site-packages\\transformers\\__init__.py)",
+      "count": 68,
       "resolved": false,
-      "last": "2026-08-18T20:42"
+      "last": "2026-08-19T12:09"
     },
     "stt.faster_whisper": {
       "text": "«faster_whisper» упал с незнакомой мне ошибкой.",
@@ -1913,9 +1913,9 @@
     },
     "контекст": {
       "text": "окно 32768 токенов, а системный промпт с инструментами съедают его почти целиком — на разговор остаётся ~1500 символов, поэтому она забывает нить и отвечает странно",
-      "count": 52,
+      "count": 62,
       "resolved": false,
-      "last": "2026-08-18T20:52"
+      "last": "2026-08-19T12:25"
     },
     "железо": {
       "text": "Перед прошлым выключением: видеопамять 90%. Полная запись — logs/blackbox.prev.jsonl и blackbox.jsonl",

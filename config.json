@@ -6,10 +6,10 @@
     "token": "DRbZ5FaL"
   },
   "llm": {
-    "backend": "cloud",
+    "backend": "llamacpp",
     "ollama_url": "http://127.0.0.1:11434",
     "lmstudio_url": "http://127.0.0.1:1234",
-    "model": "mistral-medium-3-5",
+    "model": "google/gemma-4-e4b",
     "temperature": 0.8,
     "max_history": 14,
     "think": false,
@@ -23,7 +23,9 @@
       "gemma-4-e4b-it",
       "google/gemma-4-12b-qat",
       "llama3.2:latest",
-      "mistral-medium-3-5"
+      "mistral-medium-3-5",
+      "mistral-small-2603",
+      "zai-org/glm-4.6v-flash"
     ],
     "sampling": {
       "enabled": false,
@@ -582,5 +584,8 @@
   "beatbox": {
     "kbd_veto": 0.25,
     "jitter_max": 0.45
+  },
+  "pc": {
+    "highlight_color": "#02a9ac"
   }
 }
