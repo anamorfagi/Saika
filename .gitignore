@@ -5,6 +5,7 @@
 .venv_locallm/
 .venv_locallm_gguf/
 .venv_train/
+.venv_omni/
 
 # модели и кэши — качаются сами (гигабайты)
 models/

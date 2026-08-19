@@ -447,6 +447,21 @@ def site_url(site: str, query: str = "") -> str:
             return ("https://www.google.com/search?q=" +
                     urllib.parse.quote_plus(q + " site:" + s))
         return s if s.startswith("http") else "https://" + s
+    # СЛУХ КОВЕРКАЕТ НАЗВАНИЯ (2026-08-19): «Pintrest», «пинтрест»,
+    # «Pintros» — это всё Пинтерест. Прежде чем сдаваться в гугл-поиск,
+    # спрашиваем у того же разбора по звучанию, что и вкладки.
+    try:
+        from server.pc_control import _canon_tab_name
+        canon, known = _canon_tab_name(s)
+        if known and canon and canon != s:
+            for name, home in _HOME.items():
+                if canon in name.lower() or canon in home.lower():
+                    if q and name in _SITES:
+                        return _SITES[name].format(
+                            q=urllib.parse.quote_plus(q))
+                    return home
+    except Exception:
+        pass
     return ("https://www.google.com/search?q=" +
             urllib.parse.quote_plus((q + " " + s).strip()))
 

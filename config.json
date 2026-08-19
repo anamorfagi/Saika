@@ -590,5 +590,9 @@
   },
   "pc": {
     "highlight_color": "#02a9ac"
+  },
+  "guard": {
+    "step_s": 12,
+    "calm_s": 45
   }
 }
