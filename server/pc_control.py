@@ -2390,6 +2390,49 @@ def _sound_sessions():
     return AudioUtilities.GetAllSessions()
 
 
+_PLAYING = {"ts": 0.0, "val": (False, "")}
+
+
+def audio_playing(cache_s: float = 2.0) -> tuple:
+    """Играет ли сейчас звук из КОЛОНОК и кто именно (2026-08-19).
+
+    Нужно карте голосов: если в комнате человек один, а в наушниках идёт
+    лекция с ютуба, то «новый незнакомый голос» — это диктор, а не гость.
+    Windows считает пик громкости по каждой сессии микшера, поэтому
+    спрашивать можно честно и дёшево. Ответ кэшируем: к нам ходят часто.
+
+    Возвращает (играет ли, чем именно). Не смогли спросить — (False, ""):
+    молчать выгоднее, чем врать «играет» и глушить знакомство навсегда."""
+    if time.time() - _PLAYING["ts"] < cache_s:
+        return _PLAYING["val"]
+    who, loud = "", 0.0
+    try:
+        for sess in _sound_sessions():
+            try:
+                nm = (sess.Process.name() if sess.Process else "").lower()
+                if not nm or "python" in nm:      # своя же озвучка — не в счёт
+                    continue
+                meter = sess._ctl.QueryInterface(_meter_iface())
+                peak = float(meter.GetPeakValue())
+            except Exception:
+                continue
+            if peak > loud:
+                who, loud = nm, peak
+    except Exception as e:
+        log.debug("пики микшера недоступны: %s", e)
+    val = (loud > 0.02, who if loud > 0.02 else "")
+    _PLAYING.update(ts=time.time(), val=val)
+    return val
+
+
+def _meter_iface():
+    try:
+        from pycaw.pycaw import IAudioMeterInformation
+    except ImportError:
+        from pycaw.api.endpointvolume import IAudioMeterInformation
+    return IAudioMeterInformation
+
+
 def app_volume(app: str, percent=None, delta=None, mute=None) -> str:
     """Громкость ОДНОЙ программы через микшер Windows."""
     if not _IS_WIN:

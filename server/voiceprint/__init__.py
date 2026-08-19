@@ -905,11 +905,30 @@ def _process(win: np.ndarray, rms: float):
                 _apply_name(who, nm, w)
                 S.addr.remove((nm, ts, frm, w))
     elif not S.enroll_name and CFG.get("voiceprint.auto_meet", True):
-        # незнакомый голос: копим, и если он устойчив — знакомимся сами
-        S.unk.append(emb)
-        del S.unk[:-40]
+        # ИЗ КОЛОНОК — НЕ ГОСТЬ (2026-08-19, живой вечер: владелец один в
+        # комнате, в наушниках лекция с ютуба — а в карте голосов завелись
+        # «Голос 2» и «Голос 3». Это диктор из ролика: слух его честно
+        # слышит, но человеком в комнате он не является). Пока из микшера
+        # идёт звук чужой программы, новых знакомств не заводим —
+        # узнавание УЖЕ знакомых при этом работает как раньше.
+        _from_speakers = False
+        if CFG.get("voiceprint.no_meet_while_media", True):
+            try:
+                from server import pc_control as _pcm
+                _from_speakers, _src = _pcm.audio_playing()
+                if _from_speakers:
+                    S.unk = S.unk[-10:]
+                    log.debug("знакомство отложено: играет %s", _src)
+            except Exception as e:
+                log.debug("проверка «играет ли звук» пропущена: %s", e)
+        # незнакомый голос: копим, и если он устойчив — знакомимся сами.
+        # Точки на карту при этом ложатся как обычно (ниже) — молчит только
+        # знакомство, чтобы диктор из ролика не стал «Голосом 2».
+        if not _from_speakers:
+            S.unk.append(emb)
+            del S.unk[:-40]
         need = int(CFG.get("voiceprint.auto_meet_n", 22))
-        if len(S.unk) >= need:
+        if not _from_speakers and len(S.unk) >= need:
             X = np.vstack(S.unk)
             c = X.mean(axis=0)
             c = c / max(1e-9, float(np.linalg.norm(c)))
