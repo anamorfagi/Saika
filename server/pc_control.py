@@ -578,6 +578,47 @@ def _asked_by_human(q: str) -> bool:
     return False
 
 
+_WANT_NEW = re.compile(
+    r"ещ[её]\s+(один|одно|одну)|нов(ое|ый|ую)\s+(окно|копи|экземпляр|вкладк)|"
+    r"втор(ой|ое)\s+(экземпляр|окно|копи)|заново|перезапусти|"
+    r"отдельн(ое|ый)\s+окно", re.I)
+
+
+def _already_open(q: str) -> dict:
+    """Окно этой программы уже на столе? (2026-08-19, третий заход подряд:
+    «открой Google Chrome» -> запускается ВТОРОЙ экземпляр, Windows
+    показывает выбор профиля из девяти штук, человек орёт «нахрена?».)
+
+    Человек, говоря «открой Хром», когда Хром открыт, имеет в виду
+    «покажи его». Плодить копии — это отдельная просьба, и она звучит
+    отдельными словами."""
+    if not q:
+        return {}
+    ql = q.lower().replace(".exe", "")
+    head = ql.split()[0] if ql.split() else ql
+    best = None
+    for w in windows(include_minimized=True):
+        if _is_self_window(w):
+            continue
+        proc = (w.get("proc") or "").lower().replace(".exe", "")
+        title = (w.get("title") or "").lower()
+        hit = (proc and (proc in ql or ql in proc or head in proc)
+               or (len(head) > 3 and head in title))
+        if not hit:
+            try:
+                hit = _score(w.get("title", ""), q) >= 65
+            except Exception:
+                hit = False
+        if not hit:
+            continue
+        # её пустышка about:blank — в последнюю очередь
+        blank = title.strip().startswith("about:blank")
+        rank = (blank, bool(w.get("minimized")), not w.get("front"))
+        if best is None or rank < best[0]:
+            best = (rank, w)
+    return best[1] if best else {}
+
+
 def launch(query: str) -> str:
     # запоминаем, ЧЕМ занимались: следом человек скажет «подними ЕГО»
     remember_app(query)
@@ -659,6 +700,16 @@ def launch(query: str) -> str:
                 "запускать программы по своей догадке нельзя. Скажи ему "
                 "честно, что не поняла, ЧЕМ открыть, и спроси одним "
                 "коротким вопросом.")
+
+    # 0б. УЖЕ ОТКРЫТО — ПОКАЗЫВАЕМ, А НЕ ПЛОДИМ ВТОРУЮ КОПИЮ. Отдельная
+    # просьба «ещё одно окно» слышна отдельными словами (см. _WANT_NEW).
+    if not _WANT_NEW.search(_phrase() or ""):
+        _w = _already_open(q)
+        if _w:
+            log.info("«%s» уже открыт — вывожу вперёд, а не запускаю", q)
+            return (window_focus(_w.get("title", "")[:40])
+                    + " Он уже был открыт — вторую копию не запускала. "
+                      "Нужна именно новая — скажи «ещё одно окно».")
 
     # 1. ВЫУЧЕННОЕ
     if mem:
