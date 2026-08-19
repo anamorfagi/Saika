@@ -84,8 +84,25 @@ def vision(model: str):
     return None
 
 
+# МОДЕЛИ, КОТОРЫЕ «ВЫЗЫВАЮТ» ИНСТРУМЕНТЫ СЛОВАМИ (2026-08-19).
+# GigaChat не умеет настоящих tool-calls и вместо отказа сочиняет отчёт:
+# «Окно с элементами управления успешно создано», «Операция прошла
+# успешно», «Перешла на вкладку Pintros» — при том, что ничего не
+# происходило. Хуже того, как «самый умный из живых» он забирал себе
+# агент-цикл и командовал руками: за один вечер запустил владельцу
+# After Effects и лаунчер игры, которых тот не просил.
+#
+# Болтать он может сколько угодно — это его сильная сторона. Руки — нет.
+# Вернуть можно: llm.trust_liars=true в конфиге.
+_LIARS = ("gigachat",)
+
+
 def tools_ok(model: str) -> bool:
-    return model not in set(CFG.get("llm.tools_broken", []))
+    if model in set(CFG.get("llm.tools_broken", [])):
+        return False
+    if CFG.get("llm.trust_liars", False):
+        return True
+    return not any(h in (model or "").lower() for h in _LIARS)
 
 
 def pick_vision_model(models: list, loaded=()):

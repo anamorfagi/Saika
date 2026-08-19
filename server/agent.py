@@ -200,13 +200,22 @@ def _brain():
     есть в арсенале». Цикл — это не болтовня, тут думать надо: берём
     самую сильную живую и БЕСПЛАТНУЮ (лестница платных не отдаёт)."""
     try:
+        from server import capabilities as caps
         from server.llm import brains, skills
+
+        def _fit(b, m):
+            """Цикл ДЕЙСТВУЕТ, а не болтает. Тому, кто инструменты только
+            изображает словами, тут делать нечего (2026-08-19: GigaChat в
+            этой роли запустил владельцу After Effects и лаунчер игры,
+            которых он не просил, и отчитался об успехе)."""
+            return bool(m) and caps.tools_ok(m)
+
         best = skills.best_for("smart", min_score=7)
-        if best:
+        if best and _fit(best["backend"], best["model"]):
             return best["backend"], best["model"]
-        lad = brains.ladder()
-        if lad:
-            return lad[0]["backend"], lad[0]["model"]
+        for c in brains.ladder():
+            if _fit(c["backend"], c["model"]):
+                return c["backend"], c["model"]
     except Exception as e:
         log.debug("умный мозг для цикла не нашёлся: %s", e)
     return "", ""
