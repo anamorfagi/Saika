@@ -1,0 +1,868 @@
+{
+  "_note": "Реестр фич ANAMORF. Единственный источник правды о том, из чего состоит система. Отсюда строятся: галочки компилятора клиентского билда, список модулей в сборке, набор зависимостей, экраны первого запуска и то, что показывается в интерфейсе. Появился новый модуль — он обязан попасть сюда, иначе tools/check_features.py не даст собрать билд. Так лечится болезнь network.py: модуль числился живым в карте, а на него не было ни одной ссылки, и никто этого не замечал два месяца.",
+  "_fields": {
+    "lock": "нельзя выключить — без этого системы нет",
+    "base": "входит в базовый профиль сборки",
+    "dev": "только в билде автора, клиенту не едет никогда",
+    "tier": "free | pro — в каком издании доступна",
+    "level": "stable | beta | lab — насколько на неё можно опираться",
+    "risk": "открывает доступ к машине снаружи — включается только руками",
+    "torch": "тянет за собой torch, +2.9 ГБ к установщику",
+    "pack": "приезжает отдельным архивом, а не лежит в установщике",
+    "mods": "файлы, которые копируются в сборку при включении",
+    "pip": "пакеты, которые ставятся при сборке",
+    "keys": "что спросить у человека при первом запуске"
+  },
+  "groups": [
+    {
+      "id": "core",
+      "title": "Ядро",
+      "note": "снять нельзя",
+      "features": [
+        {
+          "id": "dialog",
+          "title": "Диалог, характер, память",
+          "lock": true,
+          "tier": "free",
+          "blurb": "Разговор, личность, контекст и всё, без чего Сайки просто нет.",
+          "mods": [
+            "main.py",
+            "config.py",
+            "runtime_env.py",
+            "features.py",
+            "packs.py",
+            "persona.py",
+            "prompt_blocks.py",
+            "routing.py",
+            "focus.py",
+            "situation.py",
+            "workflow.py",
+            "agent.py",
+            "reflex.py",
+            "toolbuf.py",
+            "capabilities.py",
+            "model_dossier.py",
+            "gender.py",
+            "tone.py",
+            "cards.py",
+            "lorebook.py",
+            "self_control.py",
+            "self_memory.py",
+            "attention.py",
+            "ratings.py",
+            "recipes.py",
+            "usage.py",
+            "psyche.py",
+            "ui_control.py",
+            "cortex.py",
+            "voice_local.py",
+            "memory/"
+          ],
+          "pip": [
+            "fastapi",
+            "uvicorn[standard]",
+            "websockets",
+            "requests",
+            "numpy",
+            "apscheduler",
+            "chromadb",
+            "psutil"
+          ]
+        },
+        {
+          "id": "heal",
+          "title": "Самопочинка и диагностика",
+          "lock": true,
+          "tier": "free",
+          "blurb": "Объясняет поломки словами и чинит их без человека.",
+          "mods": [
+            "baymax.py",
+            "diagnostics.py",
+            "self_heal.py",
+            "repairs.py",
+            "triage.py",
+            "fallbacks.py",
+            "guard.py",
+            "stage.py",
+            "torch_gate.py",
+            "proc_utils.py",
+            "hear_load.py"
+          ],
+          "pip": []
+        },
+        {
+          "id": "trust",
+          "title": "Доверие и подтверждения",
+          "lock": true,
+          "tier": "free",
+          "blurb": "Когда делает молча, а когда сперва спрашивает. Отправка — только по подтверждению.",
+          "mods": [
+            "trust.py",
+            "send_gate.py"
+          ],
+          "pip": []
+        }
+      ]
+    },
+    {
+      "id": "brains",
+      "title": "Мозги",
+      "features": [
+        {
+          "id": "llm",
+          "title": "Выбор моделей и инструменты",
+          "lock": true,
+          "tier": "free",
+          "blurb": "Лестница выбора модели, вызов инструментов, паспорт модели.",
+          "mods": [
+            "llm/__init__.py",
+            "llm/manager.py",
+            "llm/router.py",
+            "llm/brains.py",
+            "llm/passport.py",
+            "llm/tools.py",
+            "llm/skills.py",
+            "llm/guard.py",
+            "llm/one_local.py"
+          ],
+          "pip": []
+        },
+        {
+          "id": "llamacpp",
+          "title": "Движок llama.cpp + gemma-4-e4b",
+          "base": true,
+          "tier": "free",
+          "blurb": "Запечатана в приложение. Работает офлайн, в том числе на процессоре.",
+          "mods": [
+            "llm/llamacpp.py"
+          ],
+          "pip": [],
+          "mb": 4350,
+          "models": [
+            "gemma-4-e4b.Q4_K_M.gguf"
+          ],
+          "gives": [
+            "Отвечает сразу после установки, без интернета",
+            "Ничего не надо скачивать и настраивать"
+          ]
+        },
+        {
+          "id": "servers",
+          "title": "Ollama и LM Studio",
+          "base": true,
+          "tier": "free",
+          "blurb": "Подключение к своему серверу моделей, если он уже стоит.",
+          "mods": [],
+          "pip": [],
+          "mb": 2,
+          "guide": {
+            "steps": [
+              "Поставь Ollama или LM Studio — они сами поднимут службу.",
+              "Скачай в них модель: ollama pull qwen3:8b, или кнопкой Download.",
+              "ANAMORF увидит её сам, ключ не нужен."
+            ],
+            "where": {
+              "label": "Скачать Ollama",
+              "url": "https://ollama.com/download"
+            }
+          },
+          "gives": [
+            "Любая модель из их библиотеки",
+            "Переключение на лету",
+            "Работает офлайн"
+          ]
+        },
+        {
+          "id": "cloud",
+          "title": "Облачные модели по ключу",
+          "base": true,
+          "tier": "free",
+          "blurb": "Тринадцать провайдеров, у части есть бесплатный тир.",
+          "mods": [
+            "llm/free_tiers.py",
+            "llm/autoconnect.py"
+          ],
+          "pip": [],
+          "mb": 4,
+          "keys": [
+            {
+              "path": "llm.cloud_api_key",
+              "label": "API-ключ",
+              "secret": true,
+              "where": {
+                "label": "Открыть OpenRouter",
+                "url": "https://openrouter.ai/keys"
+              },
+              "steps": [
+                "Заведи аккаунт на openrouter.ai — или GigaChat, Groq, Mistral на выбор.",
+                "Зайди в раздел Keys и нажми Create key.",
+                "Скопируй ключ целиком — второй раз его не покажут.",
+                "Вставь в поле и выбери модель в списке."
+              ],
+              "verify": {
+                "method": "GET",
+                "url": "https://openrouter.ai/api/v1/models"
+              },
+              "coach": [
+                {
+                  "anchor": "field",
+                  "title": "Ключ живёт только здесь",
+                  "text": "Он пишется в secrets.json на этом компьютере и никуда не отправляется, кроме самого провайдера."
+                },
+                {
+                  "anchor": "steps",
+                  "title": "Где его взять",
+                  "text": "У всех провайдеров одинаково: аккаунт, раздел с ключами, кнопка «создать». Ссылка ниже откроет нужную страницу сразу."
+                },
+                {
+                  "anchor": "verify",
+                  "title": "Проверка на месте",
+                  "text": "Не надо гадать, правильный ли ключ — нажми и увидишь ответ провайдера."
+                }
+              ]
+            }
+          ],
+          "gives": [
+            "Тяжёлые задачи уходят в облако, лёгкие остаются дома",
+            "Запасной мозг, когда локальная модель занята",
+            "Счётчик расхода — видно, сколько потрачено"
+          ],
+          "needs": [
+            "Интернет",
+            "Часть провайдеров недоступна из РФ без VPN"
+          ]
+        },
+        {
+          "id": "consult",
+          "title": "Облачный консилиум при поломке",
+          "tier": "pro",
+          "level": "beta",
+          "risk": true,
+          "default": false,
+          "blurb": "Отправляет хвост лога и настройки внешней модели, чтобы та подсказала лечение.",
+          "mods": [
+            "ai_consult.py"
+          ],
+          "pip": [],
+          "mb": 2,
+          "needs": [
+            "Интернет",
+            "Наружу уходит фрагмент лога — включается только вручную"
+          ]
+        },
+        {
+          "id": "locallm",
+          "title": "Свой воркер моделей",
+          "tier": "pro",
+          "level": "lab",
+          "default": false,
+          "torch": true,
+          "pack": true,
+          "blurb": "Запуск HF-моделей своим процессом, без Ollama и LM Studio.",
+          "mods": [
+            "llm/locallm.py"
+          ],
+          "pip": [],
+          "mb": 19000,
+          "needs": [
+            "Много видеопамяти",
+            "Отдельное окружение, приезжает докачкой"
+          ]
+        },
+        {
+          "id": "dreampc",
+          "title": "DreamPC — диффузионная модель",
+          "tier": "pro",
+          "level": "lab",
+          "default": false,
+          "pack": true,
+          "blurb": "LLaDA-8B: текст проявляется целиком, а не по одному слову.",
+          "mods": [
+            "llm/dreampc.py"
+          ],
+          "pip": [],
+          "mb": 15000,
+          "needs": [
+            "~15 ГБ на диске",
+            "Отдельное окружение, приезжает докачкой"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hearing",
+      "title": "Слух",
+      "features": [
+        {
+          "id": "stt",
+          "title": "Распознавание речи",
+          "base": true,
+          "tier": "free",
+          "torch": true,
+          "blurb": "Сам слух: движки, поток, ремонт ослышек, паспорт микрофона.",
+          "mods": [
+            "stt/",
+            "misheard.py",
+            "mic_passport.py"
+          ],
+          "pip": [
+            "sounddevice",
+            "soundfile",
+            "librosa"
+          ],
+          "mb": 1250,
+          "models": [
+            "gigaam-v3"
+          ]
+        },
+        {
+          "id": "draft",
+          "title": "Черновик на лету",
+          "base": true,
+          "tier": "free",
+          "blurb": "Слова появляются, пока точный движок ещё думает.",
+          "mods": [
+            "draft.py"
+          ],
+          "pip": [
+            "vosk"
+          ],
+          "mb": 90
+        },
+        {
+          "id": "denoise",
+          "title": "Шумодав",
+          "base": true,
+          "tier": "free",
+          "blurb": "Отдельная подсистема со сменными движками.",
+          "mods": [
+            "denoise.py"
+          ],
+          "pip": [
+            "noisereduce"
+          ],
+          "mb": 15
+        },
+        {
+          "id": "voiceprint",
+          "title": "Узнавание по голосу",
+          "base": true,
+          "tier": "free",
+          "torch": true,
+          "blurb": "Кто говорит, живая карта голосов, печать владельца.",
+          "mods": [
+            "voiceprint/"
+          ],
+          "pip": [
+            "speechbrain",
+            "umap-learn"
+          ],
+          "mb": 190
+        },
+        {
+          "id": "sound_tags",
+          "title": "Метки звуков",
+          "tier": "pro",
+          "level": "lab",
+          "torch": true,
+          "default": false,
+          "blurb": "Что вообще звучит вокруг — не слова, а события.",
+          "mods": [
+            "hearing.py",
+            "clap_ears.py"
+          ],
+          "pip": [
+            "panns_inference"
+          ],
+          "mb": 2140,
+          "notice": "Веса PANNs под CC BY 4.0 — нужна атрибуция автора в «О программе»."
+        },
+        {
+          "id": "earlog",
+          "title": "Журнал слуха",
+          "tier": "pro",
+          "level": "lab",
+          "default": false,
+          "blurb": "Час записи — на выходе отчёт: какие были звуки и голоса.",
+          "mods": [
+            "earlog.py"
+          ],
+          "pip": [],
+          "mb": 5
+        },
+        {
+          "id": "beat",
+          "title": "Битбокс и карта звуков",
+          "tier": "pro",
+          "level": "lab",
+          "default": false,
+          "blurb": "Перкуссия буквами и кластеры источников звука в доме.",
+          "mods": [
+            "beatbox.py",
+            "sound_map.py"
+          ],
+          "pip": [],
+          "mb": 3
+        },
+        {
+          "id": "script",
+          "title": "Стенограмма",
+          "tier": "pro",
+          "level": "lab",
+          "default": false,
+          "blurb": "Непрерывная расшифровка всего, что слышно.",
+          "mods": [
+            "transcript.py"
+          ],
+          "pip": [],
+          "mb": 4
+        }
+      ]
+    },
+    {
+      "id": "voice",
+      "title": "Голос",
+      "features": [
+        {
+          "id": "tts",
+          "title": "Озвучка",
+          "base": true,
+          "lock": true,
+          "tier": "free",
+          "blurb": "Сменные движки с приоритетом клона и запасными на случай падения.",
+          "mods": [
+            "tts/"
+          ],
+          "pip": [
+            "edge-tts"
+          ],
+          "mb": 68,
+          "notice": "Silero — только пакет v5_cis_base (MIT). Остальные под CC BY-NC, продавать нельзя."
+        },
+        {
+          "id": "clone",
+          "title": "Клон голоса (Qwen3-TTS)",
+          "tier": "pro",
+          "level": "beta",
+          "torch": true,
+          "default": false,
+          "blurb": "Говорит голосом с образца. Требует свободной видеопамяти.",
+          "mods": [],
+          "pip": [
+            "qwen-tts"
+          ],
+          "mb": 7900,
+          "needs": [
+            "~4 ГБ свободной видеопамяти",
+            "Согласие владельца голоса"
+          ],
+          "notice": "Apache-2.0. Клонирование голоса — регуляторный риск: нужно согласие человека."
+        }
+      ]
+    },
+    {
+      "id": "vision",
+      "title": "Зрение",
+      "features": [
+        {
+          "id": "screen",
+          "title": "Экран",
+          "base": true,
+          "tier": "free",
+          "blurb": "Захват, детектор изменений, непрерывное наблюдение.",
+          "mods": [
+            "vision.py"
+          ],
+          "pip": [
+            "opencv-python",
+            "mss",
+            "dxcam"
+          ],
+          "mb": 190
+        },
+        {
+          "id": "ocr",
+          "title": "Чтение текста с экрана",
+          "base": true,
+          "tier": "free",
+          "blurb": "Windows.Media.Ocr — быстрее, чем большая нейросеть.",
+          "mods": [
+            "ocr.py"
+          ],
+          "pip": [
+            "winsdk"
+          ],
+          "mb": 8
+        },
+        {
+          "id": "pdf",
+          "title": "PDF и чертежи",
+          "tier": "free",
+          "default": false,
+          "blurb": "Страница превращается в картинку и уходит в зрение.",
+          "mods": [
+            "pdf_hands.py"
+          ],
+          "pip": [
+            "pymupdf"
+          ],
+          "mb": 45
+        }
+      ]
+    },
+    {
+      "id": "hands",
+      "title": "Руки",
+      "features": [
+        {
+          "id": "pc",
+          "title": "Программы, окна, звук",
+          "base": true,
+          "tier": "free",
+          "blurb": "Каталог из «Пуска», медиа-пульт, окна и мониторы.",
+          "mods": [
+            "pc_control.py",
+            "system_control.py",
+            "app_finder.py",
+            "app_memory.py",
+            "explorer.py",
+            "desk_habits.py",
+            "services.py"
+          ],
+          "pip": [
+            "pywin32",
+            "comtypes",
+            "pycaw"
+          ],
+          "mb": 25
+        },
+        {
+          "id": "uia",
+          "title": "Клики внутри окон",
+          "base": true,
+          "tier": "free",
+          "blurb": "Дерево интерфейса, печать, нажатие клавиш.",
+          "mods": [
+            "ui_hands.py",
+            "dictation.py"
+          ],
+          "pip": [
+            "pywinauto",
+            "uiautomation"
+          ],
+          "mb": 40
+        },
+        {
+          "id": "files",
+          "title": "Файлы в рабочей папке",
+          "base": true,
+          "tier": "free",
+          "blurb": "Заперты в разрешённых корнях — за их пределы не выходит.",
+          "mods": [
+            "file_hands.py"
+          ],
+          "pip": [],
+          "mb": 6
+        },
+        {
+          "id": "glow",
+          "title": "Подсветка цели",
+          "base": true,
+          "tier": "free",
+          "blurb": "Светящийся контур вокруг того, с чем она сейчас работает.",
+          "mods": [
+            "highlight.py"
+          ],
+          "pip": [],
+          "mb": 3
+        },
+        {
+          "id": "hotkeys",
+          "title": "Клавиатурные хоткеи",
+          "tier": "free",
+          "level": "beta",
+          "default": false,
+          "pack": true,
+          "blurb": "Глобальные сочетания клавиш. Требует прав администратора.",
+          "mods": [
+            "hotkeys.py"
+          ],
+          "pip": [
+            "keyboard"
+          ],
+          "mb": 4,
+          "needs": [
+            "Права администратора",
+            "Антивирусы иногда считают перехват клавиш кейлоггером"
+          ]
+        },
+        {
+          "id": "browser",
+          "title": "Свой браузер",
+          "tier": "free",
+          "level": "beta",
+          "default": false,
+          "pack": true,
+          "blurb": "Видимый Chromium в её процессе: поиск и чтение страниц.",
+          "mods": [
+            "browser_hands.py"
+          ],
+          "pip": [
+            "playwright",
+            "ddgs"
+          ],
+          "mb": 480,
+          "notice": "Chromium под BSD-3: нужен about:credits в дистрибутиве. Бинарь ffmpeg из Playwright проверить на GPL и при необходимости выкинуть."
+        }
+      ]
+    },
+    {
+      "id": "body",
+      "title": "Образ",
+      "features": [
+        {
+          "id": "avatar",
+          "title": "Аватар в окне",
+          "base": true,
+          "tier": "free",
+          "blurb": "VRM-модель прямо в интерфейсе: липсинк, жесты, взгляд.",
+          "mods": [
+            "avatar.py",
+            "avatar_hub.py",
+            "desk_slots.py"
+          ],
+          "pip": [],
+          "mb": 24
+        },
+        {
+          "id": "desk_avatar",
+          "title": "Аватар на рабочем столе",
+          "tier": "pro",
+          "level": "beta",
+          "default": false,
+          "pack": true,
+          "blurb": "Отдельное окно поверх всех окон.",
+          "mods": [
+            "desk_avatar.py"
+          ],
+          "pip": [
+            "PySide6-Essentials",
+            "PySide6-Addons"
+          ],
+          "mb": 620,
+          "notice": "PySide6 под LGPLv3: только динамическая линковка, приложить текст лицензии и способ получить исходники Qt."
+        },
+        {
+          "id": "anim",
+          "title": "Библиотека анимаций",
+          "tier": "free",
+          "default": false,
+          "blurb": "Скачивание новых жестов. Без ключа GitHub упирается в лимит запросов.",
+          "mods": [
+            "anim_hub.py"
+          ],
+          "pip": [],
+          "mb": 6,
+          "keys": [
+            {
+              "path": "github.token",
+              "label": "Personal access token",
+              "secret": true,
+              "where": {
+                "label": "Настройки токенов GitHub",
+                "url": "https://github.com/settings/tokens"
+              },
+              "steps": [
+                "Открой Settings → Developer settings → Personal access tokens.",
+                "Нажми Generate new token (classic).",
+                "Права можно не отмечать вообще — нужен только лимит запросов.",
+                "Скопируй токен и вставь в поле."
+              ],
+              "verify": {
+                "method": "GET",
+                "url": "https://api.github.com/rate_limit"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reach",
+      "title": "Связь",
+      "note": "открывает доступ снаружи",
+      "features": [
+        {
+          "id": "messengers",
+          "title": "Телеграм и VK",
+          "tier": "free",
+          "risk": true,
+          "default": false,
+          "blurb": "Переписка и управление компьютером с телефона.",
+          "mods": [
+            "messengers.py"
+          ],
+          "pip": [],
+          "mb": 4,
+          "keys": [
+            {
+              "path": "messengers.telegram.token",
+              "label": "Токен бота",
+              "secret": true,
+              "where": {
+                "label": "Открыть @BotFather",
+                "url": "https://t.me/BotFather"
+              },
+              "steps": [
+                "Открой в Телеграме бота @BotFather и нажми «Запустить».",
+                "Отправь команду /newbot, придумай имя и адрес бота.",
+                "В ответ придёт строка вида 1234567890:AAF-… — это токен.",
+                "Скопируй её, вставь в поле и нажми «Проверить»."
+              ],
+              "verify": {
+                "method": "GET",
+                "url": "https://api.telegram.org/bot{key}/getMe"
+              },
+              "coach": [
+                {
+                  "anchor": "field",
+                  "title": "Сюда вставится токен",
+                  "text": "Он пишется в secrets.json на этом компьютере. Кто знает токен — управляет ботом, поэтому никому его не показывай."
+                },
+                {
+                  "anchor": "steps",
+                  "title": "Три шага в Телеграме",
+                  "text": "@BotFather, команда /newbot, имя. Он ответит строкой с двоеточием посередине — это и есть токен."
+                },
+                {
+                  "anchor": "verify",
+                  "title": "Проверка на месте",
+                  "text": "ANAMORF спросит у Телеграма, живой ли бот, и скажет словами, если что-то не так."
+                },
+                {
+                  "anchor": "gives",
+                  "title": "Что появится",
+                  "text": "Сайка начнёт отвечать в личке. Управление компьютером из чата включается отдельно и по умолчанию закрыто."
+                }
+              ]
+            }
+          ],
+          "gives": [
+            "Переписка в личке и в группе",
+            "Команды: статус, найди файл, запусти, закрой",
+            "Сообщение, когда что-то сломалось"
+          ],
+          "needs": [
+            "Интернет",
+            "Управление ПК включается отдельным рубильником"
+          ]
+        },
+        {
+          "id": "phone",
+          "title": "Доступ с телефона",
+          "tier": "free",
+          "risk": true,
+          "default": false,
+          "blurb": "Интерфейс открывается с телефона по QR в домашней сети.",
+          "mods": [
+            "phone.py"
+          ],
+          "pip": [
+            "qrcode",
+            "cryptography"
+          ],
+          "mb": 12,
+          "needs": [
+            "Один Wi-Fi с телефоном, либо установленный Tailscale"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dev",
+      "title": "Инструменты разработчика",
+      "note": "клиенту не едут никогда",
+      "features": [
+        {
+          "id": "devboard",
+          "title": "Дорожная карта проекта",
+          "dev": true,
+          "blurb": "Этапы разработки и отчёты по ним.",
+          "mods": [
+            "devboard.py"
+          ],
+          "pip": [],
+          "mb": 2
+        },
+        {
+          "id": "git",
+          "title": "Git-панель",
+          "dev": true,
+          "blurb": "Статус, коммит, пуш, подтянуть обновления.",
+          "mods": [
+            "git_sync.py"
+          ],
+          "pip": [],
+          "mb": 1
+        },
+        {
+          "id": "training",
+          "title": "Обучение характера",
+          "dev": true,
+          "blurb": "Датасет, Hugging Face, LoRA, экспорт в GGUF.",
+          "mods": [
+            "dataset_hub.py",
+            "llm/train_manager.py"
+          ],
+          "pip": [],
+          "mb": 8,
+          "notice": "unsloth: каталоги studio/* и unsloth_cli/* под AGPLv3 — в дистрибутив не класть."
+        },
+        {
+          "id": "bench",
+          "title": "Стенды и замеры",
+          "dev": true,
+          "blurb": "Слух, задержки, шумодав, окна.",
+          "mods": [
+            "hear_bench.py"
+          ],
+          "pip": [],
+          "mb": 3
+        },
+        {
+          "id": "selfread",
+          "title": "Чтение своего исходника",
+          "dev": true,
+          "blurb": "fs_log, fs_grep, fs_slice. В собранном билде исходников нет.",
+          "mods": [
+            "self_read.py"
+          ],
+          "pip": [],
+          "mb": 1
+        },
+        {
+          "id": "knobs",
+          "title": "Файловый пульт",
+          "dev": true,
+          "blurb": "Ручки слуха через файл, мимо HTTP — канал для ИИ-напарника.",
+          "mods": [
+            "knobs.py"
+          ],
+          "pip": [],
+          "mb": 1
+        },
+        {
+          "id": "netpolicy",
+          "title": "Политика сети",
+          "dev": true,
+          "blurb": "Обходчик DPI на машине автора. Путь зашит, у людей его нет.",
+          "mods": [
+            "netpolicy.py"
+          ],
+          "pip": [],
+          "mb": 1
+        }
+      ]
+    }
+  ]
+}

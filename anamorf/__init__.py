@@ -12,3 +12,12 @@ try:
     _defuse_fa()
 except Exception:               # torch ещё не стоит / первый запуск
     pass
+
+# Установленные дополнительные блоки — в пути импорта, до всего остального.
+# Иначе получается обидное: человек нажал «поставить», блок лежит на диске, а
+# `import playwright` его не видит — и ему снова предлагают его поставить.
+try:
+    from anamorf.packs import activate_all as _activate_packs
+    _activate_packs()
+except Exception:               # нет блоков / первый запуск
+    pass

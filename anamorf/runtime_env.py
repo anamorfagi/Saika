@@ -214,7 +214,10 @@ def ensure(feature_id: str, packages: list[str] | None = None,
             pass
     if DEV:
         return pip_install(packages or [])
-    return _download_pack(feature_id)
+    # Скачиванием и распаковкой занимается packs — здесь только развилка
+    # «рабочая копия или билд», чтобы не разъезжались две реализации.
+    from anamorf import packs
+    return packs.install(feature_id)
 
 
 def describe() -> dict:
