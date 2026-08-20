@@ -3,6 +3,35 @@
 <head>
 <meta charset="utf-8">
 <title>Сайка</title>
+<script>
+/* ─── ТЕМА СТАВИТСЯ ДО ПЕРВОЙ ОТРИСОВКИ (2026-08-20) ───
+   Слой переключателя тем монтируется через 300 мс, слой областей — через
+   450. Всё это время окно честно показывало ПРЕЖНИЙ интерфейс: карусель,
+   колонку системы, док. Полсекунды чужого интерфейса при каждом запуске
+   читаются не как «грузится», а как «сломалось и починилось само».
+
+   Атрибут ставится синхронно, до тела документа, значит первый же кадр
+   рисуется в нужной теме. Кнопка ◐ смонтируется когда смонтируется — она
+   только переключает, а не решает, что показать сейчас.
+
+   `zboot` держит рабочую область спрятанной, пока области не собрались:
+   иначе вместо чужого интерфейса мелькнёт свой, но пустой. Снимается в
+   build() слоя областей. */
+(function(){
+  try{
+    if ((localStorage.saika_skin || 'graphite') === 'graphite'){
+      document.documentElement.setAttribute('data-skin','graphite');
+      document.documentElement.classList.add('zboot');
+    }
+  }catch(e){}
+})();
+</script>
+<style>
+  html[data-skin="graphite"].zboot #main,
+  html[data-skin="graphite"].zboot #bar,
+  html[data-skin="graphite"].zboot header button:not(#btn-home),
+  html[data-skin="graphite"].zboot #problems{display:none !important}
+</style>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   /* ═══════════════════════════════════════════════════════════════════
@@ -12223,11 +12252,16 @@ body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,
   opacity:0;transition:opacity .38s var(--zease),transform .44s var(--zspring),
              filter .3s var(--zease)}
 .ztool.show::after{opacity:1}
-.ztool.aim{border-color:rgba(255,255,255,.55);
-  background:linear-gradient(168deg,rgba(64,64,72,.98),rgba(38,38,44,.98));
-  transform:translate(-50%,-50%) translateZ(180px) scale(1.07)}
-.ztool.aim::after{filter:blur(30px);background:rgba(0,0,0,.74);
-  transform:translate3d(calc(var(--sx,12px)*1.55),calc(var(--sy,18px)*1.55),-172px) scale(1.13)}
+/* Внимание сохраняется: чтобы одно стало ярче, другое обязано
+   потускнеть. Без этого «крупнее» читается только вплотную, а издали
+   веер выглядит ровным рядом одинаковых плашек. */
+body.zopen .ztool.show:not(.aim){opacity:.6;filter:brightness(.8) saturate(.88)}
+.ztool.aim{border-color:rgba(255,255,255,.62);
+  background:linear-gradient(168deg,rgba(72,72,82,.99),rgba(42,42,50,.99));
+  transform:translate(-50%,-50%) translateZ(215px) scale(1.15)}
+.ztool.aim .ztn{color:#fff}
+.ztool.aim::after{filter:blur(34px);background:rgba(0,0,0,.78);
+  transform:translate3d(calc(var(--sx,12px)*1.7),calc(var(--sy,18px)*1.7),-190px) scale(1.18)}
 
 /* ── БАРАБАН ──
    Плотный список крутится внутри веера, не отнимая у него места. Коробки
@@ -12238,7 +12272,7 @@ body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,
 .ztool.zdrum{width:236px;padding:0;background:none;border-color:transparent;
   box-shadow:none}
 .ztool.zdrum:hover,.ztool.zdrum.aim{background:none;border-color:transparent;
-  box-shadow:none;transform:translate(-50%,-50%) translateZ(180px) scale(1.02)}
+  box-shadow:none;transform:translate(-50%,-50%) translateZ(200px) scale(1.06)}
 .ztool.zdrum::before,.ztool.zdrum::after{display:none}
 .zdcap{display:inline-flex;align-items:center;gap:7px;position:relative;z-index:2;
   padding:5px 12px;border-radius:999px;background:rgba(30,30,35,.9);
@@ -12284,44 +12318,47 @@ body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,
   opacity:0;transition:opacity .35s}
 #zthreads line.show{opacity:1}
 
-/* ── КАПСУЛА РАЗГОВОРА ──
-   Всей плашки на главном не нужно, а вот куда бросить файл — нужно
-   всегда. Капсула делает ровно две вещи: принимает перетащенное и
-   пускает в разговор. Больше на главном экране разговору делать нечего:
-   читать переписку в углу неудобно, а место она съедает всё. */
-#zchat{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);z-index:7;
-  display:inline-flex;align-items:center;gap:10px;height:42px;padding:0 20px;
-  border-radius:999px;cursor:text;white-space:nowrap;
-  background:linear-gradient(168deg,rgba(40,40,46,.92),rgba(24,24,28,.92));
-  border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(18px);
-  box-shadow:0 14px 30px -12px rgba(0,0,0,.9), 0 2px 4px rgba(0,0,0,.5),
-             inset 0 1px 0 rgba(255,255,255,.09);
-  font:300 12.5px/1 inherit;color:rgba(236,238,241,.44);
-  transition:all .28s var(--zease)}
-#zchat:hover{transform:translateX(-50%) translateY(-2px);color:var(--text);
-  border-color:rgba(255,255,255,.24)}
-#zchat i{font-style:normal;font-size:14px;opacity:.6}
-#zchat.drag{height:64px;padding:0 40px;color:var(--text);font-size:13.5px;
-  border-color:rgba(255,255,255,.55);border-style:dashed;
-  background:linear-gradient(168deg,rgba(70,70,80,.96),rgba(34,34,40,.96));
-  transform:translateX(-50%) translateY(-6px) scale(1.04);
-  box-shadow:0 26px 50px -14px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.2)}
-body.zopen #zchat{opacity:.2;pointer-events:none}
+/* ── НИЖНЯЯ СТРОКА: РАЗГОВОР ──
+   Раньше их было две. Капсула «скажи или брось файл» стояла ВНУТРИ сцены,
+   в секторе «Голос», и читалась как часть органа, чем не была: голос это
+   то, чем она говорит, а разговор — то, куда идёшь ты. Под сценой висела
+   вторая плашка — подсказка. Две строки об одном это не выбор, это шум.
 
-/* Подсказка вынесена ИЗ сцены отдельной плашкой под ней. Внутри сцены она
-   спорила с подписью нижнего сектора и лезла в веер: строка, которая
-   меняется на каждое действие, обязана иметь своё постоянное место, иначе
-   глаз ищет её заново каждый раз. */
-#zhint{display:none;flex:none;height:34px;align-items:center;justify-content:center;
-  border-radius:var(--r-tile);background:var(--tile);border:1px solid var(--tile-bd);
-  box-shadow:var(--tile-sh-lo);backdrop-filter:blur(var(--gb)) saturate(115%);
-  font:300 11.5px/1 inherit;color:rgba(236,238,241,.34);
-  letter-spacing:.02em;text-align:center;padding:0 16px;user-select:none}
-html[data-skin="graphite"] #zhint{display:flex}
-html:not([data-skin="graphite"]) #zhint{display:none}
-body:not(.zhome) #zhint{cursor:pointer;color:rgba(236,238,241,.5)}
-body:not(.zhome) #zhint:hover{color:var(--text);border-color:var(--g-hi)}
-#zhint b{font-weight:400;letter-spacing:.2em;color:var(--text);margin-right:10px}
+   Теперь одна строка, и стоит она там, где на КАЖДОМ остальном экране
+   стоит поле ввода. Рука ищет разговор внизу не потому, что мы так
+   решили, а потому что он там всегда и был.
+
+   Одна строка, три состояния, и они не пересекаются во времени:
+     покой на главном  — зовёт в разговор и принимает файл;
+     веер раскрыт      — говорит, что делать рукой;
+     ушли с главного   — уводит назад.
+   Строка, которая меняется на каждое действие, обязана иметь одно
+   постоянное место, иначе глаз ищет её заново каждый раз. */
+#zchat{display:none;flex:none;height:44px;align-items:center;justify-content:center;
+  gap:10px;border-radius:var(--r-tile);background:var(--tile);
+  border:1px solid var(--tile-bd);box-shadow:var(--tile-sh-lo);
+  backdrop-filter:blur(var(--gb)) saturate(115%);
+  font:300 12.5px/1 inherit;color:rgba(236,238,241,.34);
+  letter-spacing:.02em;text-align:center;padding:0 18px;user-select:none;
+  cursor:pointer;overflow:hidden;
+  transition:color .25s var(--zease),border-color .25s var(--zease),
+             background .25s var(--zease),height .28s var(--zease)}
+html[data-skin="graphite"] #zchat{display:flex}
+html:not([data-skin="graphite"]) #zchat{display:none}
+#zchat i{font-style:normal;font-size:14px;opacity:.55;transition:opacity .25s}
+#zchat b{font-weight:400;letter-spacing:.2em;color:var(--text)}
+#zchat:hover{color:var(--text);border-color:var(--g-hi);background:var(--panel)}
+#zchat:hover i{opacity:.9}
+/* Пока веер раскрыт, строка не зовёт в разговор — она подсказывает руку.
+   Значок разговора при этом уходит: иначе строка обещает две вещи разом. */
+body.zopen #zchat{cursor:default}
+/* Значок разговора горит только когда строка ЗОВЁТ в разговор. Под
+   подсказкой и под «назад» он обещал бы не то, что строка делает. */
+#zchat:not(.idle) i{opacity:0;width:0;margin-left:-10px}
+body.zopen #zchat:hover{color:rgba(236,238,241,.34);border-color:var(--tile-bd);
+  background:var(--tile)}
+#zchat.drag{height:66px;color:var(--text);border-style:dashed;
+  border-color:rgba(255,255,255,.55);background:var(--panel2);font-size:13.5px}
 
 /* «Домой» — не иконка среди иконок. Это единственный выход с любого
    экрана, и он обязан читаться раньше всего остального: слово, а не
@@ -12359,7 +12396,7 @@ html[data-skin="graphite"] header .name{cursor:pointer}
 'use strict';
 const NS = 'http://www.w3.org/2000/svg';
 const $  = s => document.querySelector(s);
-const HOLD = 260, FLICK = 34, SPAN = 60;
+const SPAN = 60;
 
 function hit(sel){ const e = $(sel); if (e) e.click(); return !!e; }
 function txt(sel){ const e = $(sel); return e ? (e.textContent||'').trim() : ''; }
@@ -12496,19 +12533,20 @@ function build(){
       '<canvas id="zring"></canvas>' +
       '<div id="zcore"><div><div id="zcore-name">ANAMORF</div>' +
       '<div id="zcore-sub">САЙКА</div></div></div>' +
-    '</div></div><div id="zlayer"><svg id="zthreads"></svg></div></div>' +
-    '<div id="zchat"><i>✦</i><span>Скажи, напиши или брось сюда файл</span></div>';
+    '</div></div><div id="zlayer"><svg id="zthreads"></svg></div></div>';
   shell.insertBefore(S, main);
-  const hb = document.createElement('div');
-  hb.id = 'zhint';
-  hb.addEventListener('click', () => {
-    if (!document.body.classList.contains('zhome')) goBack();
-  });
-  shell.parentNode.insertBefore(hb, shell.nextSibling);
+
+  /* Нижняя строка стоит ПОД сценой, а не внутри неё: внутри она попадала
+     в сектор «Голос» и читалась как его часть. Снаружи она на том же
+     месте, где на всех остальных экранах поле ввода. */
+  const cap = document.createElement('div');
+  cap.id = 'zchat';
+  cap.innerHTML = '<i>✦</i><span></span>';
+  shell.parentNode.insertBefore(cap, shell.nextSibling);
 
   svg=$('#zsvg'); glow=$('#zglow'); well=$('#zwell'); scene=$('#zscene');
   field=$('#zfield'); orb=$('#zorb'); ring=$('#zring'); core=$('#zcore');
-  layer=$('#zlayer'); threads=$('#zthreads'); hintEl=$('#zhint');
+  layer=$('#zlayer'); threads=$('#zthreads'); hintEl=cap;
 
   ZONES.forEach(z => {
     const path = document.createElementNS(NS,'path');
@@ -12554,6 +12592,7 @@ function build(){
      это чистит `hub`, оставшийся в памяти от вырезанного пульта. */
   setMode(remembered());
   document.body.classList.add('zhome');
+  document.documentElement.classList.remove('zboot');   // области собрались — ширму долой
   say();
   ringLoop();
   poll();
@@ -12626,7 +12665,12 @@ function spread(z){
     const step = 360/n;
     return z.tools.map((t,i) => ({...t, ang: -90 + i*step}));
   }
-  const step = 34, base = z.a - (n-1)*step/2;
+  /* Сорок градусов, а не тридцать четыре: соседние карточки на прежнем
+     шаге стояли плечом к плечу, и наведение на нужную требовало
+     прицелиться — ровно тот налог, ради снятия которого затевались
+     секторы. Восьмой луч при таком шаге даёт 280°, поэтому правило «не
+     больше восьми» остаётся жёстким. */
+  const step = 40, base = z.a - (n-1)*step/2;
   return z.tools.map((t,i) => ({...t, ang: base + i*step}));
 }
 
@@ -12635,16 +12679,43 @@ function spread(z){
    по кратчайшей оси. Углы почти не меняются, а именно их помнит рука. */
 function place(z){
   const nd = N[z.id];
-  const R = z.id === '__core'
-    ? Math.max(190, Math.min(W,H)*0.30)
-    : Math.max(132, Math.min(W,H)*0.20);
+  let R = z.id === '__core'
+    ? Math.max(210, Math.min(W,H)*0.325)
+    : Math.max(158, Math.min(W,H)*0.245);
+  if (z.id !== '__core'){
+    /* Веер не упирается в край. Нижний сектор стоит в 190 пикселях от дна
+       сцены, а радиус просил 198 — карточки уезжали за кадр, и удержание
+       сминало их в кучу у самой кромки. Куча в углу это не «поместилось»,
+       это «сломалось». Меряем, сколько места есть по лучу органа, и
+       укорачиваем радиус — веер остаётся веером, просто теснее. */
+    const [ex,ey] = edge(z.a);
+    R = Math.max(118, Math.min(R, Math.hypot(ex-nd.ax, ey-nd.ay) - 92));
+  }
+  /* Карточка НА ЭКРАНЕ не там, где в разметке, и не того размера.
+     Сцена смотрит через perspective:1400 с точкой схода в (50%, 46%), а
+     карточка стоит на translateZ(215) и scale(1.15) — значит перспектива
+     и УВЕЛИЧИВАЕТ её (k = 1400/(1400−215) ≈ 1.18), и ОТОДВИГАЕТ от точки
+     схода в k раз. Второе куда важнее первого: карточка у нижнего края
+     уезжает вниз на десятки пикселей, и никакой запас по размеру этого
+     не ловит. Поэтому считаем прямо: где окажется край после перспективы,
+     туда и не пускаем.
+
+         экран = O + (разметка − O)·k ± (размер/2)·s·k
+
+     Отсюда предел по разметке — он и стоит в clamp ниже. */
+  const KZ = 1400/(1400-215), KS = 1.15;
+  const OX = W/2, OY = H*0.46, PAD = 16;
   const it = spread(z).map((t,i) => {
     const el = nd.tools[i];
     const big = el.classList.contains('zdrum');
-    const r = R * (big ? 1.12 : 1);
+    const r = R * (big ? 1.30 : 1);
+    const bw = el.offsetWidth  || (big?236:132);
+    const bh = el.offsetHeight || (big?180:74);
     return {el,
-      w:(el.offsetWidth  || (big?236:132)) + (big?34:24),
-      h:(el.offsetHeight || (big?180:74))  + (big?112:18),
+      // расталкивание: коробка плюс воздух, чтобы карточки не липли
+      w: bw + (big?40:34), h: bh + (big?118:26),
+      // удержание в кадре: настоящая коробка плюс запас барабану на пилюли
+      cw: bw + (big?30:0), ch: bh + (big?30:0),
       x: nd.ax + Math.cos(rad(t.ang))*r,
       y: nd.ay + Math.sin(rad(t.ang))*r};
   });
@@ -12658,8 +12729,11 @@ function place(z){
       else        { const s=(dy<0?-1:1)*oy/2; a.y-=s; b.y+=s; }
     }
     it.forEach(o => {
-      o.x = Math.max(o.w/2-10, Math.min(W-o.w/2+10, o.x));
-      o.y = Math.max(o.h/2+ 4, Math.min(H-o.h/2- 4, o.y));
+      const hw = o.cw/2*KS, hh = o.ch/2*KS;
+      const xhi = OX + (W-PAD-OX)/KZ - hw, xlo = OX - (OX-PAD)/KZ + hw;
+      const yhi = OY + (H-PAD-OY)/KZ - hh, ylo = OY - (OY-PAD)/KZ + hh;
+      o.x = xlo > xhi ? OX : Math.max(xlo, Math.min(xhi, o.x));
+      o.y = ylo > yhi ? OY : Math.max(ylo, Math.min(yhi, o.y));
     });
   }
   /* Одна лампа на сцену, слева сверху и за кадром. Тень каждой карточки
@@ -12811,6 +12885,18 @@ function refreshTools(z){
 
 function show(z){
   if (!open) markForward();     // веер это шаг вперёд, но только первый:
+  /* Переезд между секторами обязан ГАСИТЬ предыдущий веер. Раньше show()
+     снимал подсветку с чужих секторов, но их карточки оставались с
+     классом .show — и проход мышью по всем шести органам оставлял на
+     экране шесть раскрытых вееров разом, наложенных друг на друга.
+     Гасим здесь, а не в hide(): hide() ещё и сматывает состояние жеста,
+     а нам нужно только убрать со сцены чужое. */
+  Object.keys(N).forEach(k => {
+    if (k === z.id) return;
+    N[k].tools.forEach(t => t.classList.remove('show','aim'));
+    N[k].lines.forEach(l => l.classList.remove('show'));
+  });
+  aimed = null;
   open = z.id;                  // переезд между секторами шагом не считается
   document.body.classList.add('zopen');
   SFX.open();
@@ -12837,11 +12923,17 @@ function show(z){
     el.onclick = ev => { ev.stopPropagation(); if (!el._drum) pick(z,t,i); };
   });
   place(z);
+  /* Каскад, а не очередь. Сорок миллисекунд на карточку означали, что
+     пятая появлялась через две десятых секунды после нажатия — на глаз
+     это уже не «раскрылось», а «доезжает». Двадцать: порядок появления
+     ещё читается, ожидания уже нет. */
   requestAnimationFrame(() => {
     place(z);
     items.forEach((t,i) => {
-      setTimeout(() => N[z.id].tools[i].classList.add('show'), i*40);
-      setTimeout(() => N[z.id].lines[i].classList.add('show'), i*40);
+      setTimeout(() => {
+        N[z.id].tools[i].classList.add('show');
+        N[z.id].lines[i].classList.add('show');
+      }, i*20);
     });
   });
   say('<b>'+z.name.toUpperCase()+'</b> &nbsp; ' + (z.id === '__core'
@@ -12932,13 +13024,20 @@ function goHome(){
   applyHome();
 }
 
+/* Три состояния одной строки. Чем строка занята сейчас — видно по ней
+   самой, а не по тому, что человек помнит о своём последнем действии. */
 function say(html){
   if (!hintEl) return;
+  const sp = hintEl.querySelector('span');
+  if (!sp) return;
   if (!document.body.classList.contains('zhome')){
-    hintEl.innerHTML = '◄ <b>ГЛАВНЫЙ ЭКРАН</b> — клик сюда или Esc';
+    hintEl.classList.remove('idle');
+    sp.innerHTML = '◄ <b>ГЛАВНЫЙ ЭКРАН</b> — клик сюда или Esc';
     return;
   }
-  hintEl.innerHTML = html || 'нажми в любую область экрана — она и есть орган · центр — места';
+  if (html){ hintEl.classList.remove('idle'); sp.innerHTML = html; return; }
+  hintEl.classList.add('idle');
+  sp.innerHTML = 'Скажи, напиши или брось сюда файл';
 }
 
 // ─────────────────────────── жест ───────────────────────────
@@ -12955,14 +13054,22 @@ function setAim(el){
   aimed = el;
   if (aimed) aimed.classList.add('aim');
 }
+/* Веер раскрывается НА НАЖАТИИ, а не через четверть секунды после него.
+   Задержка была платой за жест «нажал и сразу дёрнул»: он выбирал вслепую,
+   по направлению, не показывая веера вовсе, и ради него приходилось
+   выжидать — вдруг человек дёрнет. Плата оказалась не по товару: жестом
+   вслепую пользуются единицы и не сразу, а 260 мс задержки платят все и
+   на каждом нажатии. Задержка, которой не понимаешь, читается как
+   «подтормаживает», а не как «ждёт моего решения».
+
+   Ведение к карточке никуда не делось: держи кнопку и веди — отпустил над
+   нужной, она и выбрана. Просто теперь всё это время веер видно. */
 function begin(z, ev){
   ev.preventDefault();
   if (open && open !== z.id) hide();
-  press = {z, x:ev.clientX, y:ev.clientY, shown:false, done:false};
+  press = {z, x:ev.clientX, y:ev.clientY, shown:true, done:false};
   if (N[z.id].bead !== core) N[z.id].bead.classList.add('hot');
-  press.timer = setTimeout(() => {
-    if (press && !press.done){ press.shown = true; show(z); }
-  }, HOLD);
+  show(z);
 }
 
 function wire(){
@@ -12990,52 +13097,55 @@ function wire(){
   addEventListener('pointermove', ev => {
     lastMove = performance.now();
     if (!press) return;
-    if (!press.done && !press.shown){
-      const dx=ev.clientX-press.x, dy=ev.clientY-press.y;
-      if (Math.hypot(dx,dy) < FLICK) return;
-      const nz = zoneAt(ev.clientX, ev.clientY);
-      if (nz && nz.id !== press.z.id){
-        clearTimeout(press.timer);
-        if (N[press.z.id].bead !== core) N[press.z.id].bead.classList.remove('hot');
-        press.z = nz; press.shown = true;
-        N[nz.id].bead.classList.add('hot');
-        show(nz); return;
-      }
-      // Дёрнули раньше веера — выбираем по направлению, вслепую.
-      clearTimeout(press.timer);
-      const ang = Math.atan2(dy,dx)*180/Math.PI;
-      const opts = spread(press.z);
-      let best = opts[0], bd = 1e9, bi = 0;
-      opts.forEach((o,i) => {
-        const diff = Math.abs(((o.ang-ang+540)%360)-180);
-        if (diff < bd){ bd=diff; best=o; bi=i; }
-      });
-      press.done = true;
-      const z = press.z;
-      say('жест: '+z.name+' → '+best.n);
-      if (best.drum || best.open){ show(z); }
-      else pick(z, best, bi);
-      return;
-    }
-    if (!press.shown) return;
     const el = document.elementFromPoint(ev.clientX, ev.clientY);
     const tool = el && el.closest ? el.closest('.ztool') : null;
     if (tool){ setAim(tool); return; }
     setAim(null);
+    if (press.z.id === '__core') return;
     const nz = zoneAt(ev.clientX, ev.clientY);
-    if (nz && nz.id !== press.z.id && !press.lock && press.z.id !== '__core'){
-      press.lock = true;
-      setTimeout(() => { if (press) press.lock = false; }, 180);
-      if (N[press.z.id].bead !== core) N[press.z.id].bead.classList.remove('hot');
-      press.z = nz;
-      N[nz.id].bead.classList.add('hot');
-      show(nz);
+    /* Увёл руку из сектора внутрь кольца — веер убран. Это то же правило,
+       что и для короткого клика по ядру: центр закрывает. Жест при этом
+       жив: вернулся в сектор — веер открылся снова, и не надо отпускать
+       кнопку и начинать заново. */
+    if (!nz){ if (open) hide(); return; }
+    if (open && nz.id === press.z.id) return;
+    if (press.lock) return;
+    press.lock = true;
+    setTimeout(() => { if (press) press.lock = false; }, 180);
+    if (N[press.z.id].bead !== core) N[press.z.id].bead.classList.remove('hot');
+    press.z = nz;
+    N[nz.id].bead.classList.add('hot');
+    show(nz);
+  }, {passive:true});
+
+  /* Веер, оставшийся после отпускания кнопки, тоже обязан уходить сам.
+     Раньше он висел до следующего действия, и человек, отведя мышь,
+     смотрел на раскрытый веер органа, о котором уже забыл. Четверть
+     секунды отсрочки — чтобы дорога между двумя соседними карточками,
+     на которой рука на мгновение оказывается «нигде», не гасила веер
+     под рукой. */
+  let leaveT = 0;
+  addEventListener('pointermove', ev => {
+    if (press || !open){ clearTimeout(leaveT); return; }
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const inTool = !!(el && el.closest && el.closest('.ztool'));
+    let inside = inTool;
+    if (!inside){
+      if (open === '__core'){
+        const r = S.getBoundingClientRect();
+        inside = Math.hypot(ev.clientX-r.left-CX, ev.clientY-r.top-CY)
+                 < Math.min(W,H)*0.47;
+      } else {
+        const nz = zoneAt(ev.clientX, ev.clientY);
+        inside = !!(nz && nz.id === open);
+      }
     }
+    clearTimeout(leaveT);
+    if (!inside) leaveT = setTimeout(() => { if (!press && open) hide(); }, 260);
   }, {passive:true});
 
   addEventListener('pointerup', () => {
     if (!press) return;
-    clearTimeout(press.timer);
     if (N[press.z.id] && N[press.z.id].bead !== core)
       N[press.z.id].bead.classList.remove('hot');
     if (aimed){
@@ -13054,10 +13164,22 @@ function wire(){
     const el = ev.target.closest && ev.target.closest('.ztool');
     if (!el || !el._drum) return;
     ev.preventDefault();
-    const D = el._drum;
-    D.lastWheel = performance.now();
+    /* Считаем ЩЕЛЧКИ, а не пиксели. Настоящее колесо шлёт deltaY=100 на
+       щелчок, а порог стоял 55 — то есть первый щелчок давал шаг, второй
+       два, и список летел вниз-вверх, вместо того чтобы слушаться руки.
+       Крупная дельта = щелчок = ровно один шаг, и не чаще чем раз в 40 мс,
+       чтобы инерция мыши не разгоняла барабан. Мелкая дельта — тачпад:
+       там пикселей много и мелких, их и копим. */
+    const D = el._drum, now = performance.now();
+    D.lastWheel = now;
+    if (ev.deltaMode !== 0 || Math.abs(ev.deltaY) >= 40){
+      if (now - (D.notch||0) < 40) return;
+      D.notch = now; D.acc = 0;
+      spin(D, Math.sign(ev.deltaY));
+      return;
+    }
     D.acc = (D.acc||0) + ev.deltaY;
-    while (Math.abs(D.acc) >= 55){ const st = Math.sign(D.acc); D.acc -= st*55; spin(D, st); }
+    while (Math.abs(D.acc) >= 42){ const st = Math.sign(D.acc); D.acc -= st*42; spin(D, st); }
   }, {passive:false});
 
   // Параллакс. Четыре градуса читаются как объём, восемь — как качающийся
@@ -13103,6 +13225,9 @@ function wire(){
   const cap = document.getElementById('zchat');
   if (cap){
     cap.addEventListener('click', () => {
+      // Строка делает ровно то, что на ней написано в эту секунду.
+      if (!document.body.classList.contains('zhome')){ goBack(); return; }
+      if (open){ hide(); return; }
       goScreen('chat');
       const i = document.getElementById('input'); if (i) i.focus();
     });
@@ -13111,11 +13236,13 @@ function wire(){
       const t = ev.dataTransfer;
       return !!t && [...(t.types||[])].includes('Files');
     };
-    S.addEventListener('dragenter', ev => {
+    // Ронять можно куда угодно по главному экрану — ловит старый
+    // глобальный обработчик. Наше дело показать, что цель принимает.
+    [S, cap].forEach(host => host.addEventListener('dragenter', ev => {
       if (!hasFiles(ev)) return;
       dragDepth++; cap.classList.add('drag');
       cap.querySelector('span').textContent = 'отпусти — прикреплю к разговору';
-    });
+    }));
     S.addEventListener('dragleave', () => {
       // dragleave прилетает и при переходе на дочерний элемент, поэтому
       // считаем глубину, а не ловим каждое событие.
@@ -13335,10 +13462,12 @@ const SFX = (() => {
   };
 })();
 
-// Ждём, пока смонтируются остальные слои: шапка и переключатель темы
-// поднимаются на +300 мс, а барабан «Утилиты» снимает список с шапки.
-// Контейнер #shell мы теперь строим сами, поэтому ждать рельс не нужно.
-const start = () => setTimeout(() => { try{ build(); }catch(e){ console.error('zones:', e); } }, 450);
+/* Ждать больше нечего. Контейнер #shell строим сами, тема стоит ещё до
+   первой отрисовки, а список «Утилиты» снимается с шапки не при сборке, а
+   в момент открытия барабана. Полсекунды пустого ожидания были платой за
+   рельс, которой больше нет: чем раньше собрались области, тем короче
+   чёрный экран между запуском и интерфейсом. */
+const start = () => setTimeout(() => { try{ build(); }catch(e){ console.error('zones:', e); } }, 90);
 if (document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', start);
 else start();
