@@ -154,3 +154,55 @@ def describe() -> dict:
         "features_total": len(_index),
         "enabled": sorted(en),
     }
+
+class FeatureOff(RuntimeError):
+    """Фичи нет в этой сборке. Не поломка, а сознательный выбор при сборке."""
+
+
+class _Absent:
+    """Заглушка вместо модуля выключенной фичи.
+
+    Ложная при проверке (`if devboard:`), а при попытке что-то у неё
+    вызвать объясняет словами, чего не хватает. Так отсутствие фичи
+    перестаёт быть падением на импорте при старте и становится понятным
+    ответом в тот момент, когда её действительно попросили.
+    """
+
+    __slots__ = ("_id", "_title")
+
+    def __init__(self, feature_id: str, title: str):
+        self._id, self._title = feature_id, title
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return f"<фича «{self._title}» не входит в эту сборку>"
+
+    def __getattr__(self, name):
+        raise FeatureOff(
+            f"«{self._title}» не входит в эту сборку, поэтому {name} "
+            f"недоступно. Если нужно — соберите версию с этой фичей.")
+
+
+def optional(feature_id: str, module: str | None = None):
+    """Модуль фичи, если она включена, иначе — понятная заглушка.
+
+    Нужно, потому что импорт наверху модуля исполняется при старте: в
+    сборке без этой фичи файла нет, и приложение падает на импорте — то
+    есть ДО того, как способно объяснить, что случилось. Здесь же
+    отсутствие фичи всплывает в момент обращения и человеческим текстом.
+    """
+    _load()
+    f = _index.get(feature_id) or {}
+    title = f.get("title", feature_id)
+    if not on(feature_id):
+        return _Absent(feature_id, title)
+    name = module or feature_id
+    try:
+        import importlib
+        return importlib.import_module(name if "." in name
+                                       else f"anamorf.{name}")
+    except Exception as e:
+        log.warning("фича «%s» включена, но модуль не загрузился: %s", title, e)
+        return _Absent(feature_id, title)

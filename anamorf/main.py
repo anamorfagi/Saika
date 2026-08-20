@@ -27,31 +27,47 @@ from fastapi import (FastAPI, File, Request, UploadFile, WebSocket,
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from anamorf.config import CFG, ROOT, resolve
+# Необязательные подсистемы берём через реестр фич, а не прямым импортом:
+# в сборке без них файла просто нет, и обычный import уронил бы запуск
+# раньше, чем система успеет сказать, чего не хватает.
+from anamorf import features
 from anamorf import avatar
 from anamorf import baymax
-from anamorf import devboard
-from anamorf import messengers
+devboard = features.optional("devboard")
+messengers = features.optional("messengers")
 from anamorf import ratings
 from anamorf.persona import build_system_prompt
 from anamorf.llm import manager as llm
-from anamorf.llm import dreampc
-from anamorf.llm import train_manager
-from anamorf import dataset_hub
-from anamorf import git_sync
+dreampc = features.optional("dreampc", "anamorf.llm.dreampc")
+train_manager = features.optional("training", "anamorf.llm.train_manager")
+dataset_hub = features.optional("training", "dataset_hub")
+git_sync = features.optional("git")
 from anamorf.proc_utils import kill_by_port, register_console_close_handler
 from anamorf.stt.manager import STTManager
 from anamorf.tts.manager import TTSManager, split_sentences
-from anamorf import hearing
+hearing = features.optional("sound_tags", "hearing")
 from anamorf import voiceprint
 from anamorf.denoise import DENOISE, SEGMENT as SEGMENT_DENOISE
 from anamorf import hear_load          # предохранитель реального времени
-from anamorf import hear_bench          # стенд «волна ↔ текст» (2026-08-15)
+hear_bench = features.optional("bench")          # стенд «волна ↔ текст» (2026-08-15)
 from anamorf import misheard            # ремонт написания и метка «шатко»
 from anamorf.draft import DRAFT
 from anamorf.earlog import EARLOG
 from anamorf.transcript import TRANSCRIPT, mood_of
 from anamorf.guard import GUARD
 from anamorf.memory.memory import Memory, start_scheduler
+
+
+def _default_roots() -> list:
+    """Где Сайке разрешено трогать файлы, пока человек не сказал иначе.
+
+    Раньше здесь стоял диск автора. У человека такого диска нет, и первый
+    же файловый вопрос упирался в «папки такой тут нет» — причём в коде,
+    а не в настройках, так что и поправить было негде.
+    """
+    from pathlib import Path as _P
+    d = _P.home() / "Documents"
+    return [str(d if d.is_dir() else _P.home())]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -2689,7 +2705,7 @@ def pc_get():
         "built": catalog.get("built", 0),
         "trust": _trust.describe(),
         "roots": [str(r) for r in file_hands.roots()],
-        "roots_raw": list(CFG.get("files.roots", ["F:/AI_load_work"])),
+        "roots_raw": list(CFG.get("files.roots", _default_roots())),
     }
 
 
