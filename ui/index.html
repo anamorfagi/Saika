@@ -67,7 +67,7 @@
   @media (prefers-reduced-motion:reduce){#aurora b{animation:none}}
 
   /* ── плитка: один класс на всё стекло ── */
-  .tile,header,#sysbar,#chat,#av-pane,#bar,#eq{
+  .tile,header,#sysbar,#chat,#av-pane,#bar{
     background:var(--tile);
     backdrop-filter:blur(var(--gb)) saturate(170%);
     -webkit-backdrop-filter:blur(var(--gb)) saturate(170%);
@@ -266,30 +266,7 @@
     border-color:rgba(145,132,217,.4)}
   #av-tab span,#chat-tab span{writing-mode:vertical-rl;font-size:10.5px;
     letter-spacing:.16em;text-transform:uppercase}
-
-  /* ═════════ ЭКВАЛАЙЗЕР + НИЖНИЙ ДОК ═════════ */
-  /* Полоска голоса — БЕЗ своей стеклянной плитки (2026-07-25): отдельная
-     стекляшка между рабочей областью и доком читалась как пустая панель.
-     Теперь это просто волна на фоне, вплотную к доку. */
-  #eq{height:20px;flex:none;display:flex;align-items:flex-end;
-    justify-content:center;gap:3px;padding:0 18px 4px;
-    background:none!important;border:0!important;box-shadow:none!important;
-    backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
-    border-radius:0;overflow:visible;position:relative;
-    margin-bottom:-8px;z-index:1}
-  #eq::after{content:'';position:absolute;left:18%;right:18%;bottom:2px;height:2px;
-    border-radius:2px;pointer-events:none;opacity:0;
-    transition:opacity .35s,background .35s;
-    background:linear-gradient(90deg,transparent,rgba(67,209,138,.75),transparent)}
-  #eq.ready::after{opacity:1}
-  #eq.muted::after{opacity:1;
-    background:linear-gradient(90deg,transparent,rgba(224,101,95,.85),transparent)}
-  #eq i{display:block;flex:none;width:3px;height:2px;border-radius:3px;
-    background:linear-gradient(180deg,var(--accent2),var(--accent));
-    opacity:.85;transition:height .07s linear;position:relative;z-index:1;
-    box-shadow:0 0 6px rgba(145,132,217,.5)}
-  #eq .eqscore{display:none}   /* 2026-07-25: цифра качества озвучки убрана */
-
+  /* ═════════ НИЖНИЙ ДОК ═════════ */
   #bar{display:flex;align-items:center;gap:8px;flex:none;
     padding:10px 12px;border-radius:20px;background:var(--tile-hi);
     box-shadow:var(--tile-sh-lo);position:relative;z-index:40}
@@ -1073,7 +1050,6 @@
     #btn-send{order:11}
     .chip{max-width:150px;height:38px}
     .iconbtn{width:38px;height:38px;font-size:16px}
-    #eq{height:16px;margin-bottom:-8px}
     /* МЕНЮ НА ТЕЛЕФОНЕ (2026-07-26). Раньше они лежали absolute внутри
        своей кнопки: у крайних кнопок дока меню уезжало за край экрана, и
        половина подписей обрезалась («Скорость ответа — кэш, контекст,
@@ -1183,8 +1159,7 @@ html[data-skin="graphite"] #sysbar,
 html[data-skin="graphite"] #chat,
 html[data-skin="graphite"] #av-pane,
 html[data-skin="graphite"] #vp-pane,
-html[data-skin="graphite"] #bar,
-html[data-skin="graphite"] #eq{
+html[data-skin="graphite"] #bar{
   background:var(--tile);
   border:1px solid var(--tile-bd);
   box-shadow:var(--tile-sh);
@@ -1346,62 +1321,27 @@ html[data-skin="graphite"] input[type=range]::-webkit-slider-thumb{
 </style>
 
 <style id="shell-graphite">
-/* ═══════════════════════════════════════════════════════════════════════
-   ОБОЛОЧКА: РЕЛЬС РЕЖИМОВ (2026-08-20)
+/* ════════════════════════════════════════════════════════════════════════
+   ОБОЛОЧКА: КОНТЕЙНЕР И ВЫБОР ЭКРАНА (2026-08-20)
 
-   Не переписывает интерфейс, а переставляет его. Все идентификаторы на
-   местах, вся логика цела — двадцать четыре слоя скриптов монтируются по
-   getElementById, и им безразлично, в каком контейнере лежит их узел.
+   У слоя осталась одна обязанность: решать, какая панель сейчас в рабочей
+   области. Рельс режимов, живший здесь же, вырезан — вход в подсистему
+   даёт главный экран областей, а колонка кнопок рядом с ним была вторым
+   ответом на тот же вопрос и требовала прицелиться в кнопку 52×48.
 
-   Что чинится. Раньше вход в подсистему был размазан: слух — в кнопке дока,
-   голос — в панели-карусели, аватар — в другой панели той же карусели,
-   система — в колонке слева, доска — в шапке. Ничто не подсказывало, что
-   это вещи одного порядка, и найти их можно было только помня, где они.
-
-   Теперь режим один, он всегда виден слева, и активный отмечен. Панели
-   никуда не делись — они просто показываются по режиму.
-   ═════════════════════════════════════════════════════════════════════ */
+   Класс body.mode-* ставит РОВНО ОДИН слой — слой областей. Пока их было
+   два, каждая правка делалась дважды и половину времени не в том месте.
+   ══════════════════════════════════════════════════════════════════════ */
 
 html[data-skin="graphite"] #shell{display:flex;gap:var(--pad);flex:1;min-height:0}
-/* Прежняя тема — прежняя раскладка: рельс прячется целиком, панели снова
-   живут каруселью. Переключатель тем остаётся честным сравнением, а не
-   наполовину новым интерфейсом. */
-html:not([data-skin="graphite"]) #rail{display:none}
+/* Прежняя тема — прежняя раскладка: контейнер становится прозрачным, и
+   панели снова живут каруселью. Переключатель тем остаётся честным
+   сравнением, а не наполовину новым интерфейсом. */
 html:not([data-skin="graphite"]) #shell{display:contents}
 
-html[data-skin="graphite"] #rail{
-  width:74px;flex:none;display:flex;flex-direction:column;align-items:center;
-  gap:5px;padding:10px 0;border-radius:var(--r-tile);
-  background:var(--tile);border:1px solid var(--tile-bd);
-  box-shadow:var(--tile-sh);backdrop-filter:blur(var(--gb)) saturate(115%);
-}
-html[data-skin="graphite"] .rbtn{
-  width:52px;height:48px;border-radius:var(--r-ctl);border:1px solid transparent;
-  background:transparent;color:var(--dim);cursor:pointer;position:relative;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:3px;font:400 8.5px/1 inherit;letter-spacing:.06em;text-transform:uppercase;
-  transition:all 190ms var(--g-ease);
-}
-html[data-skin="graphite"] .rbtn i{font-size:17px;font-style:normal;line-height:1}
-html[data-skin="graphite"] .rbtn:hover{
-  transform:translateY(-2px);color:var(--text);background:var(--panel);
-  border-color:var(--border);box-shadow:var(--tile-sh-lo);
-}
-html[data-skin="graphite"] .rbtn.on{
-  color:var(--text);background:var(--panel2);
-  border-color:var(--g-hi);box-shadow:var(--tile-sh);
-}
-html[data-skin="graphite"] .rbtn.on::before{
-  content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);
-  width:2px;height:18px;border-radius:99px;background:var(--text);
-}
-html[data-skin="graphite"] .rail-gap{flex:1}
-html[data-skin="graphite"] .rail-sep{width:26px;height:1px;background:var(--border);margin:4px 0}
-
-/* режимы: показываем нужное, прячем лишнее — не удаляя ничего */
-/* Каждый режим показывает свою панель и прячет всё прочее в рабочей
-   области. Дев-доска (#board) выведена из этого правила: она всплывает
-   поверх по своей кнопке и режимом не управляется. */
+/* Режим показывает свою панель и прячет всё прочее в рабочей области.
+   Дев-доска (#board) выведена из правила: она всплывает поверх по своей
+   кнопке и режимом не управляется. */
 html[data-skin="graphite"] body.mode-chat  #main > *:not(#chat):not(#board),
 html[data-skin="graphite"] body.mode-voice #main > *:not(#vp-pane):not(#board),
 html[data-skin="graphite"] body.mode-face  #main > *:not(#av-pane):not(#board),
@@ -1409,7 +1349,7 @@ html[data-skin="graphite"] body.mode-sys   #main > *:not(#sysbar):not(#board){
   display:none !important}
 html[data-skin="graphite"] body.mode-sys #sysbar{width:auto;flex:1;max-width:none}
 
-/* карусельные вкладки и разделители больше не нужны: режим выбирает рельс */
+/* Карусельные вкладки и разделители больше не нужны: экран выбирают области */
 html[data-skin="graphite"] #av-tab,
 html[data-skin="graphite"] #vp-tab,
 html[data-skin="graphite"] #chat-tab,
@@ -1421,75 +1361,6 @@ html[data-skin="graphite"] #main>div{flex:1;min-width:0}
 html[data-skin="graphite"] header{height:46px}
 html[data-skin="graphite"] #btn-board,
 html[data-skin="graphite"] #btn-sys{display:none}
-</style>
-
-<style id="hub-graphite">
-/* ═══════════════════════════════════════════════════════════════════════
-   ПУЛЬТ (2026-08-20)
-
-   Один экран, отвечающий на вопрос «что сейчас происходит» без чтения
-   цифр. Вокруг имени — полосы: четыре сектора железа и пятый, голосовой,
-   живущий от микрофона. Раньше то же самое было столбиком чисел в левой
-   колонке: точнее, но требует читать. Здесь загруженность видна формой,
-   а числа подписаны рядом для тех, кому нужна точность.
-   ═════════════════════════════════════════════════════════════════════ */
-html[data-skin="graphite"] #hub{
-  display:none;flex:1;min-width:0;gap:var(--pad);
-}
-html[data-skin="graphite"] body.mode-hub #hub{display:flex}
-/* В режиме пульта в рабочей области — только он. Перечислять панели по
-   именам оказалось ненадёжно: в #main живут ещё дев-доска и разделители,
-   и каждая новая панель добавляла бы сюда строчку. Правило «всё, кроме
-   пульта» не забудет ничего. */
-html[data-skin="graphite"] body.mode-hub #main > *:not(#hub){display:none !important}
-html[data-skin="graphite"] body.mode-hub #bar{display:none}
-html[data-skin="graphite"] body.mode-hub #hub{display:flex}
-
-#hub-stage{
-  flex:1;min-width:0;border-radius:var(--r-tile);position:relative;
-  display:grid;place-items:center;overflow:hidden;
-  background:var(--tile);border:1px solid var(--tile-bd);
-  box-shadow:var(--tile-sh);backdrop-filter:blur(var(--gb)) saturate(115%);
-}
-#hub-wrap{position:relative;width:min(74vh,700px);aspect-ratio:1;display:grid;place-items:center}
-#hub-ring{position:absolute;inset:0;width:100%;height:100%}
-#hub-core{position:absolute;inset:0;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;text-align:center;pointer-events:none}
-#hub-plate{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  width:43%;aspect-ratio:1;border-radius:50%;
-  background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.97),
-             rgba(226,229,234,.86) 62%,rgba(206,210,218,.72));
-  box-shadow:0 26px 60px -26px rgba(0,0,0,.85),
-             inset 0 2px 3px rgba(255,255,255,1),
-             inset 0 -12px 24px -12px rgba(20,24,32,.28)}
-#hub-name{position:relative;z-index:2;color:#0b0b0d;
-  font:200 clamp(15px,2.4vh,25px)/1 inherit;letter-spacing:.26em;text-indent:.26em}
-#hub-sub{position:relative;z-index:2;margin-top:8px;font:500 8px/1 inherit;
-  letter-spacing:.3em;color:rgba(11,11,13,.42)}
-#hub-clock{position:relative;z-index:2;margin-top:11px;
-  font:400 10px/1 ui-monospace,monospace;letter-spacing:.2em;color:rgba(11,11,13,.34)}
-.hub-sect{position:absolute;z-index:2;transform:translate(-50%,-50%);
-  text-align:center;white-space:nowrap;pointer-events:none}
-.hub-sect b{display:block;font:500 8px/1 inherit;letter-spacing:.2em;color:var(--dim)}
-.hub-sect i{display:block;margin-top:4px;font:300 13px/1 inherit;
-  font-style:normal;color:var(--text)}
-
-#hub-side{width:290px;flex:none;display:flex;flex-direction:column;
-  gap:var(--pad);overflow:auto}
-.hub-card{padding:14px;border-radius:var(--r-tile);
-  background:var(--tile);border:1px solid var(--tile-bd);
-  box-shadow:var(--tile-sh-lo);transition:all 190ms var(--g-ease)}
-.hub-card:hover{transform:translateY(-2px);box-shadow:var(--tile-sh)}
-.hub-card>.title{display:block;margin-bottom:11px}
-.hub-row{display:flex;justify-content:space-between;align-items:baseline;
-  font-size:11.5px;color:var(--dim);margin-bottom:5px}
-.hub-row b{font:300 12.5px/1 inherit;color:var(--text)}
-.hub-bar{height:3px;border-radius:99px;background:rgba(255,255,255,.05);
-  box-shadow:var(--g-press);overflow:hidden;margin-bottom:11px}
-.hub-bar>i{display:block;height:100%;border-radius:99px;
-  background:linear-gradient(90deg,rgba(236,238,241,.35),rgba(236,238,241,.9));
-  transition:width .6s var(--g-ease)}
-@media (max-width:1100px){#hub-side{display:none}}
 </style>
 </head>
 <body>
@@ -1704,7 +1575,6 @@ html[data-skin="graphite"] body.mode-hub #hub{display:flex}
   </div>
   <div class="ghbody" id="githelp-body"></div>
 </div>
-<div id="eq" title="Клик — замолчать (остановить озвучку). Клавиша: V" style="cursor:pointer"></div>
 <!-- скрытый плеер для дубля голоса на второе устройство (слышать самому) -->
 <audio id="tts-dup" style="display:none" autoplay></audio>
 
@@ -2677,8 +2547,6 @@ async function applyDupDevice(){
 }
 function bargeIn(){
   // пользователь перебил: глушим, рвём очередь, останавливаем генерацию
-  const eq=$('#eq');
-  if(eq){ eq.classList.add('muted'); setTimeout(()=>eq.classList.remove('muted'), 900); }
   // мягкое затухание: плавно уводим гейн в 0 за ~180мс, а источники
   // останавливаем уже ПОСЛЕ затухания — иначе звук обрывается резко
   const FADE=0.18;
@@ -3927,18 +3795,6 @@ async function refresh(){
     const sttReady=(sst.loaded||{})[sst.current]===true &&
                    (sst.health||{})[sst.current]!=='broken';
     $('#btn-mic').classList.toggle('stt-on', !!sttReady);
-    // зелёная подсветка эквалайзера, когда голос загружен и готов говорить
-    const tt=status.tts||{}, cur=tt.current, ld=(tt.loaded||{})[cur];
-    const voiceReady = (tt.health||{})[cur]!=='broken' && (ld===true || ld===null);
-    const eq=$('#eq'); if(eq) eq.classList.toggle('ready', !!voiceReady);
-    // оценка текущей озвучки справа на полосе эквалайзера
-    if(eq){
-      let es=eq.querySelector('.eqscore');
-      if(!es){ es=document.createElement('span'); es.className='eqscore'; eq.appendChild(es); }
-      const s=ttsScore(cur, tt);
-      es.textContent=s; es.title='Оценка озвучки «'+cur+'»: '+s+'/10';
-      es.style.color = s>=8?'var(--ok)':s>=5?'var(--warn)':'var(--err)';
-    }
     fillTtsPop(); fillSttEngines();
   }catch(e){}
 }
@@ -3970,7 +3826,6 @@ $('#btn-listen').onclick = ()=>{ window._pttOwned = false;
 $('#btn-mic').onclick = ()=>{ fillMicPop(); togglePop('pop-mic'); };
 $('#pop-mic').addEventListener('click', e=>e.stopPropagation());
 $('#btn-monitor').onclick = toggleMonitor;
-$('#eq').onclick = ()=>{ if(typeof bargeIn==='function') bargeIn(); };
 $('#btn-control').onclick = async()=>{
   const next = !(status && status.control_enabled);
   if(next && !confirm('✈️ Включить экспериментальный автономный режим?\nСайка сможет закрывать и запускать процессы по командам из мессенджеров. Включай только когда сам этого хочешь.')) return;
@@ -4825,34 +4680,6 @@ pollNet(); setInterval(pollNet, 10000);
 fillMicPop();
 fillGitPop();
 
-/* ---------- эквалайзер над нижней панелью ---------- */
-const EQ_BARS = 40;
-(function initEq(){
-  const el = $('#eq');
-  for(let i=0;i<EQ_BARS;i++) el.appendChild(document.createElement('i'));
-})();
-const eqBars = document.querySelectorAll('#eq i');
-let eqData = null;
-function eqFrame(){
-  requestAnimationFrame(eqFrame);
-  const speaking = saikaSpeaking();
-  if(speaking && ttsAnalyser){
-    if(!eqData) eqData = new Uint8Array(ttsAnalyser.frequencyBinCount);
-    ttsAnalyser.getByteFrequencyData(eqData);
-  }
-  for(let i=0;i<eqBars.length;i++){
-    let v = 0;
-    if(speaking && eqData){
-      const idx = Math.floor(i/eqBars.length*eqData.length);
-      v = eqData[idx]/255;
-    } else if(micOn){
-      // Сайка молчит, микрофон слушает — лёгкая пляска баров по уровню голоса
-      v = Math.min(1, micLevel*3.5) * (0.35+0.65*Math.random());
-    }
-    eqBars[i].style.height = Math.max(2, Math.round(v*24))+'px';
-  }
-}
-eqFrame();
 </script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
@@ -5327,7 +5154,6 @@ eqFrame();
     'Инженерная вкладка — дообучение характера Сайки':'Engineering tab — fine-tuning Saika’s character',
     'Отправить':'Send',
     'Прикрепить картинку или PDF-чертёж (перетащи файл сюда). Модель должна быть с 👁':'Attach an image or PDF (drag a file here). The model needs 👁',
-    'Клик — замолчать (остановить озвучку). Клавиша: V':'Click to silence (stop speech). Key: V',
     'модель…':'model…', 'Убрать':'Remove',
     // меню микрофона
     'Движок слуха':'Speech engine', 'Микрофон в системе':'System microphone',
@@ -12222,341 +12048,7 @@ eqFrame();
 })();
 </script>
 
-<script>
-/* ─────────────────────────────────────────────────────────────────────
-   РЕЛЬС РЕЖИМОВ (2026-08-20)
 
-   Отдельный слой, как и остальные двадцать четыре: сломается — достаточно
-   вырезать этот <script>, и интерфейс вернётся к прежнему поведению.
-
-   Он НИЧЕГО не создаёт заново. Панели уже есть, у них свои идентификаторы
-   и своя логика; рельс только решает, какая из них сейчас на экране.
-   Поэтому здесь нет ни одного getElementById на внутренности панелей —
-   мы не лезем в чужие слои, мы переключаем контейнеры.
-   ───────────────────────────────────────────────────────────────────── */
-(function(){
-  const KEY = 'saika_mode';
-  const MODES = [
-    {id:'chat',  ic:'✦', name:'Чат'},
-    {id:'voice', ic:'◉', name:'Голос'},
-    {id:'face',  ic:'◑', name:'Образ'},
-    {id:'sys',   ic:'▤', name:'Система'},
-  ];
-  const EXTRA = [
-    {id:'board', ic:'◈', name:'Карта',  click:() => click('#btn-board')},
-    {id:'set',   ic:'⚙', name:'Настр.', click:() => click('#btn-settings')},
-  ];
-
-  function click(sel){
-    const b = document.querySelector(sel);
-    if (b) b.click();
-  }
-
-  function apply(mode){
-    MODES.forEach(m => document.body.classList.toggle('mode-' + m.id, m.id === mode));
-    document.querySelectorAll('#rail .rbtn[data-mode]').forEach(b =>
-      b.classList.toggle('on', b.dataset.mode === mode));
-    localStorage[KEY] = mode;
-    // Панель голоса и аватар создаются лениво, каждая своим слоем. Если
-    // человек выбрал их режим, а слой ещё не смонтировался — подтолкнём
-    // тем же способом, каким это делала карусель: кликом по её вкладке.
-    if (mode === 'voice') click('#vp-tab');
-    if (mode === 'face')  click('#av-tab');
-    window.dispatchEvent(new Event('resize'));   // холсты пересчитают размер
-  }
-
-  function build(){
-    const main = document.getElementById('main');
-    if (!main || document.getElementById('rail')) return;
-
-    const shell = document.createElement('div');
-    shell.id = 'shell';
-    main.parentNode.insertBefore(shell, main);
-
-    const rail = document.createElement('div');
-    rail.id = 'rail';
-    shell.appendChild(rail);
-    shell.appendChild(main);          // рабочая область — справа от рельса
-
-    const add = (m, isMode) => {
-      const b = document.createElement('button');
-      b.className = 'rbtn';
-      if (isMode) b.dataset.mode = m.id;
-      b.innerHTML = `<i>${m.ic}</i>${m.name}`;
-      b.title = m.name;
-      b.onclick = isMode ? () => apply(m.id) : m.click;
-      rail.appendChild(b);
-      return b;
-    };
-    MODES.forEach(m => add(m, true));
-    const sep = document.createElement('div');
-    sep.className = 'rail-sep'; rail.appendChild(sep);
-    add(EXTRA[0], false);
-    const gap = document.createElement('div');
-    gap.className = 'rail-gap'; rail.appendChild(gap);
-    add(EXTRA[1], false);
-
-    apply(localStorage[KEY] || 'chat');
-  }
-
-  const start = () => setTimeout(build, 400);   // ждём, пока смонтируются слои
-  if (document.readyState === 'loading')
-    document.addEventListener('DOMContentLoaded', start);
-  else start();
-})();
-</script>
-
-<script>
-/* ─────────────────────────────────────────────────────────────────────
-   ПУЛЬТ: КОЛЬЦО ПРОЦЕССОВ И ГОЛОСА (2026-08-20)
-
-   Отдельный слой. Данные берёт сам — /api/system раз в секунду и только
-   пока пульт на экране; когда режим другой, цикл спит. Так он не зависит
-   от чужих слоёв и ничего им не должен.
-
-   Почему кольцо, а не столбик цифр. Столбик уже есть в режиме «Система» и
-   он точнее. Но чтобы им пользоваться, надо читать. Кольцо отвечает на
-   вопрос «всё ли в порядке» с одного взгляда: форма ровная — спокойно,
-   один сектор выел половину — вот он и виноват. Числа подписаны рядом,
-   для тех случаев, когда нужна точность.
-   ───────────────────────────────────────────────────────────────────── */
-(function(){
-  const SECT = [
-    {k:'cpu',   label:'ЦП',    a0:-96, a1:-26, fmt:v => Math.round(v*100)+'%'},
-    {k:'ram',   label:'ОЗУ',   a0:-18, a1:52,  fmt:(v,r) => (r.usedGb||0).toFixed(1)+' ГБ'},
-    {k:'vram',  label:'VRAM',  a0:60,  a1:130, fmt:(v,r) => (r.vramGb||0).toFixed(1)+' ГБ'},
-    {k:'gpu',   label:'GPU',   a0:138, a1:196, fmt:v => Math.round(v*100)+'%'},
-    {k:'voice', label:'ГОЛОС', a0:204, a1:264, voice:true, fmt:() => hear.txt},
-  ];
-  const load = {cpu:.1, ram:.3, vram:.2, gpu:.1, voice:0};
-  const raw  = {usedGb:0, vramGb:0};
-  const hear = {level:0, txt:'тихо'};
-  let cv, ctx, W=0, H=0, DPR=1, t=0, alive=false;
-
-  function build(){
-    const main = document.getElementById('main');
-    if (!main || document.getElementById('hub')) return false;
-
-    const hub = document.createElement('div');
-    hub.id = 'hub';
-    hub.innerHTML = `
-      <div id="hub-stage">
-        <div id="hub-wrap">
-          <canvas id="hub-ring"></canvas>
-          <div id="hub-core">
-            <div id="hub-plate"></div>
-            <div id="hub-name">ANAMORF</div>
-            <div id="hub-sub">SAIKA · LOCAL AGENT</div>
-            <div id="hub-clock">—</div>
-          </div>
-          ${SECT.map(x => `<div class="hub-sect" data-k="${x.k}">
-              <b>${x.label}</b><i>—</i></div>`).join('')}
-        </div>
-      </div>
-      <div id="hub-side">
-        <div class="hub-card"><span class="title">Железо</span>
-          <div id="hub-hw"></div></div>
-        <div class="hub-card"><span class="title">Что подключено</span>
-          <div id="hub-parts"></div></div>
-      </div>`;
-    main.insertBefore(hub, main.firstChild);
-
-    cv = document.getElementById('hub-ring');
-    ctx = cv.getContext('2d');
-    new ResizeObserver(size).observe(cv);
-    size(); place();
-    new ResizeObserver(place).observe(document.getElementById('hub-wrap'));
-    return true;
-  }
-
-  function size(){
-    DPR = Math.min(devicePixelRatio || 1, 2);
-    const r = cv.getBoundingClientRect();
-    W = r.width; H = r.height;
-    if (!W) return;
-    cv.width = W*DPR; cv.height = H*DPR;
-    ctx.setTransform(DPR,0,0,DPR,0,0);
-  }
-
-  function place(){
-    const wrap = document.getElementById('hub-wrap');
-    if (!wrap || !wrap.clientWidth) return;
-    const R = wrap.clientWidth*0.263 + wrap.clientWidth*0.20 + 44;
-    document.querySelectorAll('.hub-sect').forEach(el => {
-      const s = SECT.find(x => x.k === el.dataset.k);
-      const a = ((s.a0 + s.a1)/2) * Math.PI/180;
-      el.style.left = (50 + Math.cos(a)*R/wrap.clientWidth*100) + '%';
-      el.style.top  = (50 + Math.sin(a)*R/wrap.clientWidth*100) + '%';
-    });
-  }
-
-  async function poll(){
-    if (!alive) return;
-    try{
-      const r = await fetch('/api/system').then(x => x.json());
-      const cpu = (r.cpu && r.cpu.percent || 0)/100;
-      const ram = r.ram && r.ram.total ? r.ram.used/r.ram.total : 0;
-      raw.usedGb = r.ram ? (r.ram.used/1e9) : 0;
-      let vram = 0, gpu = 0;
-      if (r.gpu){
-        vram = r.gpu.vram_total ? r.gpu.vram_used/r.gpu.vram_total : 0;
-        gpu = (r.gpu.util || 0)/100;
-        raw.vramGb = r.gpu.vram_used/1e9;
-      }
-      Object.assign(load, {cpu, ram, vram, gpu});
-      side(r);
-    }catch(e){}
-    setTimeout(poll, 1000);
-  }
-
-  function side(r){
-    const box = document.getElementById('hub-hw');
-    if (box && r.gpu) box.innerHTML =
-      `<div class="hub-row"><span>${r.gpu.name || 'видеокарта'}</span>
-         <b>${(r.gpu.vram_used/1e9).toFixed(1)} / ${(r.gpu.vram_total/1e9).toFixed(0)} ГБ</b></div>
-       <div class="hub-bar"><i style="width:${Math.round(load.vram*100)}%"></i></div>
-       <div class="hub-row"><span>Загрузка GPU · ${r.gpu.temp || 0}°C</span>
-         <b>${r.gpu.util || 0}%</b></div>
-       <div class="hub-bar"><i style="width:${r.gpu.util || 0}%"></i></div>
-       <div class="hub-row"><span>ОЗУ</span>
-         <b>${(r.ram.used/1e9).toFixed(1)} / ${(r.ram.total/1e9).toFixed(0)} ГБ</b></div>
-       <div class="hub-bar"><i style="width:${Math.round(load.ram*100)}%"></i></div>`;
-    // «Что подключено» берём из индикаторов шапки — они уже знают правду,
-    // и заводить второй источник значило бы завести второе мнение.
-    const parts = document.getElementById('hub-parts');
-    if (parts){
-      const dot = id => {
-        const d = document.getElementById(id);
-        return d ? (d.className.includes('ok') ? 'работает'
-                  : d.className.includes('err') ? 'сломано' : 'выключено') : '—';
-      };
-      parts.innerHTML =
-        `<div class="hub-row"><span>Мозги</span><b>${dot('dot-llm')}</b></div>
-         <div class="hub-row"><span>Слух</span><b>${dot('dot-stt')}</b></div>
-         <div class="hub-row"><span>Голос</span><b>${dot('dot-tts')}</b></div>`;
-    }
-  }
-
-  function draw(){
-    if (!alive || !W){ requestAnimationFrame(draw); return; }
-    t += 0.016;
-    const cx = W/2, cy = H/2;
-    const R = Math.min(W,H)*0.263, L = Math.min(W,H)*0.20;
-    const bw = Math.max(1.2, Math.min(W,H)*0.0044);
-    ctx.clearRect(0,0,W,H);
-    if (R < 30){ requestAnimationFrame(draw); return; }
-
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255,255,255,.09)';
-    ctx.beginPath(); ctx.arc(cx,cy,R-6,0,Math.PI*2); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,.055)';
-    ctx.beginPath(); ctx.arc(cx,cy,R+L+22,0,Math.PI*2); ctx.stroke();
-
-    for (const A of [{r:R-13,w:2.5,f:t*.5,s:2.1,a:.34},
-                     {r:R-19,w:1.5,f:-t*.32+2.4,s:1.2,a:.20}]){
-      ctx.lineWidth = A.w; ctx.lineCap = 'round';
-      ctx.strokeStyle = `rgba(255,255,255,${A.a})`;
-      ctx.beginPath(); ctx.arc(cx,cy,A.r,A.f,A.f+A.s); ctx.stroke();
-    }
-
-    const N = 232;
-    ctx.lineCap = 'round';
-    for (let i=0;i<N;i++){
-      const a = ((i/N)*360 - 90 + 360) % 360;
-      let v = 0;
-      for (const s of SECT){
-        const A0 = (s.a0+360)%360, A1 = (s.a1+360)%360;
-        const inside = A0 < A1 ? (a>=A0 && a<=A1) : (a>=A0 || a<=A1);
-        if (!inside) continue;
-        const p = A0 < A1 ? (a-A0)/(A1-A0) : ((a-A0+360)%360)/((A1-A0+360)%360);
-        const edge = Math.sin(p*Math.PI);
-        if (s.voice){
-          v = hear.level * edge * (.35 + .65*Math.abs(Math.sin(i*2.3 + t*9)));
-        } else {
-          v = (p < load[s.k] ? 1 : .14) * edge *
-              (.72 + .28*Math.abs(Math.sin(i*1.7 + t*1.4)));
-        }
-        break;
-      }
-      if (v < .02) continue;
-      const ang = ((i/N)*360 - 90) * Math.PI/180;
-      const len = 4 + v*L;
-      const x0 = cx + Math.cos(ang)*R, y0 = cy + Math.sin(ang)*R;
-      const x1 = cx + Math.cos(ang)*(R+len), y1 = cy + Math.sin(ang)*(R+len);
-      const g = ctx.createLinearGradient(x0,y0,x1,y1);
-      g.addColorStop(0, `rgba(255,255,255,${.16 + v*.30})`);
-      g.addColorStop(1, `rgba(255,255,255,${.55 + v*.42})`);
-      ctx.strokeStyle = g; ctx.lineWidth = bw;
-      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
-    }
-
-    ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1;
-    for (const s of SECT) for (const a of [s.a0, s.a1]){
-      const ang = a*Math.PI/180;
-      ctx.beginPath();
-      ctx.moveTo(cx+Math.cos(ang)*(R+L+6), cy+Math.sin(ang)*(R+L+6));
-      ctx.lineTo(cx+Math.cos(ang)*(R+L+16), cy+Math.sin(ang)*(R+L+16));
-      ctx.stroke();
-    }
-    requestAnimationFrame(draw);
-  }
-
-  function labels(){
-    if (!alive) return;
-    document.querySelectorAll('.hub-sect i').forEach(el => {
-      const s = SECT.find(x => x.k === el.parentNode.dataset.k);
-      el.textContent = s.fmt(load[s.k], raw);
-    });
-    const d = new Date(), z = n => String(n).padStart(2,'0');
-    const c = document.getElementById('hub-clock');
-    if (c) c.textContent = `${z(d.getHours())} · ${z(d.getMinutes())} · ${z(d.getSeconds())}`;
-  }
-
-  // Уровень голоса — от полоски микрофона, которую и так рисует док.
-  // Второй микрофонный поток ради картинки заводить незачем.
-  setInterval(() => {
-    const l = document.querySelector('#btn-listen .lvl');
-    if (!l) return;
-    const m = /scaleX\(([\d.]+)\)/.exec(l.style.transform || '');
-    hear.level = m ? Math.min(1, parseFloat(m[1])) : 0;
-    hear.txt = hear.level > .12 ? 'слышу' : 'тихо';
-  }, 80);
-
-  function start(){
-    if (!build()) return;
-    // Рельс уже есть — добавляем в него режим первым.
-    const rail = document.getElementById('rail');
-    if (rail && !rail.querySelector('[data-mode="hub"]')){
-      const b = document.createElement('button');
-      b.className = 'rbtn'; b.dataset.mode = 'hub';
-      b.innerHTML = '<i>◎</i>Пульт'; b.title = 'Пульт';
-      b.onclick = () => {
-        document.body.className = document.body.className
-          .replace(/\bmode-\S+/g,'').trim() + ' mode-hub';
-        rail.querySelectorAll('.rbtn').forEach(x => x.classList.remove('on'));
-        b.classList.add('on');
-        localStorage['saika_mode'] = 'hub';
-        alive = true; size(); place(); poll();
-      };
-      rail.insertBefore(b, rail.firstChild);
-      if (localStorage['saika_mode'] === 'hub') b.click();
-    }
-    // Пока пульт не выбран — не считаем и не спрашиваем сервер.
-    new MutationObserver(() => {
-      const on = document.body.classList.contains('mode-hub');
-      if (on && !alive){ alive = true; size(); place(); poll(); }
-      else if (!on) alive = false;
-    }).observe(document.body, {attributes:true, attributeFilter:['class']});
-    setInterval(labels, 400);
-    requestAnimationFrame(draw);
-  }
-
-  const go = () => setTimeout(start, 700);
-  if (document.readyState === 'loading')
-    document.addEventListener('DOMContentLoaded', go);
-  else go();
-})();
-</script>
 
 <style id="zones-graphite">
 /* ═══════════════════════════════════════════════════════════════════════
@@ -12581,11 +12073,6 @@ eqFrame();
    Сломается — достаточно вырезать этот <style> и следующий <script>.
    ═════════════════════════════════════════════════════════════════════ */
 
-html[data-skin="graphite"] #rail{display:none !important}
-/* Полоска эквалайзера внизу больше не нужна: спектр теперь рисует само
-   кольцо, а «замолчать», которое на ней висело, переехало в орган
-   «Голос» — туда, где его и стали бы искать. */
-html[data-skin="graphite"] #eq{display:none !important}
 html[data-skin="graphite"] body.zhome #main{display:none !important}
 /* Нижняя плашка на главном экране лишняя: всё, что на ней было, теперь
    лежит в своём органе, а поле ввода — это уже разговор, то есть другой
@@ -12986,9 +12473,20 @@ addEventListener('popstate', () => {
 });
 
 function build(){
-  const shell = document.getElementById('shell');
-  const main  = document.getElementById('main');
-  if (!shell || !main || document.getElementById('zstage')) return;
+  const main = document.getElementById('main');
+  if (!main || document.getElementById('zstage')) return;
+
+  /* Контейнер #shell раньше строил рельс режимов. Рельсы больше нет, а
+     контейнер нужен: в нём главный экран стоит РЯДОМ с рабочей областью,
+     а не внутри неё — иначе правило «покажи только эту панель» спрятало бы
+     и его самого. Строим сами, ровно один раз. */
+  let shell = document.getElementById('shell');
+  if (!shell){
+    shell = document.createElement('div');
+    shell.id = 'shell';
+    main.parentNode.insertBefore(shell, main);
+    shell.appendChild(main);
+  }
 
   S = document.createElement('div');
   S.id = 'zstage';
@@ -13050,6 +12548,11 @@ function build(){
   wire();
   geometry();
   new ResizeObserver(geometry).observe(S);
+  /* Экран ПОД главным выбирается заранее. Без класса mode-* ни одно
+     правило «покажи только эту панель» не срабатывает, и стоит сойти с
+     главного — в рабочей области оказываются все панели разом. Заодно
+     это чистит `hub`, оставшийся в памяти от вырезанного пульта. */
+  setMode(remembered());
   document.body.classList.add('zhome');
   say();
   ringLoop();
@@ -13388,6 +12891,15 @@ function pick(z, t, i){
     return; }
 }
 
+const SCREENS = ['chat','voice','face','sys'];
+function remembered(){
+  try { return SCREENS.includes(localStorage.saika_mode) ? localStorage.saika_mode : 'chat'; }
+  catch(e){ return 'chat'; }
+}
+function setMode(m){
+  SCREENS.forEach(x => document.body.classList.toggle('mode-'+x, x === m));
+  try { localStorage.saika_mode = m; } catch(e){}
+}
 function goScreen(m, replace){
   /* Экран, открытый ИЗ веера, заменяет веер в истории, а не ложится
      сверху: «назад» с экрана должно вернуть на главный, а не на веер,
@@ -13397,9 +12909,7 @@ function goScreen(m, replace){
   document.body.classList.remove('zhome');
   say();
   if (!m) return;               // просто сойти с главного, режим не трогаем
-  ['chat','voice','face','sys'].forEach(x =>
-    document.body.classList.toggle('mode-'+x, x === m));
-  try { localStorage.saika_mode = m; } catch(e){}
+  setMode(m);
   if (m === 'voice') hit('#vp-tab');
   if (m === 'face')  hit('#av-tab');
   window.dispatchEvent(new Event('resize'));
@@ -13825,9 +13335,10 @@ const SFX = (() => {
   };
 })();
 
-// Ждём, пока смонтируются остальные слои: рельс строит #shell на +400 мс,
-// а нам нужен уже готовый контейнер.
-const start = () => setTimeout(() => { try{ build(); }catch(e){ console.error('zones:', e); } }, 700);
+// Ждём, пока смонтируются остальные слои: шапка и переключатель темы
+// поднимаются на +300 мс, а барабан «Утилиты» снимает список с шапки.
+// Контейнер #shell мы теперь строим сами, поэтому ждать рельс не нужно.
+const start = () => setTimeout(() => { try{ build(); }catch(e){ console.error('zones:', e); } }, 450);
 if (document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', start);
 else start();
