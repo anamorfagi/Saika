@@ -34,11 +34,11 @@ import threading
 import time
 from pathlib import Path
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.transcript")
 
-DIR = ROOT / "data" / "transcript"
+DIR = DATA_ROOT / "data" / "transcript"
 MAX_LINES = 4000
 
 

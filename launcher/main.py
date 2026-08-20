@@ -152,12 +152,32 @@ def start_server() -> subprocess.Popen | None:
     # Кэш COM-обёрток: в папке приложения его писать нельзя (Program Files
     # закрыт на запись), а без своего места comtypes попробует и упадёт.
     env.setdefault("COMTYPES_CACHE_DIR", str(ROOT / "data" / "comtypes"))
+    # Вкладку в браузере сервер не открывает: окно откроем мы сами. Без
+    # этого на каждый запуск получалось два интерфейса — окно приложения
+    # и вкладка поверх него, оба живые и оба слушают один сервер.
+    env["SAIKA_AUTO_OPEN"] = "0"
+    env["ANAMORF_AUTO_OPEN"] = "0"
     env.setdefault("HF_HOME", str(ROOT / "models" / "hf"))
     env.setdefault("TORCH_HOME", str(ROOT / "models" / "torch"))
     say(f"запускаю сервер, версия {version()}")
     flags = 0x08000000 if os.name == "nt" else 0        # без чёрного окна
+
+    # Вывод сервера ОБЯЗАН куда-то деваться. Первый же запуск собранного
+    # билда упал за секунду, и разбираться было не с чем: окна нет, поток
+    # вывода некуда деть — он и пропал. «Не запустилось, причина неизвестна»
+    # — худшее, что программа может сказать человеку.
+    LOGS.mkdir(parents=True, exist_ok=True)
+    log_path = LOGS / "server.log"
+    try:
+        out = open(log_path, "a", encoding="utf-8", errors="replace")
+        out.write(f"\n{'=' * 60}\n{time.strftime('%Y-%m-%d %H:%M:%S')} "
+                  f"запуск {version()}\n{'=' * 60}\n")
+        out.flush()
+    except Exception:
+        out = subprocess.DEVNULL
     return subprocess.Popen([str(py), "-m", "anamorf.main"],
-                            cwd=str(APP), env=env, creationflags=flags)
+                            cwd=str(APP), env=env, creationflags=flags,
+                            stdout=out, stderr=subprocess.STDOUT)
 
 
 def wait_ready(proc: subprocess.Popen, p: int) -> bool:
@@ -179,17 +199,59 @@ def open_window(url: str) -> None:
 
     Окно приятнее, но падать из-за его отсутствия было бы глупо: человеку
     нужна Сайка, а не именно окно.
+
+    МИКРОФОН СПРАШИВАЕТСЯ ОДИН РАЗ, А НЕ КАЖДЫЙ ЗАПУСК.
+
+    Окно рисует WebView2, и для него наше приложение — обычный сайт. По
+    умолчанию pywebview открывает его в приватном режиме: ничего не
+    сохраняется между запусками, включая выданные разрешения. Отсюда и
+    брало «Сайт 127.0.0.1:8765 хочет использовать микрофон» при каждом
+    старте — а человек этот микрофон уже разрешил, и не раз.
+
+    Закрываем это с двух сторон.
+
+    Первое: постоянный профиль окна в data\webview. Разрешение, выданное
+    однажды, переживает перезапуск, как в обычном браузере.
+
+    Второе: флаг --auto-accept-camera-and-microphone-capture. Микрофоном
+    в приложении управляет кнопка «Слушать», и переспрашивать поверх неё
+    системным окном — значит спрашивать дважды об одном и том же.
+    Именно этот флаг, а НЕ --use-fake-ui-for-media-stream: второй заодно
+    проглатывает запрос на захват экрана, а зрение Сайки работает через
+    него, и мы бы молча разрешили ещё и это.
+
+    Оговорка: если приложение запущено от администратора, WebView2
+    игнорирует флаги из переменных окружения. Тогда работает первый
+    способ — спросит один раз и запомнит.
     """
+    store = ROOT / "data" / "webview"
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    flags = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+    if "auto-accept-camera-and-microphone-capture" not in flags:
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+            flags + " --auto-accept-camera-and-microphone-capture").strip()
+
     try:
         import webview
     except ImportError:
         say("окна нет, открываю вкладку в браузере")
         webbrowser.open(url)
         return
+
     say("открываю окно")
     webview.create_window("ANAMORF", url, width=1360, height=900,
                           min_size=(900, 620), text_select=True)
-    webview.start()
+    try:
+        webview.start(private_mode=False, storage_path=str(store))
+    except TypeError:
+        # Старая версия pywebview без этих параметров — не повод не
+        # открыть окно. Разрешение будет спрашиваться, но работать будет.
+        say("версия окна старая — профиль не сохраняю")
+        webview.start()
 
 
 # ------------------------------------------------------------------ ход
@@ -219,7 +281,17 @@ def main() -> int:
                 say("вернулась на предыдущую версию, она работает")
                 open_window(f"http://127.0.0.1:{p}")
                 return 0
-        say("запустить не получилось. Загляни в data\\logs\\launcher.log")
+        # Показываем хвост прямо здесь: человек не должен искать файл,
+        # чтобы узнать, почему ничего не произошло.
+        try:
+            tail = (LOGS / "server.log").read_text(
+                encoding="utf-8", errors="replace").strip().split("\n")[-12:]
+            say("последнее, что сказал сервер:")
+            for line in tail:
+                say("   " + line)
+        except Exception:
+            pass
+        say("подробности: data\\logs\\server.log")
         return 1
 
     started = time.time()

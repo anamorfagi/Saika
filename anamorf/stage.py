@@ -22,9 +22,9 @@ from __future__ import annotations
 import os
 import time
 
-from anamorf.config import ROOT
+from anamorf.config import ROOT, DATA_ROOT
 
-PATH = ROOT / "data" / "last_stage.txt"
+PATH = DATA_ROOT / "data" / "last_stage.txt"
 _ON = os.environ.get("SAIKA_STAGE", "1") != "0"
 
 

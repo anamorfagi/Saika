@@ -34,7 +34,7 @@ import time
 
 import requests
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 try:
     import logging
@@ -42,7 +42,7 @@ try:
 except Exception:  # pragma: no cover
     log = None
 
-PATH = ROOT / "data" / "model_passports.json"
+PATH = DATA_ROOT / "data" / "model_passports.json"
 VERSION = 2  # v2 (2026-07-23): + проба формата tool-вызовов (tools_native)
 _lock = threading.Lock()
 _probing = set()  # модели, которые щупаются прямо сейчас (не дублировать)

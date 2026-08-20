@@ -58,11 +58,11 @@ import logging
 import re
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.services")
 
-PATH = ROOT / "data" / "services.json"
+PATH = DATA_ROOT / "data" / "services.json"
 
 # Виды сервисов, у которых «включи X» зависит от человека. Список короткий
 # намеренно: это не каталог сайтов, а места, где угадывание вредит.

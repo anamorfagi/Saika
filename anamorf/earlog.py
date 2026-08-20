@@ -38,11 +38,11 @@ from pathlib import Path
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.earlog")
 
-DIR = ROOT / "data" / "earlog"
+DIR = DATA_ROOT / "data" / "earlog"
 MAX_ITEMS = 40000          # ~ несколько часов; дальше кольцо
 MIN_CLUSTER = 3            # меньше — обрывки, а не отдельный голос/звук
 

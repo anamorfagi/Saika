@@ -33,11 +33,11 @@ import logging
 import time
 from pathlib import Path
 
-from anamorf.config import ROOT
+from anamorf.config import ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.habits")
 
-STORE = ROOT / "data" / "desk_habits.json"
+STORE = DATA_ROOT / "data" / "desk_habits.json"
 
 MIN_TIMES = 3          # сколько раз увидеть, чтобы предложить
 MIN_AREA = 0.15        # доля экрана, ниже которой окно в раскладку не идёт

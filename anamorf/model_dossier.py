@@ -38,11 +38,11 @@ import logging
 import re
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.dossier")
 
-PATH = ROOT / "data" / "model_dossier.json"
+PATH = DATA_ROOT / "data" / "model_dossier.json"
 _cache: dict = {}
 _loaded = 0.0
 

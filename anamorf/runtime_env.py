@@ -43,6 +43,16 @@ log = logging.getLogger("runtime")
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+# Корень данных — на уровень выше кода, когда мы внутри собранного
+# приложения (app\ по соседству с runtime\). Логика повторяет
+# anamorf/config.py намеренно: эти три модуля обязаны работать до того,
+# как поднимется конфиг, и тянуть его ради одной строки — значит
+# заводить порядок импортов там, где он не нужен.
+DATA_ROOT = (ROOT.parent
+             if ROOT.name == "app" and (ROOT.parent / "runtime").is_dir()
+             else ROOT)
+
 # ---------------------------------------------------------------- где мы
 
 def _is_dev() -> bool:
@@ -139,7 +149,7 @@ def _download_pack(feature_id: str) -> tuple[bool, str]:
         _add_path(dest)
         return True, "компонент уже на месте"
 
-    tmp = ROOT / "data" / "downloads"
+    tmp = DATA_ROOT / "data" / "downloads"
     tmp.mkdir(parents=True, exist_ok=True)
     zip_path = tmp / f"{feature_id}.zip"
 

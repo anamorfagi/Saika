@@ -26,7 +26,7 @@ from fastapi import (FastAPI, File, Request, UploadFile, WebSocket,
                      WebSocketDisconnect, HTTPException)
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
-from anamorf.config import CFG, ROOT, resolve
+from anamorf.config import CFG, ROOT, DATA_ROOT, resolve
 # Необязательные подсистемы берём через реестр фич, а не прямым импортом:
 # в сборке без них файла просто нет, и обычный import уронил бы запуск
 # раньше, чем система успеет сказать, чего не хватает.
@@ -52,8 +52,17 @@ from anamorf import hear_load          # предохранитель реаль
 hear_bench = features.optional("bench")          # стенд «волна ↔ текст» (2026-08-15)
 from anamorf import misheard            # ремонт написания и метка «шатко»
 from anamorf.draft import DRAFT
-from anamorf.earlog import EARLOG
-from anamorf.transcript import TRANSCRIPT, mood_of
+# Журнал слуха и стенограмма — лабораторные, в базовую сборку не едут.
+# Берём объекты через реестр: есть фича — настоящие, нет — заглушка,
+# которая объяснит словами, если её всё-таки позовут.
+_earlog_mod = features.optional("earlog")
+EARLOG = getattr(_earlog_mod, "EARLOG", _earlog_mod)
+_script_mod = features.optional("script", "transcript")
+TRANSCRIPT = getattr(_script_mod, "TRANSCRIPT", _script_mod)
+# mood_of зовётся в разборе речи, а не по кнопке: здесь заглушка должна
+# молча вернуть «никакой», иначе отсутствие лабораторной фичи уронит
+# обычный разговор.
+mood_of = getattr(_script_mod, "mood_of", lambda *a, **k: "")
 from anamorf.guard import GUARD
 from anamorf.memory.memory import Memory, start_scheduler
 
@@ -73,7 +82,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
     handlers=[logging.StreamHandler(),
-              logging.FileHandler(ROOT / "logs" / "saika.log", encoding="utf-8")])
+              logging.FileHandler(DATA_ROOT / "logs" / "saika.log", encoding="utf-8")])
 log = logging.getLogger("saika")
 # шумные логгеры: sox ворчит про отсутствие бинарника (он не нужен),
 # qwen_tts сыпет INFO про дефолтные конфиги при каждой загрузке
@@ -1392,7 +1401,7 @@ def earlog_adopt(payload: dict):
 def earlog_file(fname: str):
     # отчёт открывается ссылкой из интерфейса; имя чистим — путь наружу не даём
     safe = "".join(c for c in fname if c.isalnum() or c in "._-")
-    p = ROOT / "data" / "earlog" / safe
+    p = DATA_ROOT / "data" / "earlog" / safe
     if not p.exists():
         raise HTTPException(status_code=404, detail="нет такого отчёта")
     return FileResponse(p, media_type="text/html; charset=utf-8")
@@ -1423,8 +1432,8 @@ def transcript_stop():
 
 @app.get("/transcript/{fname}")
 def transcript_file(fname: str):
-    p = (ROOT / "data" / "transcript" / fname).resolve()
-    if not str(p).startswith(str((ROOT / "data" / "transcript").resolve())) \
+    p = (DATA_ROOT / "data" / "transcript" / fname).resolve()
+    if not str(p).startswith(str((DATA_ROOT / "data" / "transcript").resolve())) \
             or not p.exists():
         return PlainTextResponse("нет такого файла", status_code=404)
     return FileResponse(str(p), media_type="text/markdown")
@@ -3007,6 +3016,11 @@ def dialog_clear():
 
 @app.get("/api/git/status")
 def git_status():
+    if not git_sync:
+        # Панель опрашивает статус каждые 15 секунд. В сборке без git это
+        # тихое «нечего показывать», а не ошибка: интерфейс сам спрячет
+        # блок, а лог не заполнится трейсбеками.
+        return {"is_repo": False, "reason": "git-панель не входит в эту сборку"}
     return git_sync.status()
 
 
@@ -9273,7 +9287,7 @@ def _autostart_components():
 
 
 def main():
-    (ROOT / "logs").mkdir(exist_ok=True)
+    (DATA_ROOT / "logs").mkdir(exist_ok=True)
     dreampc.kill_stale()  # чистим детач-воркер с прошлого запуска (если завис)
     train_manager.kill_stale()  # то же для воркера дообучения
     from anamorf.llm import locallm as _locallm
@@ -9595,7 +9609,7 @@ def main():
     # отметка «стек поднялся»: doctor.py --fast видит свежую метку и
     # пропускает полный осмотр (полный — после падения или раз в сутки)
     try:
-        (ROOT / "logs" / "boot_ok.json").write_text(
+        (DATA_ROOT / "logs" / "boot_ok.json").write_text(
             json.dumps({"ts": time.time()}), encoding="utf-8")
     except Exception:
         pass

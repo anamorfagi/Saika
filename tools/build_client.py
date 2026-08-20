@@ -110,11 +110,27 @@ def hard_refs(owner: dict[str, str], on: set[str]) -> list[tuple]:
             tree = ast.parse(p.read_text(encoding="utf-8"))
         except Exception:
             continue
-        for node in tree.body:            # ТОЛЬКО верхний уровень
+        # Верхний уровень — ошибка сборки: такой импорт исполнится при
+        # запуске. Импорт внутри функции — предупреждение: он законен,
+        # если стоит под features.on(), и смертелен, если нет. Отличить
+        # автоматически нельзя, поэтому показываем и даём решить.
+        deep = [n for n in ast.walk(tree)
+                if isinstance(n, (ast.Import, ast.ImportFrom))
+                and n not in tree.body]
+        for node in list(tree.body) + deep:
             names = []
             if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("anamorf"):
                 tail = (node.module or "")[len("anamorf"):].lstrip(".")
-                names = [f"{tail}/{a.name}" if tail else a.name for a in node.names]
+                # `from anamorf.earlog import EARLOG` — здесь модуль это
+                # earlog, а EARLOG внутри него объект. Проверять надо ОБА
+                # варианта: и сам путь, и путь с добавленным именем (случай
+                # `from anamorf.stt import manager`). Раньше проверялся
+                # только второй — и жёсткий импорт лаборатории в main.py
+                # спокойно прошёл проверку и упал уже в собранном билде.
+                if tail:
+                    names.append(tail)
+                names += [f"{tail}/{a.name}" if tail else a.name
+                          for a in node.names]
             elif isinstance(node, ast.Import):
                 names = [a.name[len("anamorf."):] for a in node.names
                          if a.name.startswith("anamorf.")]
@@ -123,7 +139,8 @@ def hard_refs(owner: dict[str, str], on: set[str]) -> list[tuple]:
                         n.replace(".", "/") + "/__init__.py")
                 dep = next((owner[c] for c in cand if c in owner), None)
                 if dep and dep not in on:
-                    out.append((rel, node.lineno, n, dep))
+                    out.append((rel, node.lineno, n, dep,
+                                node in tree.body))
     return out
 
 
@@ -136,13 +153,21 @@ def check(feats: dict, on: set[str]) -> int:
 
     print("1. Жёсткие ссылки на выключенные фичи")
     refs = hard_refs(owner, on)
-    if refs:
-        problems += len(refs)
-        for rel, line, name, dep in refs:
-            print(f"   anamorf/{rel}:{line}  зовёт {name} (фича «{dep}»)")
+    top = [r for r in refs if r[4]]
+    deep = [r for r in refs if not r[4]]
+    if top:
+        problems += len(top)
+        for rel, line, name, dep, _ in top:
+            print(f"   anamorf/{rel}:{line}  зовёт {name} (фича «{dep}») "
+                  f"— НА ВЕРХНЕМ УРОВНЕ")
         print("   → заверни импорт в функцию и в features.on(\"фича\")")
     else:
         print("   нет — выключенное никто не тянет при старте")
+    if deep:
+        print("   отложенные импорты выключенного (проверь, что под "
+              "features.on):")
+        for rel, line, name, dep, _ in deep:
+            print(f"     anamorf/{rel}:{line}  {name} (фича «{dep}»)")
 
     print("\n2. Модули вне реестра")
     orphans = [p.relative_to(PKG).as_posix() for p in PKG.rglob("*.py")
@@ -231,6 +256,27 @@ def assemble(feats: dict, on: set[str], version: str) -> Path:
 
     shutil.copytree(ROOT / "ui", app / "ui", dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__"))
+
+    # РЕСУРСЫ ФИЧ. Кода мало — без модели аватара он рисует облачко вместо
+    # персонажа, а без бинаря движка чип модели остаётся пустым. Раньше в
+    # билд ехали только .py и ui/, и это было видно с первого запуска.
+    for fid in sorted(on):
+        for rel in feats[fid].get("assets", []):
+            src = ROOT / rel.rstrip("/")
+            if not src.exists():
+                print(f"   ! нет ресурса {rel} (фича «{fid}»)")
+                continue
+            dst = app / rel.rstrip("/")
+            if src.is_dir():
+                shutil.copytree(src, dst, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns(
+                                    "__pycache__", "*.pyc", ".git"))
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+            size = sum(f.stat().st_size for f in dst.rglob("*")
+                       if f.is_file()) if dst.is_dir() else dst.stat().st_size
+            print(f"   ресурс {rel} — {size / 1e6:.0f} МБ")
     for f in ("features.json", "packs.json", "config.default.json", "VERSION"):
         if (ROOT / f).exists():
             shutil.copy2(ROOT / f, app / f)
@@ -242,11 +288,43 @@ def assemble(feats: dict, on: set[str], version: str) -> Path:
         "features": sorted(on),
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    # Готовый runtime кладём рядом, если он уже собран: build_client
+    # отвечает за код, make_runtime — за интерпретатор, и смешивать эти две
+    # долгие операции в одну кнопку неудобно.
+    rt = OUT_ROOT / "runtime"
+    if rt.is_dir():
+        shutil.copytree(rt, out / "runtime", dirs_exist_ok=True)
+        print("   runtime\\ скопирован")
+    exe = OUT_ROOT / "ANAMORF.exe"
+    if exe.exists():
+        shutil.copy2(exe, out / "ANAMORF.exe")
+        print("   ANAMORF.exe скопирован")
+
+    for d in ("models", "data"):
+        (out / d).mkdir(exist_ok=True)
+
+    (out / "ЧИТАТЬ.txt").write_text(
+        "ANAMORF " + version + "\n\n"
+        "Запуск — ANAMORF.exe.\n\n"
+        "Что где лежит:\n"
+        "  app\\       код. Обновления меняют только его.\n"
+        "  runtime\\   интерпретатор и библиотеки.\n"
+        "  models\\    модели. Обновление их не трогает.\n"
+        "  data\\      память, настройки, профили голоса. Тоже не трогает.\n\n"
+        "Если что-то пошло не так — data\\logs\\launcher.log.\n",
+        encoding="utf-8")
+
     print(f"\nсобрано: {out}")
     print(f"   файлов кода: {n}")
-    print("   ui/ скопирован, build.json записан")
-    print("\nЧего ещё нет: runtime\\ с интерпретатором и ANAMORF.exe — "
-          "это следующий шаг.")
+    missing = [x for x, ok in (("runtime\\", rt.is_dir()),
+                               ("ANAMORF.exe", exe.exists())) if not ok]
+    if missing:
+        print("\nЧего не хватает до запускаемого билда: " + ", ".join(missing))
+        print("   runtime:  python tools\\make_runtime.py --profile base --apply")
+        print("   лаунчер:  pyinstaller launcher\\ANAMORF.spec "
+              "--distpath build --workpath build\\_pyi")
+    else:
+        print("\nБилд запускаемый. Проверь его на чистой машине без Python.")
     return out
 
 

@@ -8,9 +8,9 @@
 import json
 import threading
 
-from anamorf.config import ROOT
+from anamorf.config import ROOT, DATA_ROOT
 
-PATH = ROOT / "data" / "ratings.json"
+PATH = DATA_ROOT / "data" / "ratings.json"
 _lock = threading.Lock()
 
 

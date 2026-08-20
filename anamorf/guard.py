@@ -31,12 +31,12 @@ import threading
 import time
 from pathlib import Path
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.guard")
 
-BOX = ROOT / "logs" / "blackbox.jsonl"
-BOX_PREV = ROOT / "logs" / "blackbox.prev.jsonl"
+BOX = DATA_ROOT / "logs" / "blackbox.jsonl"
+BOX_PREV = DATA_ROOT / "logs" / "blackbox.prev.jsonl"
 MAX_BOX_BYTES = 2 * 2**20        # ~2 МБ ≈ несколько часов записей
 
 

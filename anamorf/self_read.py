@@ -30,7 +30,7 @@ import logging
 import re
 from pathlib import Path
 
-from anamorf.config import CFG
+from anamorf.config import DATA_ROOT, CFG
 
 log = logging.getLogger("saika.selfread")
 
@@ -51,7 +51,7 @@ _MAX_HITS = 40             # сколько совпадений показыв�
 
 def _roots() -> list[Path]:
     """Куда пускаем. Плюс то, что владелец добавил в selfread.extra_roots."""
-    out = [ROOT / "logs"]
+    out = [DATA_ROOT / "logs"]
     for d in _CODE_DIRS:
         p = ROOT / d
         if p.is_dir():
@@ -100,7 +100,7 @@ def _cut(text: str) -> str:
 
 
 def _log_path() -> Path:
-    return ROOT / "logs" / "saika.log"
+    return DATA_ROOT / "logs" / "saika.log"
 
 
 def _tail_lines(path: Path, limit: int = 4000) -> list[str]:

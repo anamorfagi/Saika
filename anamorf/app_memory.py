@@ -36,11 +36,11 @@ import re
 import time
 from pathlib import Path
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.pc")
 
-STORE = ROOT / "data" / "app_aliases.json"
+STORE = DATA_ROOT / "data" / "app_aliases.json"
 _IS_WIN = os.name == "nt"
 
 # что предложили человеку и ждём ответа «да». Живёт минуту: дольше — это уже

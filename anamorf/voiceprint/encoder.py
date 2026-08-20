@@ -24,7 +24,7 @@ import threading
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.voiceprint")
 
@@ -185,7 +185,7 @@ class Encoder:
                     from speechbrain.inference.speaker import EncoderClassifier
                 except Exception:         # speechbrain < 1.0
                     from speechbrain.pretrained import EncoderClassifier
-                savedir = ROOT / "models" / "ecapa"
+                savedir = DATA_ROOT / "models" / "ecapa"
                 savedir.mkdir(parents=True, exist_ok=True)
                 # ГДЕ СЧИТАТЬ ОТПЕЧАТОК (2026-08-14, владелец: «а чё у
                 # меня ЦП так сильно грузить стало»). Стало — потому что

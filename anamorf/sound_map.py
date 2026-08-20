@@ -28,11 +28,11 @@ import time
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.soundmap")
 
-PATH = ROOT / "data" / "sound_map.json"
+PATH = DATA_ROOT / "data" / "sound_map.json"
 MAX_SOURCES = 64
 
 _lock = threading.Lock()

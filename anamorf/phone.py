@@ -33,7 +33,7 @@ import secrets
 import socket
 import subprocess
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.phone")
 
@@ -225,7 +225,7 @@ CERT_DIR = None
 
 
 def _cert_paths():
-    d = ROOT / "data" / "cert"
+    d = DATA_ROOT / "data" / "cert"
     return d / "saika.crt", d / "saika.key"
 
 

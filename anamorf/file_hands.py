@@ -16,7 +16,7 @@ import shutil
 import time
 from pathlib import Path
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.files")
 
@@ -210,7 +210,7 @@ def fs_close_windows() -> str:
 # Пользователь один раз называет папку по-человечески, Сайка запоминает имя
 # -> путь. Дальше «открой рабочую папку» знает, где это. Живёт в
 # data/places.json. НЕ ограничено files.roots (это закладки, а не операции).
-_PLACES = ROOT / "data" / "places.json"
+_PLACES = DATA_ROOT / "data" / "places.json"
 
 
 def _places_load() -> dict:

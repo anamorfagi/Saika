@@ -31,9 +31,9 @@ from __future__ import annotations
 import json
 import time
 
-from anamorf.config import ROOT
+from anamorf.config import ROOT, DATA_ROOT
 
-PATH = ROOT / "data" / "repairs.json"
+PATH = DATA_ROOT / "data" / "repairs.json"
 MAX = 60
 
 

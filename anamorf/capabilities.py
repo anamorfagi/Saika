@@ -18,13 +18,13 @@ import json
 import threading
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 import logging
 
 log = logging.getLogger("saika.caps")
 
-PATH = ROOT / "data" / "model_caps.json"
+PATH = DATA_ROOT / "data" / "model_caps.json"
 _lock = threading.Lock()
 
 # скорее ВИДЯТ (мультимодальные семейства)

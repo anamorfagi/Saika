@@ -137,7 +137,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("feature", nargs="?", help="какой блок собрать")
     ap.add_argument("--all", action="store_true")
-    ap.add_argument("--version", default="0.9.5")
+    ap.add_argument("--version",
+                    default=(ROOT / "VERSION").read_text(encoding="utf-8").strip()
+                    if (ROOT / "VERSION").exists() else "0.0.0")
     ap.add_argument("--from", dest="from_dir", default=None,
                     help="упаковать готовое окружение, а не ставить заново")
     a = ap.parse_args()

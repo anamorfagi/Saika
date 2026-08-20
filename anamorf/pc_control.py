@@ -36,12 +36,12 @@ import threading
 import time
 from pathlib import Path
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.pc")
 
 _IS_WIN = os.name == "nt"
-INDEX_PATH = ROOT / "data" / "app_index.json"
+INDEX_PATH = DATA_ROOT / "data" / "app_index.json"
 _index: dict = {"apps": [], "built": 0.0}
 
 # Что в каталог не берём никогда: деинсталляторы, «прочитай меня», ссылки на

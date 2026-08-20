@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT, resolve
+from anamorf.config import CFG, ROOT, DATA_ROOT, resolve
 from anamorf import diagnostics
 
 log = logging.getLogger("saika.tts")
@@ -593,8 +593,8 @@ class OffEngine:
 # первое место. Три перезапуска подряд с одним и тем же крахом. Крошка
 # закрывает петлю: два обвала на загрузке — движок уходит в tts.disabled,
 # который загрузчик уже уважает, и человек видит почему.
-_CRUMB = ROOT / "data" / "tts_loading.txt"
-_STRIKES = ROOT / "data" / "tts_strikes.json"
+_CRUMB = DATA_ROOT / "data" / "tts_loading.txt"
+_STRIKES = DATA_ROOT / "data" / "tts_strikes.json"
 _HEAVY = ("qwen3", "omni", "xtts", "f5")     # те, кто умеет ронять процесс
 
 
@@ -684,7 +684,7 @@ def forget_strikes(name: str) -> None:
             pass
 
 
-_SICK_FILE = ROOT / "data" / "tts_sick.json"
+_SICK_FILE = DATA_ROOT / "data" / "tts_sick.json"
 
 
 def _sick_load() -> dict:

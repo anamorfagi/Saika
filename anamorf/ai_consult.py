@@ -17,7 +17,7 @@ import time
 
 import requests
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.consult")
 _last = {"ts": 0.0}
@@ -39,7 +39,7 @@ def available() -> bool:
 
 def _log_tail(n_chars: int = 4000) -> str:
     try:
-        return (ROOT / "logs" / "saika.log").read_text(
+        return (DATA_ROOT / "logs" / "saika.log").read_text(
             encoding="utf-8", errors="ignore")[-n_chars:]
     except Exception:
         return ""

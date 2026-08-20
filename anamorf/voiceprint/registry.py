@@ -24,12 +24,12 @@ import time
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 from anamorf.voiceprint.encoder import cosine
 
 log = logging.getLogger("saika.voiceprint")
 
-DIR = ROOT / "data" / "voiceprint"
+DIR = DATA_ROOT / "data" / "voiceprint"
 MAX_POINTS = 4000          # кольцо истории облака (4000 x 192 float32 ≈ 3МБ)
 MAX_ENROLL = 120           # эталонных векторов на человека
 

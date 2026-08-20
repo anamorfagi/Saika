@@ -70,11 +70,11 @@ import logging
 import re
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.psyche")
 
-PATH = ROOT / "data" / "psyche.json"
+PATH = DATA_ROOT / "data" / "psyche.json"
 
 # ────────────────────────── умения ──────────────────────────
 # Крупные области, по которым имеет смысл вести отдельную веру в себя.

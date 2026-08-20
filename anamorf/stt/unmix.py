@@ -35,7 +35,7 @@ import time
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.unmix")
 
@@ -60,7 +60,7 @@ def _load():
             from speechbrain.inference.separation import SepformerSeparation
             src = str(CFG.get("stt.unmix.model",
                               "speechbrain/sepformer-whamr16k"))
-            dst = ROOT / "models" / "sepformer"
+            dst = DATA_ROOT / "models" / "sepformer"
             dev = "cuda" if (CFG.get("stt.unmix.device", "cuda") == "cuda"
                              and torch.cuda.is_available()) else "cpu"
             _model = SepformerSeparation.from_hparams(

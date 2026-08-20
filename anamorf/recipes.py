@@ -39,11 +39,11 @@ import logging
 import re
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.recipes")
 
-PATH = ROOT / "data" / "recipes.json"
+PATH = DATA_ROOT / "data" / "recipes.json"
 _CACHE: list | None = None
 MAX = 200
 
@@ -233,7 +233,7 @@ def replay(rec: dict, on_step=None, user_text: str = "") -> dict:
 # Поэтому память ошибок здесь — не «учись на неудачах вообще», а список
 # конкретных тупиков: такая-то попытка при такой-то цели не сработала.
 # Он идёт В ПРОМПТ решения, чтобы второй раз в ту же дверь не ломиться.
-FAILS = ROOT / "data" / "recipe_fails.json"
+FAILS = DATA_ROOT / "data" / "recipe_fails.json"
 _FCACHE: list | None = None
 
 

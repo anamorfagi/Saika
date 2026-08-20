@@ -25,12 +25,12 @@ import logging
 import threading
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.knobs")
 
-PATH = ROOT / "data" / "knobs.json"
-ACK = ROOT / "data" / "knobs_ack.json"
+PATH = DATA_ROOT / "data" / "knobs.json"
+ACK = DATA_ROOT / "data" / "knobs_ack.json"
 
 # Белый список: что напарнику можно крутить. Всё — настройки слуха и
 # звука; ни файлов, ни системы, ни сети отсюда не достать.

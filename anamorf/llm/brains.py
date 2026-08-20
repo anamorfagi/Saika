@@ -31,7 +31,7 @@ import logging
 import re
 import time
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.brains")
 
@@ -223,7 +223,7 @@ def rank_of(model: str, backend: str = "") -> int:
 # Теперь на диске лежит очередь последних: кем реально отвечали, когда и
 # сколько раз. Это НЕ рейтинг — рейтинг про ум. Это привычка: при равном
 # уме первым берётся тот, с кем работали, а не случайный сосед по таблице.
-RECENT_PATH = ROOT / "data" / "brain_recent.json"
+RECENT_PATH = DATA_ROOT / "data" / "brain_recent.json"
 _RECENT: list | None = None
 RECENT_MAX = 24
 

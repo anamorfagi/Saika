@@ -21,3 +21,12 @@ try:
     _activate_packs()
 except Exception:               # нет блоков / первый запуск
     pass
+
+# Модули выключенных фич — заглушкой, а не ошибкой импорта. Ставим до
+# всего остального: в коде полно отложенных импортов внутри функций, и
+# перехватчик должен стоять раньше, чем до них дойдёт очередь.
+try:
+    from anamorf.features import install_import_guard as _guard_imports
+    _guard_imports()
+except Exception:               # нет реестра / рабочая копия
+    pass

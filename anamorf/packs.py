@@ -36,9 +36,19 @@ from pathlib import Path
 log = logging.getLogger("packs")
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+# Корень данных — на уровень выше кода, когда мы внутри собранного
+# приложения (app\ по соседству с runtime\). Логика повторяет
+# anamorf/config.py намеренно: эти три модуля обязаны работать до того,
+# как поднимется конфиг, и тянуть его ради одной строки — значит
+# заводить порядок импортов там, где он не нужен.
+DATA_ROOT = (ROOT.parent
+             if ROOT.name == "app" and (ROOT.parent / "runtime").is_dir()
+             else ROOT)
 MANIFEST_PATH = ROOT / "packs.json"          # что вообще бывает и откуда качать
 PACKS_DIR = ROOT / "runtime" / "packs"       # куда распаковано
-STATE_PATH = ROOT / "data" / "packs.json"    # что стоит на этой машине
+STATE_PATH = DATA_ROOT / "data" / "packs.json"    # что стоит на этой машине
 
 _activated: set[str] = set()
 
@@ -172,7 +182,7 @@ def install(feature_id: str, on_progress=None) -> tuple[bool, str]:
         return False, ("этот компонент пока не выложен — он появится "
                        "в одном из следующих обновлений")
 
-    tmp_dir = ROOT / "data" / "downloads"
+    tmp_dir = DATA_ROOT / "data" / "downloads"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     zip_path = tmp_dir / f"{feature_id}.zip"
 

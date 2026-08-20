@@ -5,7 +5,42 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.json"
+
+
+def _data_root() -> Path:
+    r"""Где живёт нажитое: память, логи, модели, настройки человека.
+
+    В рабочей копии это тот же корень, что и у кода, — там всё в одной
+    папке, и так удобнее. В собранном приложении раскладка другая:
+
+        ANAMORF\
+          app\        ← код. ОБНОВЛЕНИЕ ЗАМЕНЯЕТ ЕГО ЦЕЛИКОМ
+          runtime\    ← интерпретатор
+          data\       ← память и профили голоса
+          models\     ← модели
+          logs\       ← логи
+
+    Код лежит в app\, и если писать данные рядом с ним, первое же
+    обновление унесёт их вместе с папкой. Поэтому данные — на уровень
+    выше. Распознаём сборку по соседству с runtime\: ни в одной рабочей
+    копии такого соседа нет.
+    """
+    if ROOT.name == "app" and (ROOT.parent / "runtime").is_dir():
+        return ROOT.parent
+    return ROOT
+
+
+DATA_ROOT = _data_root()
+# Папки должны существовать раньше первого обращения: логирование
+# настраивается на самой ранней строке main.py и падает, если каталога нет.
+for _d in ("data", "logs", "models"):
+    try:
+        (DATA_ROOT / _d).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+# Настройки человека живут рядом с его данными, а не с кодом.
+CONFIG_PATH = DATA_ROOT / "config.json"
 # Значения по умолчанию едут вместе с приложением и обновляются вместе с ним.
 # Из них рождается config.json на чистой машине — чтобы у человека после
 # установки был рабочий файл, а не пустота, и чтобы личные значения автора
@@ -207,9 +242,16 @@ CFG = Config()
 
 
 def resolve(rel_path: str) -> Path:
-    """Путь относительно корня проекта."""
+    """Путь относительно корня проекта.
+
+    Пути в data/, logs/ и models/ уводим к корню ДАННЫХ: в собранном
+    приложении это другая папка, и путать их нельзя — потеряется нажитое.
+    """
     p = Path(rel_path)
-    return p if p.is_absolute() else ROOT / p
+    if p.is_absolute():
+        return p
+    first = p.parts[0] if p.parts else ""
+    return (DATA_ROOT if first in ("data", "logs", "models") else ROOT) / p
 
 
 # Локальный ffmpeg (tools/ffmpeg/bin) добавляем в PATH процесса —
@@ -222,8 +264,8 @@ if _ffmpeg_bin.exists():
 
 # Все кэши моделей — внутри проекта (переносимый диск, ничего на C:).
 # Важно: выставляем ДО импорта huggingface_hub/torch, поэтому здесь.
-os.environ.setdefault("HF_HOME", str(ROOT / "models" / "hf"))
-os.environ.setdefault("TORCH_HOME", str(ROOT / "models" / "torch"))
+os.environ.setdefault("HF_HOME", str(DATA_ROOT / "models" / "hf"))
+os.environ.setdefault("TORCH_HOME", str(DATA_ROOT / "models" / "torch"))
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 # HF по умолчанию рвёт соединение через 10 сек — на нестабильной/медленной
 # сети это даёт бесконечные «read operation timed out» и загрузки крупных

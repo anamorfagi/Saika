@@ -19,11 +19,11 @@ import threading
 import time
 from pathlib import Path
 
-from anamorf.config import CFG, ROOT, resolve
+from anamorf.config import CFG, ROOT, DATA_ROOT, resolve
 from anamorf import runtime_env
 
 log = logging.getLogger("saika.hotkeys")
-PATH = ROOT / "data" / "hotkeys.json"
+PATH = DATA_ROOT / "data" / "hotkeys.json"
 _lock = threading.Lock()
 _kb_registered = {}   # trigger -> hook (для клавиатурных)
 

@@ -37,11 +37,11 @@ from pathlib import Path
 
 import numpy as np
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.bench")
 
-DIR = ROOT / "data" / "hear_bench"
+DIR = DATA_ROOT / "data" / "hear_bench"
 INDEX = DIR / "index.jsonl"
 
 _lock = threading.Lock()
