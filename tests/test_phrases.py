@@ -95,4 +95,46 @@ def run():
             bad.append((phrase[:30], "поймал зря"))
     rows.append(("открыть сайт — рефлексом", not bad,
                  f"разошлось: {bad}" if bad else f"{len(cases)} фраз"))
+    rows += run_windows_and_browser()
+    return rows
+
+
+def run_windows_and_browser():
+    """ЖИВОЙ РАЗНОС 20.08.2026 — три промаха подряд в одном разговоре."""
+    rows = []
+    from server import reflex
+    from server.ui_hands import guess_from_phrase
+
+    # 1. «Перенеси» — это переезд, а не перепланировка. Было: «размещено
+    #    по центру экрана 1, занимает 80% ширины и высоты».
+    hit = reflex.match("Перенеси хром со второго экрана на первый")
+    ok = (hit and hit[0] == "window_place"
+          and hit[1].get("position") == "same"
+          and hit[1].get("monitor") == 1
+          and not hit[1].get("width") and not hit[1].get("height"))
+    rows.append(("перенести — не расставить", bool(ok), str(hit)))
+
+    # 2. Экран назван дважды: «со второго ... на первый». Цель — первый.
+    hit = reflex.match("перенеси проводник на второй экран")
+    rows.append(("экран без «откуда» тоже читается",
+                 bool(hit) and hit[1].get("monitor") == 2, str(hit)))
+
+    # 3. «Google Hrome» — это БРАУЗЕР, а не поиск в гугле. Было:
+    #    google.com/search?q=ролик+hrome
+    site, q = guess_from_phrase("Запусти ролик на в Google Hrome.")
+    rows.append(("«гугл хром» — программа, а не площадка",
+                 site == "" and q == "", f"site={site!r} query={q!r}"))
+    rows.append(("и в поиск такое не уходит",
+                 reflex.match("Запусти ролик на в Google Hrome.") is None,
+                 "рефлекс молчит — фразу разбирает тот, кто умеет окна"))
+
+    # 4. …но обычные фразы про площадки не сломались
+    for phrase, want in (("Сайка, включи музыку на YouTube", "web_open"),
+                         ("включи какой-нибудь трек из железного человека",
+                          "find_here"),
+                         ("найди комфи юай бат", "find_here")):
+        hit = reflex.match(phrase)
+        rows.append((f"«{phrase[:34]}…» -> {want}",
+                     bool(hit) and hit[0] == want,
+                     str(hit)))
     return rows

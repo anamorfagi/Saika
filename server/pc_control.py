@@ -1129,6 +1129,46 @@ def _is_self_window(w: dict) -> bool:
     return False
 
 
+# ═══ ОКНО СОАВТОРА — НЕ РАБОЧЕЕ МЕСТО (2026-08-20) ═══
+# Живой разнос: человек просит «перенеси вкладку Google Chrome со второго
+# экрана на первый», а она отвечает «Я вижу, что ты указываешь на окно с
+# нашим диалогом, буду работать только с ним» — и трижды подряд двигает
+# окно Claude. В панели «Где я работаю» так и висело: «Claude · экран 1».
+#
+# Ошибка была не в понимании фразы, а в том, ЧТО стало рабочим местом.
+# Окно, через которое человек разговаривает с ИИ, — это его телефонная
+# трубка. Оно почти всегда впереди (в него же и говорят), поэтому «окно,
+# которое сейчас активно» выбирает именно его — и любое «перенеси ЕГО»
+# попадает в трубку вместо той программы, о которой шла речь.
+#
+# Правило: такое окно не становится местом работы само и не подставляется
+# как «то самое окно». Названное вслух («сверни Claude») работает как
+# работало — запрета на него нет, есть запрет на угадывание.
+_COAUTHOR_PROCS = {"claude", "cowork", "chatgpt", "codex", "perplexity"}
+
+
+def _coauthor_procs() -> set:
+    out = set(_COAUTHOR_PROCS)
+    try:
+        from server.config import CFG as _c
+        for n in (_c.get("pc.coauthor_apps", []) or []):
+            out.add(str(n).lower().strip().replace(".exe", ""))
+    except Exception:
+        pass
+    return out
+
+
+def _is_coauthor_window(w: dict) -> bool:
+    """Окно чата с ИИ-соавтором. Узнаём по ПРОЦЕССУ, а не по заголовку:
+    вкладка claude.ai в хроме — это обычный браузер человека, и запрещать
+    работать с ней было бы ровно той же ошибкой наоборот."""
+    try:
+        proc = (w.get("proc") or "").lower().replace(".exe", "")
+    except Exception:
+        return False
+    return bool(proc) and proc in _coauthor_procs()
+
+
 # РУССКИЕ ИМЕНА ПРОГРАММ (2026-07-28, реальный случай). «Разверни
 # проводник» не находило окно: заголовок окна проводника — имя ПАПКИ
 # («Saika», «Загрузки»), а процесс — explorer.exe; слова «проводник» нет
@@ -1221,6 +1261,9 @@ def note_work(w: dict):
     программы отдельно)."""
     try:
         if not w or _is_self_window(w) or not w.get("hwnd"):
+            return
+        if _is_coauthor_window(w):
+            # трубка, а не рабочее место (см. разбор у _is_coauthor_window)
             return
         _WORK.update(hwnd=int(w.get("hwnd") or 0),
                      title=str(w.get("title") or ""),
@@ -2041,6 +2084,20 @@ def _foreground():
     return None
 
 
+def _default_target():
+    """Окно, о котором человек говорит, НЕ назвав его. Порядок такой:
+    место работы -> активное окно, но окно чата с ИИ не берём никогда
+    (2026-08-20: «перенеси его на первый экран» трижды подряд попало в
+    окно Claude, потому что в него же и говорили — оно всегда впереди)."""
+    w = work_window()
+    if w and not _is_coauthor_window(w):
+        return w
+    f = _foreground()
+    if f and not _is_coauthor_window(f) and not _is_self_window(f):
+        return f
+    return None
+
+
 def window_close(query: str) -> str:
     """WM_CLOSE — вежливая просьба закрыться. Программа успеет спросить про
     несохранённое; принудительно ничего не снимаем (это system_control.kill,
@@ -2186,10 +2243,20 @@ def window_place(query: str, position: str = "center",
     # без имени — двигаем АКТИВНОЕ окно: «перенеси на второй экран» сразу
     # после разговора про хром означает «его же», а не «ничего» (живой
     # промах 2026-07-29: пустой match -> «Не нашла окно „"»)
-    w = _match(query) if (query or "").strip() else _foreground()
+    w = _match(query) if (query or "").strip() else _default_target()
     if not w:
-        return (f"Не нашла окно «{query}»." if (query or "").strip()
-                else "Не вижу активного окна — назови кусок заголовка.")
+        if (query or "").strip():
+            return f"Не нашла окно «{query}»."
+        f = _foreground()
+        if f and _is_coauthor_window(f):
+            # ЧЕСТНО, А НЕ МОЛЧА (2026-08-20). Впереди окно чата со мной;
+            # двигать его по неназванному «перенеси его» — ровно тот
+            # промах, за который человек и ругался. Спрашиваем.
+            return ("Впереди окно нашего с тобой чата, а его я по «перенеси "
+                    "его» не двигаю — скажи, какое окно перенести "
+                    "(например «хром» или «проводник»), либо скажи прямо "
+                    f"«перенеси {f.get('title','')[:20]}».")
+        return "Не вижу активного окна — назови кусок заголовка."
     _touch(w)   # помним: «это же окно» — про него
     import ctypes
     _, _, user32 = _win32()
@@ -2270,10 +2337,33 @@ def window_place(query: str, position: str = "center",
         "верх": "top", "сверху": "top", "низ": "bottom", "снизу": "bottom",
         "левый верхний": "topleft", "правый верхний": "topright",
         "левый нижний": "bottomleft", "правый нижний": "bottomright",
+        # ПЕРЕНЕСТИ — ЭТО НЕ РАССТАВИТЬ (2026-08-20). «Перенеси окно на
+        # первый экран» она исполняла как «по центру, 80% ширины и высоты»
+        # и честно об этом рапортовала — человек просил переезд, а получил
+        # перепланировку. «same» = тот же размер и то же место внутри
+        # экрана, просто экран другой.
+        "как было": "same", "туда же": "same", "не двигая": "same",
+        "перенести": "same", "перенеси": "same", "keep": "same",
     }
     pos = aliases.get(pos, pos)
     cx, cy = ra.l + (sw - ww) // 2, ra.t + (sh - wh) // 2
+    # «same»: сохраняем ДОЛЮ отступа внутри рабочей области, а не пиксели —
+    # экраны бывают разного размера, и окно с четверти ширины должно
+    # оказаться на четверти ширины, а не за краем.
+    sx, sy = cx, cy
+    try:
+        hi = _monitor_of((cur.l, cur.t, cur.r, cur.b),
+                         [d["rect"] for d in info]) if info else 0
+        hl, ht, hr, hb = (by_num.get(hi) or (info[0] if info else None) or
+                          {"work": (ra.l, ra.t, ra.r, ra.b)})["work"]
+        fx = (cur.l - hl) / max(1, (hr - hl) - (cur.r - cur.l))
+        fy = (cur.t - ht) / max(1, (hb - ht) - (cur.b - cur.t))
+        sx = ra.l + int(max(0.0, min(1.0, fx)) * max(0, sw - ww))
+        sy = ra.t + int(max(0.0, min(1.0, fy)) * max(0, sh - wh))
+    except Exception:
+        pass
     coords = {
+        "same":        (sx, sy),
         "center":      (cx, cy),
         "left":        (ra.l, cy),
         "right":       (ra.r - ww, cy),
@@ -2323,6 +2413,10 @@ def window_place(query: str, position: str = "center",
            else "ширина как была")
     _ht = (f"{max(10, min(100, height))}% по высоте" if height
            else "высота как была")
+    if pos == "same":
+        return (f"Перенесла «{w['title'][:50]}»{where} — размер и место "
+                "внутри экрана те же." + state_note(w["hwnd"])
+                + " Проверять отдельно не надо, это уже проверено.")
     return (f"Поставила «{w['title'][:50]}» {position}{where}"
             + (f", {_wd}, {_ht}" if (width or height) else "")
             + "." + state_note(w["hwnd"])

@@ -451,6 +451,12 @@ def ensure_running() -> dict:
             return {"ok": True, "installing": True,
                     "note": "llama-server ещё не установлен — ставлю сама"}
 
+        # ОДИН ЛОКАЛЬНЫЙ ДВИЖОК НА ВИДЕОКАРТУ — разбор в one_local.py
+        from server.llm import one_local
+        _no = one_local.refuse("llamacpp")
+        if _no:
+            return _no
+
         model_path = find_model()
         if not model_path:
             return {"error": "не нашла .gguf для модели «%s». Положи файл в "

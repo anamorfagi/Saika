@@ -707,6 +707,14 @@ def warmup(backend: str, model: str) -> bool:
     Для Ollama пустой prompt = «просто загрузи», ничего не генерится."""
     if backend == "cloud":
         return True  # облако грузить не нужно — модель на стороне провайдера
+    # ОДИН ЛОКАЛЬНЫЙ ДВИЖОК НА ВИДЕОКАРТУ (2026-08-20). Единственное место,
+    # где модель СОЗНАТЕЛЬНО грузят в память, — значит, и проверять здесь.
+    # Разбор случая и правило — server/llm/one_local.py.
+    from server.llm import one_local
+    _no = one_local.refuse(backend)
+    if _no:
+        log.info("Прогрев %s/%s отменён: %s", backend, model, _no["error"])
+        return False
     try:
         if backend == "ollama":
             requests.post(_ollama_url() + "/api/generate",
@@ -1043,6 +1051,13 @@ def _max_tokens_for(messages) -> int | None:
 
 def _stream_ollama(messages, model, temperature, tools=None, image=None):
     """Стрим событий: {'type':'token','text':…} и {'type':'tool_call','call':…}."""
+    # Ollama, как и LM Studio, грузит модель по первому же запросу —
+    # см. разбор в _stream_lmstudio и правило в server/llm/one_local.py
+    if model not in (loaded_models() or []):
+        from server.llm import one_local
+        _no = one_local.refuse("ollama")
+        if _no:
+            raise LLMError("Ollama: " + _no["error"])
     messages = _attach_image_ollama(messages, image)
     payload = {
         "model": model,
@@ -1127,7 +1142,20 @@ def _stream_ollama(messages, model, temperature, tools=None, image=None):
 
 
 def _stream_lmstudio(messages, model, temperature, tools=None, image=None):
-    """LM Studio — OpenAI-совместимый локальный сервер."""
+    """LM Studio — OpenAI-совместимый локальный сервер.
+
+    ВАЖНО ПРО JIT (2026-08-20). Запрос к незагруженной модели LM Studio не
+    отвергает — он молча ГРУЗИТ её в видеокарту. Поэтому мало запретить
+    прогрев: обычный запрос делает ровно то же самое, только без слова
+    «загружаю» в логе. Владелец из-за этого выключал LM Studio руками.
+    Модель уже в памяти — идём как обычно; нет — сперва спрашиваем, не
+    занята ли видеокарта кем-то другим.
+    """
+    if model not in (loaded_models() or []):
+        from server.llm import one_local
+        _no = one_local.refuse("lmstudio")
+        if _no:
+            raise LLMError("LM Studio: " + _no["error"])
     yield from _stream_openai(_lmstudio_url() + "/v1", None,
                               messages, model, temperature, tools, image)
 

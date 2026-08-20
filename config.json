@@ -114,7 +114,8 @@
       "google/gemma-4-e4b"
     ],
     "escalate_on_fail": true,
-    "cloudflare_account": "dc53e2c4a12c1fbde30d66faee5f5706"
+    "cloudflare_account": "dc53e2c4a12c1fbde30d66faee5f5706",
+    "two_local_ok": false
   },
   "tools": {
     "enabled": true,

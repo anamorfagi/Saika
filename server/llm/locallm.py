@@ -235,7 +235,16 @@ def ensure_running() -> dict:
                     "note": "окружения ещё нет — ставлю автоматически "
                             "(первый раз небыстро: библиотеки + веса модели)"}
 
-        # 4) спавним воркер и ждём /health
+        # 4) ОДИН ЛОКАЛЬНЫЙ ДВИЖОК НА ВИДЕОКАРТУ — разбор в one_local.py.
+        # Живой лог 09:03: разговор шёл на llamacpp/gemma, а сюда пришли
+        # поднимать T-lite 8B; через пять секунд VRAM 96% и защита снесла
+        # голос, слух и мозги. Отказ здесь дешевле любой разгрузки потом.
+        from server.llm import one_local
+        _no = one_local.refuse("locallm")
+        if _no:
+            return _no
+
+        # 5) спавним воркер и ждём /health
         # worker тоже ВСЕГДА из ENGINES по engine — та же причина, что и
         # в _venv_python() выше (см. комментарий там).
         eng_name = _cfg().get("engine", "llamacpp")

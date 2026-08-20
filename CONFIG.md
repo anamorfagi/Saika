@@ -3,7 +3,7 @@
 > Файл СГЕНЕРИРОВАН: `python -m tools.config_map`. Руками не править —
 > перезапишется. Правится код или `config.json`.
 
-Всего ключей: **634**. Из них в коде читается 467, в конфигах лежит 343.
+Всего ключей: **635**. Из них в коде читается 468, в конфигах лежит 344.
 
 Как это работает: `config.local.json` накладывается поверх `config.json` при загрузке, поэтому личные настройки машины переживают `git pull`. Ключа нет нигде — берётся значение по умолчанию прямо из кода, колонка «по умолчанию».
 
@@ -679,6 +679,7 @@
 | `llm.think` | false | `False` | `server/llm/manager.py`, `server/main.py` |
 | `llm.tools_broken` | ["@cf/meta/llama-3.3-70b-instruct-fp8-fas… | `[]` | `server/capabilities.py`, `server/llm/manager.py`, `server/llm/passport.py` +4 |
 | `llm.trust_liars` | — | `False` | `server/capabilities.py` |
+| `llm.two_local_ok` | false | `False` | `server/llm/one_local.py`, `tests/test_one_local.py` |
 
 ### lmstudio
 
