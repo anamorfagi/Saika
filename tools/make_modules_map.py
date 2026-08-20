@@ -36,7 +36,7 @@ GROUPS = [
     ("Руки", ["pc_control", "ui_hands", "browser_hands", "file_hands",
               "explorer", "app_finder", "hotkeys", "system_control", "phone",
               "messengers", "pdf_hands", "self_control", "reflex", "trust",
-              "dictation", "highlight"]),
+              "dictation", "highlight", "send_gate"]),
     ("Тело и лицо", ["avatar", "anim_hub", "desk_avatar", "desk_slots"]),
     ("Здоровье", ["guard", "triage", "heal", "baymax", "diagnostics",
                   "proc_utils", "netpolicy", "network", "git_sync"]),

@@ -3,7 +3,7 @@
 > Файл СГЕНЕРИРОВАН: `python -m tools.config_map`. Руками не править —
 > перезапишется. Правится код или `config.json`.
 
-Всего ключей: **635**. Из них в коде читается 468, в конфигах лежит 344.
+Всего ключей: **638**. Из них в коде читается 471, в конфигах лежит 345.
 
 Как это работает: `config.local.json` накладывается поверх `config.json` при загрузке, поэтому личные настройки машины переживают `git pull`. Ключа нет нигде — берётся значение по умолчанию прямо из кода, колонка «по умолчанию».
 
@@ -88,10 +88,10 @@
 - `guard.vram_calm`
 - `guard.vram_crit`
 - `guard.vram_warn`
+- `hands.send_ask_life_s`
+- `hands.web_cycle_s`
 - `heal.enabled`
-- `heal.interval_sec`
-- `hearing.clap.enabled`
-- …и ещё 211
+- …и ещё 213
 
 ## ⚠ Лежит в конфиге, но код его не читает
 
@@ -513,6 +513,14 @@
 | `guard.vram_calm` | — | `0.75` | `server/triage.py` |
 | `guard.vram_crit` | — | `0.96 / 0.93 ⚠` | `server/guard.py`, `server/main.py`, `server/triage.py` |
 | `guard.vram_warn` | — | `0.9` | `server/guard.py`, `server/triage.py` |
+
+### hands
+
+| ключ | сейчас | по умолчанию | где читается |
+|---|---|---|---|
+| `hands.confirm_send` | true | `True` | `server/send_gate.py`, `tests/test_send_gate.py` |
+| `hands.send_ask_life_s` | — | `120` | `server/send_gate.py` |
+| `hands.web_cycle_s` | — | `60` | `server/send_gate.py` |
 
 ### heal
 

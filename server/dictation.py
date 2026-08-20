@@ -98,10 +98,18 @@ def feed(text: str) -> str:
     except Exception as e:
         return f"не смогла напечатать: {e}"
     if submit:
+        # ОТПРАВКА — ЧЕРЕЗ ПОДТВЕРЖДЕНИЕ (2026-08-20). Здесь Enter жался
+        # сразу, если модель прислала submit=True, — то есть диктовка была
+        # ещё одной дверцей мимо правила. press() теперь спрашивает сам
+        # (server/send_gate.py) и возвращает вопрос вместо нажатия; если
+        # спрашивать не о чем (адресная строка в открытом цикле браузера,
+        # блокнот) — жмёт как раньше.
         try:
             from server import ui_hands
-            ui_hands.press("enter")
-            return f"Вписала в «{field}»: «{t[:60]}» и отправила."
+            r = ui_hands.press("enter")
+            if str(r).startswith("Нажала"):
+                return f"Вписала в «{field}»: «{t[:60]}» и отправила."
+            return f"Вписала в «{field}»: «{t[:60]}». {r}"
         except Exception as e:
             log.debug("enter не нажался: %s", e)
     if str(r).startswith("Напечатала"):

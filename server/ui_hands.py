@@ -128,14 +128,30 @@ def _sendinput_keys(vks: list):
     ctypes.windll.user32.SendInput(len(seq), arr, ctypes.sizeof(INPUT))
 
 
-def press(combo: str) -> str:
+def press(combo: str, _confirmed: bool = False) -> str:
     """Нажать клавишу или сочетание: «enter», «ctrl+t», «полный экран».
 
-    Enter здесь — ОТПРАВКА. Модель зовёт press("enter") в чате только после
-    того, как человек подтвердил текст. Это правило протокола, не кода:
-    код не знает, чат перед ним или блокнот."""
+    ENTER — ЭТО ОТПРАВКА, И ТЕПЕРЬ ЭТО ЗНАЕТ КОД (2026-08-20). Здесь
+    стояло: «модель зовёт press("enter") в чате только после подтверждения
+    человека; это правило протокола, не кода — код не знает, чат перед ним
+    или блокнот». Правило, которое знает только модель, запретом не
+    является: она напечатала ссылку в чужой чат и нажала ввод, сообщение
+    ушло живому человеку. Код узнать МОЖЕТ — печатали ли мы сюда, что это
+    за программа и просил ли человек прямо сейчас открыть что-то в
+    интернете. Разбор и исключения — server/send_gate.py.
+
+    _confirmed — служебный: так send_gate.confirm() жмёт ввод, когда
+    человек уже сказал «отправляй». Модели этот аргумент не виден."""
     if not _IS_WIN:
         return "клавиши доступны только в Windows"
+    if not _confirmed:
+        try:
+            from server import send_gate
+            ask = send_gate.check(combo)
+            if ask:
+                return ask
+        except Exception as e:
+            log.debug("страж отправки промолчал: %s", e)
     s = (combo or "").strip().lower()
     s = _COMBOS.get(s, s)
     vks = []
@@ -240,7 +256,9 @@ def type_text(text: str) -> str:
 
     Печатает ЮНИКОДОМ (KEYEVENTF_UNICODE): раскладка клавиатуры не важна,
     русский и латиница идут как есть. Enter НЕ нажимает никогда — отправка
-    только отдельным press("enter") после подтверждения человека."""
+    только отдельным press("enter"), и тот теперь спрашивает человека
+    (server/send_gate.py). Здесь же мы запоминаем, КУДА напечатали: по
+    этому следу страж отправки и понимает, что перед ним поле ввода."""
     if not _IS_WIN:
         return "печать доступна только в Windows"
     t = (text or "").replace("\r", "")
@@ -272,6 +290,12 @@ def type_text(text: str) -> str:
     try:
         arr = (INPUT * len(seq))(*seq)
         ctypes.windll.user32.SendInput(len(seq), arr, ctypes.sizeof(INPUT))
+        # след для стража отправки: куда именно печатали
+        try:
+            from server import send_gate, pc_control
+            send_gate.note_typed(t, pc_control._foreground() or {})
+        except Exception as e:
+            log.debug("след печати не оставлен: %s", e)
         short = t if len(t) <= 60 else t[:57] + "..."
         return (f"Напечатала: «{short}». НЕ отправлено — спроси человека, "
                 "готов ли текст, и только потом жми enter.")
@@ -516,6 +540,16 @@ def web_open(site: str, query: str = "") -> str:
     q = (query or "").strip()
     if not s:
         return "какой сайт открыть?"
+    # ИСКЛЮЧЕНИЕ ВЛАДЕЛЬЦА (2026-08-20): «единственная механика, где не
+    # нужны подтверждения, — когда явно просят открыть ту или иную инфу в
+    # браузере: там она относительно запроса простраивает цикл работы и
+    # работает с поиском». Человек попросил — открываем цикл: ближайшую
+    # минуту ввод в БРАУЗЕРЕ идёт без вопроса «отправлять?».
+    try:
+        from server import send_gate
+        send_gate.allow_web(f"{s} {query}".strip())
+    except Exception as e:
+        log.debug("цикл браузера не открылся: %s", e)
     # НАЗВАНИЕ ПЛОЩАДКИ — НЕ ЗАПРОС (2026-08-13, живой промах: «Открой
     # Google Chrome, э-э, YouTube» превратилось в {query: "youtube",
     # site: "youtube"} — она искала «youtube» НА ютубе и открыла выдачу
