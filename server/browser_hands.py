@@ -23,6 +23,7 @@ import threading
 import time
 
 from server.config import CFG
+from server import runtime_env
 
 log = logging.getLogger("saika.browser")
 
@@ -101,17 +102,17 @@ def _install_bg(report=None):
                 attempt += 1
                 _wait_net()
                 try:
-                    try:
-                        import playwright  # noqa: F401
-                    except ImportError:
-                        log.info("Ставлю пакет playwright…")
-                        subprocess.run(
-                            [sys.executable, "-m", "pip", "install",
-                             "playwright", "--timeout", "120",
-                             "--retries", "10"], check=True)
-                    log.info("Качаю Chromium (попытка %s)…", attempt)
-                    subprocess.run([sys.executable, "-m", "playwright",
-                                    "install", "chromium"], check=True)
+                    # Через runtime_env, а не pip напрямую: у человека в
+                    # собранном приложении pip отсутствует, и браузер
+                    # приезжает готовым блоком.
+                    ok, why = runtime_env.ensure(
+                        "browser", ["playwright"], check="playwright")
+                    if not ok:
+                        raise RuntimeError(why)
+                    if runtime_env.DEV:
+                        log.info("Качаю Chromium (попытка %s)…", attempt)
+                        subprocess.run([runtime_env.PY, "-m", "playwright",
+                                        "install", "chromium"], check=True)
                     log.info("Браузер готов (с попытки %s)", attempt)
                     if report:
                         report("browser", "",

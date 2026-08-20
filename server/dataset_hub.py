@@ -19,6 +19,7 @@ import urllib.request
 from pathlib import Path
 
 from server.config import CFG, resolve
+from server import runtime_env
 
 log = logging.getLogger("saika.dataset_hub")
 
@@ -243,7 +244,7 @@ def start_expand(target: int, model: str) -> dict:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     # -u / PYTHONUNBUFFERED: без них python копит stdout в буфере и лог
     # остаётся пустым — в UI не видно хода выполнения (баг 2026-07-16)
-    cmd = [sys.executable, "-u", str(script),
+    cmd = [runtime_env.PY, "-u", str(script),
            "--target", str(target), "--model", model]
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
     log.info("dataset_hub: запускаю расширение датасета: %s", " ".join(cmd))

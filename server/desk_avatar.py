@@ -30,6 +30,7 @@ import sys
 import threading
 
 from server import desk_slots as slots
+from server import runtime_env
 from server.config import CFG, CONFIG_PATH, resolve
 
 log = logging.getLogger("saika.desk")
@@ -159,18 +160,11 @@ def ensure_pyside() -> tuple[bool, str]:
     if available():
         return True, ""
     log.info("Ставлю PySide6 для окна с моделью…")
-    try:
-        r = subprocess.run(
-            [sys.executable, "-m", "pip", "install",
-             "--disable-pip-version-check", "PySide6-Essentials",
-             "PySide6-Addons"],
-            capture_output=True, text=True, timeout=900)
-        if r.returncode == 0 and available():
-            return True, "поставила PySide6, открываю окно"
-        tail = (r.stderr or r.stdout or "")[-200:]
-        return False, "не смогла поставить PySide6: " + tail[-140:]
-    except Exception as e:
-        return False, f"установка PySide6 сорвалась: {e}"
+    ok, why = runtime_env.ensure(
+        "desk_avatar", ["PySide6-Essentials", "PySide6-Addons"])
+    if ok and available():
+        return True, "поставила PySide6, открываю окно"
+    return False, "не смогла поставить PySide6: " + why[-140:]
 
 
 def is_running() -> bool:
@@ -270,7 +264,10 @@ def _start_now() -> str:
                 # оставляя саму видеокарту рисовать сцену.
                 env["QTWEBENGINE_CHROMIUM_FLAGS"] += (
                     " --disable-gpu-compositing --allow-no-sandbox-job")
-            _PROC["p"] = subprocess.Popen([sys.executable, str(sc)],
+            # runtime_env.PY, а не sys.executable: в собранном
+            # приложении sys.executable — это сам ANAMORF.exe, и вместо
+            # окна аватара запустился бы второй экземпляр программы.
+            _PROC["p"] = subprocess.Popen([runtime_env.PY, str(sc)],
                                           cwd=str(resolve(".")),
                                           creationflags=flags,
                                           stdout=out, stderr=out, env=env)

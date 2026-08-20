@@ -1,10 +1,17 @@
 """Загрузка/сохранение конфига. Всё через один объект CFG."""
 import json
+import secrets
 import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
+# Значения по умолчанию едут вместе с приложением и обновляются вместе с ним.
+# Из них рождается config.json на чистой машине — чтобы у человека после
+# установки был рабочий файл, а не пустота, и чтобы личные значения автора
+# (имя, ключ доступа, устройства, расшифровка голоса) не разъезжались с
+# обновлениями. Править DEFAULT_PATH бесполезно: он перезаписывается.
+DEFAULT_PATH = ROOT / "config.default.json"
 # 2026-07-25: машинные настройки живут ОТДЕЛЬНО от общего конфига.
 # ПРИЧИНА (стоила времени на каждом синке между домом и работой):
 # config.json лежит в git, поэтому после `git pull` на второй машине
@@ -57,6 +64,55 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
+def _ensure_token() -> None:
+    """Пустой ключ доступа — выдать новый прямо в существующем конфиге.
+
+    Нужно отдельно от разворачивания умолчаний: у того, кто уже работал,
+    config.json существует, и обновления его не трогают. Стереть строку с
+    ключом руками — самый простой способ его перевыпустить, и после этого
+    он должен родиться сам, а не остаться пустым.
+    """
+    try:
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if raw.get("server", {}).get("token"):
+        return
+    raw.setdefault("server", {})["token"] = secrets.token_urlsafe(9)
+    try:
+        CONFIG_PATH.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("[i] выдан новый ключ доступа к интерфейсу")
+    except Exception as e:
+        print(f"[!] не удалось записать ключ доступа: {e}")
+
+
+def _bootstrap() -> None:
+    """Первый запуск на чистой машине: сделать config.json из умолчаний.
+
+    Заодно выдаём собственный ключ доступа. Раньше он был один на всех,
+    лежал в репозитории открытым текстом и попадал к каждому, кто получил
+    копию проекта, — а этим ключом открывается интерфейс, у которого есть
+    руки в системе. Теперь ключ рождается на машине и никуда не уезжает.
+    """
+    if CONFIG_PATH.exists():
+        _ensure_token()
+        return
+    if not DEFAULT_PATH.exists():
+        return
+    try:
+        data = json.loads(DEFAULT_PATH.read_text(encoding="utf-8"))
+        data.pop("_note", None)
+        srv = data.setdefault("server", {})
+        if not srv.get("token"):
+            srv["token"] = secrets.token_urlsafe(9)
+        CONFIG_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("[i] создан config.json из умолчаний, ключ доступа выдан")
+    except Exception as e:
+        print(f"[!] не удалось развернуть настройки по умолчанию: {e}")
+
+
 class Config:
     def __init__(self):
         self._data = {}
@@ -64,6 +120,7 @@ class Config:
 
     def load(self):
         with _lock:
+            _bootstrap()
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             # накладываем машинный слой: он главнее общего
             if LOCAL_PATH.exists():

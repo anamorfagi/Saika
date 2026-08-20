@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from server.config import CFG, ROOT, resolve
+from server import runtime_env
 
 log = logging.getLogger("saika.hotkeys")
 PATH = ROOT / "data" / "hotkeys.json"
@@ -182,9 +183,9 @@ def _ensure_keyboard():
     _kb_install_tried["done"] = True
     try:
         log.info("Ставлю пакет keyboard для клавиатурных хоткеев…")
-        subprocess.run([__import__("sys").executable, "-m", "pip", "install",
-                        "keyboard", "--timeout", "60", "--retries", "5"],
-                       check=True)
+        ok, why = runtime_env.ensure("hotkeys", ["keyboard"])
+        if not ok:
+            raise RuntimeError(why)
         import importlib
         importlib.invalidate_caches()
         import keyboard  # noqa: F401

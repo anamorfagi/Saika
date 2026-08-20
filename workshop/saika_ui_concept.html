@@ -1,0 +1,1152 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Сайка — новая оболочка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=Inter+Tight:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   САЙКА — ДИЗАЙН-СИСТЕМА «GRAPHITE»
+   монохром · глубина · стекло · подъём при наведении
+   ============================================================ */
+
+:root{
+  /* ---- геометрия ---- */
+  --r-xl:26px; --r-lg:20px; --r-md:14px; --r-sm:10px; --r-pill:999px;
+  --pad:14px;
+  --rail:76px;
+  --ease:cubic-bezier(.2,.85,.25,1);
+  --t:190ms;
+
+  /* ---- типографика ---- */
+  --font:"Inter","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --font-d:"Inter Tight","Inter",system-ui,sans-serif;
+  --font-m:ui-monospace,"SF Mono",Consolas,monospace;
+}
+
+/* ---------- ТЁМНАЯ (по умолчанию) ---------- */
+[data-theme="dark"]{
+  --bg:#0c0c0e;
+  --bg-a:rgba(255,255,255,.045);   /* пятно света 1 */
+  --bg-b:rgba(255,255,255,.028);   /* пятно света 2 */
+
+  --s0:rgba(255,255,255,.028);     /* фон-подложка секции */
+  --s1:rgba(255,255,255,.052);     /* плитка */
+  --s2:rgba(255,255,255,.078);     /* плитка при наведении */
+  --s3:rgba(255,255,255,.115);     /* активный элемент */
+  --s-solid:#141416;
+
+  --line:rgba(255,255,255,.085);
+  --line-2:rgba(255,255,255,.14);
+
+  --txt:#eceef1;
+  --dim:rgba(236,238,241,.52);
+  --dim2:rgba(236,238,241,.30);
+  --hi:#ffffff;
+
+  --glass:blur(28px) saturate(150%);
+
+  /* глубина: рассеянная тень + контактная + внутренний блик сверху */
+  --e0:inset 0 1px 0 rgba(255,255,255,.055);
+  --e1:0 1px 1px rgba(0,0,0,.5), 0 10px 26px -14px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.07);
+  --e2:0 2px 3px rgba(0,0,0,.45), 0 24px 48px -20px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.11);
+  --e3:0 3px 6px rgba(0,0,0,.5), 0 44px 80px -30px rgba(0,0,0,1), inset 0 1px 0 rgba(255,255,255,.14);
+  --press:inset 0 2px 6px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.05);
+
+  --ring:rgba(255,255,255,.55);
+  --ok:rgba(226,255,236,.85);
+  --warn:rgba(255,238,205,.85);
+  --err:rgba(255,206,201,.9);
+  --scrim:rgba(0,0,0,.55);
+}
+
+/* ---------- СВЕТЛАЯ (мягкий рельеф, как на референсах) ---------- */
+[data-theme="light"]{
+  --bg:#e8eaee;
+  --bg-a:rgba(255,255,255,.9);
+  --bg-b:rgba(255,255,255,.5);
+
+  --s0:rgba(255,255,255,.45);
+  --s1:rgba(255,255,255,.72);
+  --s2:rgba(255,255,255,.92);
+  --s3:rgba(255,255,255,1);
+  --s-solid:#f2f3f6;
+
+  --line:rgba(16,18,22,.07);
+  --line-2:rgba(16,18,22,.13);
+
+  --txt:#16181d;
+  --dim:rgba(22,24,29,.55);
+  --dim2:rgba(22,24,29,.32);
+  --hi:#000;
+
+  --glass:blur(24px) saturate(140%);
+
+  --e0:inset 0 1px 0 rgba(255,255,255,.9);
+  --e1:6px 8px 18px -10px rgba(20,24,32,.30), -6px -6px 14px -8px rgba(255,255,255,.95), inset 0 1px 0 rgba(255,255,255,.85);
+  --e2:10px 14px 28px -12px rgba(20,24,32,.34), -8px -8px 20px -8px rgba(255,255,255,1), inset 0 1px 0 rgba(255,255,255,.95);
+  --e3:16px 22px 44px -16px rgba(20,24,32,.38), -12px -12px 28px -10px rgba(255,255,255,1), inset 0 1px 0 rgba(255,255,255,1);
+  --press:inset 4px 5px 10px -4px rgba(20,24,32,.28), inset -3px -3px 8px -3px rgba(255,255,255,.9);
+
+  --ring:rgba(20,24,32,.5);
+  --ok:rgba(24,60,38,.85);
+  --warn:rgba(88,62,10,.85);
+  --err:rgba(96,26,22,.9);
+  --scrim:rgba(210,214,220,.6);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--txt);
+  font:300 14px/1.55 var(--font);
+  -webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.01em;
+  overflow:hidden;
+}
+/* мягкий объёмный фон — источник «света» для рельефа */
+body::before{
+  content:'';position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(52% 42% at 18% 8%, var(--bg-a), transparent 65%),
+    radial-gradient(46% 44% at 88% 92%, var(--bg-b), transparent 62%);
+  filter:blur(20px);
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ============================================================
+   БАЗОВЫЕ ПОВЕРХНОСТИ
+   ============================================================ */
+.tile{
+  background:var(--s1);
+  border:1px solid var(--line);
+  border-radius:var(--r-lg);
+  box-shadow:var(--e1);
+  backdrop-filter:var(--glass);
+  -webkit-backdrop-filter:var(--glass);
+  transition:transform var(--t) var(--ease), box-shadow var(--t) var(--ease),
+             background var(--t) var(--ease), border-color var(--t) var(--ease);
+}
+.tile.lift:hover{
+  transform:translateY(-3px);
+  background:var(--s2);
+  border-color:var(--line-2);
+  box-shadow:var(--e2);
+}
+.tile.lift:active{transform:translateY(-1px);box-shadow:var(--e1)}
+
+.cap{
+  font:500 9.5px/1 var(--font);
+  letter-spacing:.16em; text-transform:uppercase;
+  color:var(--dim2);
+}
+.h-lg{font:200 30px/1.1 var(--font-d);letter-spacing:-.02em}
+.h-md{font:300 17px/1.25 var(--font-d);letter-spacing:-.01em}
+.num{font:200 40px/1 var(--font-d);letter-spacing:-.03em}
+.dim{color:var(--dim)}
+.mono{font-family:var(--font-m);font-size:11.5px}
+
+/* ============================================================
+   КНОПКИ
+   ============================================================ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  height:38px;padding:0 15px;
+  border-radius:var(--r-md);
+  border:1px solid var(--line);
+  background:var(--s1);
+  color:var(--txt);
+  font:400 12.5px/1 var(--font);letter-spacing:.005em;
+  box-shadow:var(--e1);
+  cursor:pointer;
+  backdrop-filter:var(--glass);-webkit-backdrop-filter:var(--glass);
+  transition:transform var(--t) var(--ease), box-shadow var(--t) var(--ease),
+             background var(--t) var(--ease), border-color var(--t) var(--ease), color var(--t);
+  position:relative;
+}
+.btn:hover{transform:translateY(-2px);background:var(--s2);border-color:var(--line-2);box-shadow:var(--e2)}
+.btn:active{transform:translateY(0);box-shadow:var(--press);background:var(--s1)}
+.btn.ico{width:38px;padding:0;font-size:15px}
+.btn.sm{height:30px;padding:0 11px;font-size:11.5px;border-radius:var(--r-sm)}
+.btn.sm.ico{width:30px;padding:0}
+.btn.pill{border-radius:var(--r-pill)}
+.btn.on{background:var(--s3);border-color:var(--line-2);box-shadow:var(--press);transform:none}
+.btn.ghost{background:transparent;box-shadow:none;border-color:transparent}
+.btn.ghost:hover{background:var(--s1);border-color:var(--line);box-shadow:var(--e1)}
+
+/* ---- состояния процесса: КОНТУР, а не заливка ---- */
+.btn.st-ready{border-color:var(--line-2);box-shadow:var(--e1), inset 0 0 0 1px rgba(255,255,255,.10)}
+[data-theme="light"] .btn.st-ready{box-shadow:var(--e1), inset 0 0 0 1px rgba(20,24,32,.10)}
+
+.btn.st-load::after,.tile.st-load::after,.node.st-load .disc::after{
+  content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
+  padding:1px;
+  background:conic-gradient(from 0deg, transparent 0deg, var(--ring) 40deg, transparent 110deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor; mask-composite:exclude;
+  animation:spin 1.5s linear infinite;
+}
+@keyframes spin{to{transform:rotate(1turn)}}
+
+.btn.st-work{animation:breath 2.2s var(--ease) infinite}
+@keyframes breath{
+  0%,100%{border-color:var(--line-2);box-shadow:var(--e1), 0 0 0 0 rgba(255,255,255,0)}
+  50%{border-color:var(--ring);box-shadow:var(--e2), 0 0 0 3px rgba(255,255,255,.045)}
+}
+[data-theme="light"] .btn.st-work{animation:breathL 2.2s var(--ease) infinite}
+@keyframes breathL{
+  0%,100%{border-color:var(--line-2);box-shadow:var(--e1)}
+  50%{border-color:rgba(20,24,32,.35);box-shadow:var(--e2), 0 0 0 3px rgba(20,24,32,.05)}
+}
+.btn.st-err{border-color:var(--err);color:var(--err)}
+
+/* индикаторы-точки */
+.dot{width:6px;height:6px;border-radius:99px;background:var(--dim2);flex:none;transition:all var(--t)}
+.dot.ok{background:var(--txt);box-shadow:0 0 0 3px rgba(255,255,255,.07)}
+[data-theme="light"] .dot.ok{box-shadow:0 0 0 3px rgba(20,24,32,.07)}
+.dot.load{background:var(--dim);animation:pulse 1.4s var(--ease) infinite}
+.dot.err{background:var(--err)}
+@keyframes pulse{50%{opacity:.25;transform:scale(.7)}}
+
+/* полоса прогресса */
+.bar{height:3px;border-radius:99px;background:var(--s0);overflow:hidden;box-shadow:var(--press)}
+.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--dim2),var(--txt));transition:width .6s var(--ease)}
+.bar.indet i{width:34%;animation:slide 1.5s var(--ease) infinite}
+@keyframes slide{0%{margin-left:-34%}100%{margin-left:100%}}
+
+/* переключатель */
+.sw{width:38px;height:21px;border-radius:99px;background:var(--s0);box-shadow:var(--press);border:1px solid var(--line);position:relative;cursor:pointer;flex:none;transition:all var(--t) var(--ease)}
+.sw i{position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:99px;background:var(--dim);box-shadow:var(--e1);transition:all var(--t) var(--ease)}
+.sw.on{background:var(--s3)}
+.sw.on i{left:20px;background:var(--txt)}
+
+/* слайдер */
+input[type=range]{-webkit-appearance:none;width:100%;height:20px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:var(--s0);box-shadow:var(--press)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:99px;background:var(--txt);box-shadow:var(--e1);transition:transform var(--t) var(--ease)}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.18)}
+
+/* поле ввода */
+.inp{
+  height:38px;padding:0 13px;width:100%;
+  border-radius:var(--r-md);border:1px solid var(--line);
+  background:var(--s0);color:var(--txt);
+  font:300 13px/1 var(--font);
+  box-shadow:var(--press);outline:none;
+  transition:border-color var(--t),box-shadow var(--t);
+}
+.inp::placeholder{color:var(--dim2)}
+.inp:focus{border-color:var(--line-2);box-shadow:var(--press),0 0 0 3px rgba(255,255,255,.05)}
+[data-theme="light"] .inp:focus{box-shadow:var(--press),0 0 0 3px rgba(20,24,32,.05)}
+
+/* ============================================================
+   КАРКАС
+   ============================================================ */
+#app{height:100%;display:flex;flex-direction:column;gap:var(--pad);padding:var(--pad)}
+
+/* --- шапка --- */
+#top{
+  height:52px;flex:none;display:flex;align-items:center;gap:12px;padding:0 8px 0 14px;
+  border-radius:var(--r-lg);
+}
+.brand{display:flex;align-items:center;gap:10px;padding-right:6px}
+.brand .mark{
+  width:26px;height:26px;border-radius:9px;flex:none;
+  background:var(--s3);box-shadow:var(--e1);
+  display:grid;place-items:center;font:500 11px/1 var(--font-d);letter-spacing:.02em;
+}
+.brand b{font:400 14px/1 var(--font-d);letter-spacing:.06em}
+.brand span{font:300 10.5px/1 var(--font);color:var(--dim2);letter-spacing:.1em;text-transform:uppercase}
+
+.vitals{display:flex;align-items:center;gap:3px;margin-left:6px}
+.vital{display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-pill);
+  background:var(--s0);border:1px solid transparent;font-size:11px;color:var(--dim);
+  transition:all var(--t) var(--ease);cursor:default}
+.vital:hover{background:var(--s1);border-color:var(--line);box-shadow:var(--e1);transform:translateY(-1px);color:var(--txt)}
+
+.spacer{flex:1}
+
+/* --- тело --- */
+#body{flex:1;min-height:0;display:flex;gap:var(--pad)}
+
+/* --- левый рельс --- */
+#rail{
+  width:var(--rail);flex:none;border-radius:var(--r-xl);
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0;
+}
+.rbtn{
+  width:50px;height:46px;border-radius:var(--r-md);border:1px solid transparent;background:transparent;
+  color:var(--dim);cursor:pointer;position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font:400 8.5px/1 var(--font);letter-spacing:.06em;text-transform:uppercase;
+  transition:all var(--t) var(--ease);
+}
+.rbtn svg{width:19px;height:19px;stroke:currentColor;stroke-width:1.25;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.rbtn:hover{transform:translateY(-2px);color:var(--txt);background:var(--s1);border-color:var(--line);box-shadow:var(--e1)}
+.rbtn.on{color:var(--txt);background:var(--s2);border-color:var(--line-2);box-shadow:var(--e2)}
+.rbtn.on::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:2px;height:18px;border-radius:99px;background:var(--txt)}
+.rail-sep{width:26px;height:1px;background:var(--line);margin:4px 0}
+
+/* --- рабочая область --- */
+#work{flex:1;min-width:0;display:flex;gap:var(--pad)}
+.view{display:none;flex:1;min-width:0;gap:var(--pad)}
+.view.on{display:flex}
+
+/* ============================================================
+   ВИД: ЧАТ
+   ============================================================ */
+#chat-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--pad)}
+#stream{flex:1;min-height:0;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px}
+.msg{max-width:74%;padding:11px 15px;border-radius:16px;font-size:13.5px;line-height:1.6;box-shadow:var(--e1);border:1px solid var(--line)}
+.msg.me{align-self:flex-end;background:var(--s2);border-bottom-right-radius:5px}
+.msg.her{align-self:flex-start;background:var(--s0);border-bottom-left-radius:5px}
+.msg .meta{margin-top:7px;font-size:10px;color:var(--dim2);letter-spacing:.04em;display:flex;gap:10px}
+
+/* нижний док */
+#dock{flex:none;padding:9px;display:flex;align-items:center;gap:8px;border-radius:var(--r-lg)}
+#dock .inp{border-radius:var(--r-md)}
+#dock .btn{flex:none;white-space:nowrap}
+.dock-sep{width:1px;height:22px;background:var(--line);margin:0 2px}
+
+/* правая колонка контекста */
+#ctx{width:264px;flex:none;display:flex;flex-direction:column;gap:var(--pad);overflow:auto}
+.card{padding:14px;border-radius:var(--r-lg)}
+.card .cap{margin-bottom:11px;display:block}
+.stat{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;font-size:11.5px;color:var(--dim)}
+.stat b{font:300 12.5px/1 var(--font-d);color:var(--txt)}
+.mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mini{padding:11px;border-radius:var(--r-md);background:var(--s0);border:1px solid var(--line);
+  transition:all var(--t) var(--ease);cursor:pointer}
+.mini:hover{transform:translateY(-2px);background:var(--s2);box-shadow:var(--e2);border-color:var(--line-2)}
+.mini .num{font-size:22px;margin-bottom:2px}
+.mini .cap{font-size:8.5px}
+
+/* ============================================================
+   ВИД: ДОРОЖНАЯ КАРТА
+   ============================================================ */
+#map-view{flex-direction:column}
+#map-head{flex:none;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:var(--r-lg)}
+.legend{display:flex;gap:14px;font-size:10.5px;color:var(--dim);align-items:center}
+.legend i{width:8px;height:8px;border-radius:99px;display:inline-block;margin-right:5px;vertical-align:middle;border:1px solid var(--line-2)}
+.lg-done i{background:var(--txt);border-color:var(--txt)}
+.lg-doing i{background:transparent;box-shadow:inset 0 0 0 2px var(--txt)}
+.lg-plan i{background:transparent;border-style:dashed}
+.lg-idea i{background:var(--s3)}
+
+#map-wrap{flex:1;min-height:0;display:flex;gap:var(--pad)}
+#map-scroll{
+  flex:1;min-width:0;border-radius:var(--r-xl);position:relative;overflow-x:auto;overflow-y:hidden;
+  scroll-behavior:smooth;
+}
+#map-canvas{position:relative;height:100%;min-width:100%}
+#map-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#map-svg path{fill:none;stroke:var(--line-2);stroke-width:1.5}
+#map-svg path.dash{stroke-dasharray:5 7;stroke:var(--line)}
+
+.lane-label{position:absolute;left:14px;transform:translateY(-50%);
+  font:500 9px/1 var(--font);letter-spacing:.18em;text-transform:uppercase;color:var(--dim2);pointer-events:none}
+
+.node{position:absolute;transform:translate(-50%,-50%);cursor:pointer;text-align:center;width:150px}
+.node .disc{
+  width:88px;height:88px;margin:0 auto;border-radius:50%;
+  background:var(--s1);border:1px solid var(--line);
+  box-shadow:var(--e2);backdrop-filter:var(--glass);-webkit-backdrop-filter:var(--glass);
+  display:grid;place-items:center;position:relative;
+  transition:all var(--t) var(--ease);
+}
+.node .disc .n{font:200 25px/1 var(--font-d);letter-spacing:-.03em}
+.node .disc .sub{font:400 8px/1 var(--font);letter-spacing:.15em;color:var(--dim2);text-transform:uppercase;margin-top:3px}
+.node:hover .disc{transform:translateY(-4px) scale(1.03);background:var(--s2);box-shadow:var(--e3);border-color:var(--line-2)}
+.node.sel .disc{background:var(--s3);border-color:var(--ring);box-shadow:var(--e3), 0 0 0 4px rgba(255,255,255,.06)}
+[data-theme="light"] .node.sel .disc{box-shadow:var(--e3), 0 0 0 4px rgba(20,24,32,.06)}
+.node .lbl{margin-top:9px;font:400 11px/1.35 var(--font);color:var(--txt);transition:color var(--t)}
+.node .when{margin-top:2px;font:400 9px/1 var(--font);letter-spacing:.1em;color:var(--dim2)}
+.node.plan .disc{background:transparent;border-style:dashed;box-shadow:none}
+.node.plan .lbl{color:var(--dim)}
+.node.plan:hover .disc{background:var(--s1);box-shadow:var(--e1)}
+.node.doing .disc::before{
+  content:'';position:absolute;inset:-5px;border-radius:50%;
+  border:1px solid var(--ring);opacity:.5;
+  animation:halo 2.4s var(--ease) infinite;
+}
+@keyframes halo{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.07);opacity:.12}}
+
+.node .badge{position:absolute;top:-2px;right:26px;min-width:20px;height:20px;padding:0 6px;border-radius:99px;
+  background:var(--s-solid);border:1px solid var(--line-2);box-shadow:var(--e1);
+  font:400 10px/18px var(--font);color:var(--dim)}
+
+/* панель отчёта */
+#report{width:340px;flex:none;border-radius:var(--r-xl);padding:0;display:flex;flex-direction:column;overflow:hidden}
+#rep-head{flex:none;padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+#rep-body{flex:1;overflow:auto;padding:16px 20px 20px;display:flex;flex-direction:column;gap:9px}
+.ritem{padding:10px 12px;border-radius:var(--r-md);background:var(--s0);border:1px solid var(--line);
+  font-size:12px;line-height:1.5;transition:all var(--t) var(--ease)}
+.ritem:hover{background:var(--s2);transform:translateX(2px);box-shadow:var(--e1)}
+.ritem .tag{font:500 8.5px/1 var(--font);letter-spacing:.14em;text-transform:uppercase;color:var(--dim2);display:block;margin-bottom:5px}
+.ritem .note{margin-top:6px;font-size:11px;color:var(--dim);line-height:1.5}
+
+#map-nav{position:absolute;bottom:14px;right:16px;display:flex;gap:7px;z-index:5}
+
+/* ============================================================
+   ВИД: КОМПОНЕНТЫ
+   ============================================================ */
+#kit-view{overflow:auto}
+#kit{flex:1;padding:22px 26px;border-radius:var(--r-xl);overflow:auto}
+.kit-sec{margin-bottom:30px}
+.kit-sec>.cap{display:block;margin-bottom:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}
+.sw-item{padding:12px;border-radius:var(--r-md);border:1px solid var(--line);box-shadow:var(--e1)}
+.sw-item span{font-size:9.5px;color:var(--dim);display:block;margin-top:26px;font-family:var(--font-m)}
+.type-row{display:flex;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--line)}
+.type-row .cap{width:120px;flex:none}
+
+/* прокрутка вне экрана */
+.hint{font-size:11px;color:var(--dim2);margin-top:8px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= ШАПКА ================= -->
+  <div id="top" class="tile">
+    <div class="brand">
+      <div class="mark">S</div>
+      <div>
+        <b>САЙКА</b><br>
+        <span>локальный агент</span>
+      </div>
+    </div>
+
+    <div class="vitals">
+      <div class="vital"><i class="dot ok"></i>Мозги · gemma-4-e4b</div>
+      <div class="vital"><i class="dot ok"></i>Слух · gigaam</div>
+      <div class="vital"><i class="dot load"></i>Голос · qwen3</div>
+      <div class="vital"><i class="dot"></i>Глаза</div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <button class="btn sm pill st-ready" title="Версия и обновления">
+      <i class="dot ok"></i> v0.9.4 · stable
+    </button>
+    <button class="btn ico ghost" id="theme-btn" title="Тема">◐</button>
+    <button class="btn sm ghost" title="Язык">RU</button>
+    <button class="btn ico ghost" title="Новый диалог">✧</button>
+  </div>
+
+  <!-- ================= ТЕЛО ================= -->
+  <div id="body">
+
+    <!-- рельс -->
+    <div id="rail" class="tile">
+      <button class="rbtn on" data-view="chat">
+        <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/></svg>
+        Чат
+      </button>
+      <button class="rbtn" data-view="map">
+        <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="12" r="2.5"/><circle cx="8" cy="18" r="2.5"/><path d="M8.3 7.2 15.7 11M16 14.1 10.2 16.6"/></svg>
+        Карта
+      </button>
+      <button class="rbtn" data-view="kit">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+        Стиль
+      </button>
+      <div class="rail-sep"></div>
+      <button class="rbtn">
+        <svg viewBox="0 0 24 24"><path d="M12 3v10M12 3a4 4 0 0 1 4 4v3a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        Голос
+      </button>
+      <button class="rbtn">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        Образ
+      </button>
+      <button class="rbtn">
+        <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Система
+      </button>
+      <div class="spacer"></div>
+      <button class="rbtn">
+        <svg viewBox="0 0 24 24"><path d="M10.3 3.5h3.4l.5 2.3 2 1.2 2.2-.8 1.7 3-1.7 1.6v2.4l1.7 1.6-1.7 3-2.2-.8-2 1.2-.5 2.3h-3.4l-.5-2.3-2-1.2-2.2.8-1.7-3L5.6 13v-2.4L3.9 9l1.7-3 2.2.8 2-1.2z"/><circle cx="12" cy="12" r="2.6"/></svg>
+        Настр.
+      </button>
+    </div>
+
+    <!-- рабочая область -->
+    <div id="work">
+
+      <!-- ============ ВИД: ПУЛЬТ ============ -->
+      <div class="view" id="hub-view">
+        <div class="tile" style="flex:1;display:flex;align-items:center;justify-content:center;border-radius:var(--r-xl);position:relative;overflow:hidden">
+          <div id="ring-wrap">
+            <canvas id="ring"></canvas>
+            <div id="ring-core">
+              <div id="ring-plate"></div>
+              <div id="ring-name">ANAMORF</div>
+              <div id="ring-sub">SAIKA · LOCAL AGENT</div>
+              <div id="ring-clock" class="mono">— · — · —</div>
+            </div>
+            <!-- подписи секторов -->
+            <div class="sect" data-k="cpu"><b>ЦП</b><i>0%</i></div>
+            <div class="sect" data-k="ram"><b>ОЗУ</b><i>0%</i></div>
+            <div class="sect" data-k="vram"><b>VRAM</b><i>0%</i></div>
+            <div class="sect" data-k="gpu"><b>GPU</b><i>0%</i></div>
+            <div class="sect" data-k="voice"><b>ГОЛОС</b><i>—</i></div>
+          </div>
+        </div>
+
+        <div id="ctx2">
+          <div class="card tile lift">
+            <span class="cap">Процессы в памяти</span>
+            <div class="stat"><span>ollama · gemma-4-e4b</span><b>6.1 ГБ</b></div>
+            <div class="bar" style="margin-bottom:11px"><i style="width:52%"></i></div>
+            <div class="stat"><span>qwen3-tts · клон голоса</span><b>3.4 ГБ</b></div>
+            <div class="bar" style="margin-bottom:11px"><i style="width:29%"></i></div>
+            <div class="stat"><span>gigaam · слух</span><b>1.2 ГБ</b></div>
+            <div class="bar"><i style="width:11%"></i></div>
+          </div>
+
+          <div class="card tile lift">
+            <span class="cap">Где я работаю</span>
+            <div style="height:74px;border-radius:var(--r-md);background:var(--s0);box-shadow:var(--press);position:relative;overflow:hidden">
+              <div style="position:absolute;left:18%;top:24%;width:34%;height:44%;border:1px solid var(--line-2);border-radius:4px"></div>
+              <div style="position:absolute;left:56%;top:38%;width:26%;height:32%;border:1px dashed var(--line-2);border-radius:4px"></div>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button class="btn sm">Подсветить</button>
+              <button class="btn sm ico">◐</button>
+            </div>
+          </div>
+
+          <div class="card tile lift">
+            <span class="cap">Сейчас</span>
+            <div class="mini-grid">
+              <div class="mini"><div class="num">1.4</div><span class="cap">сек до ответа</span></div>
+              <div class="mini"><div class="num">37</div><span class="cap">ток/с</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ ВИД: ЧАТ ============ -->
+      <div class="view on" id="chat-view">
+        <div id="chat-col">
+          <div id="stream" class="tile">
+            <div class="msg her">Слушаю. Мозги прогреты, голос ещё поднимается — секунд десять.
+              <div class="meta"><span>gemma-4-e4b</span><span>1.2 с</span><span>41 ток/с</span></div>
+            </div>
+            <div class="msg me">открой рабочую папку и покажи, что поменялось за вчера</div>
+            <div class="msg her">Открыла. Три файла тронуты: смета_18.xlsx, чертёж_кронштейн.dwg и заметки.md. Показать разницу?
+              <div class="meta"><span>инструменты: 2</span><span>0.9 с</span></div>
+            </div>
+          </div>
+
+          <div id="dock" class="tile">
+            <button class="btn ico st-work" title="Слушать · M">◉</button>
+            <button class="btn ico ghost" title="Микрофон">▤</button>
+            <div class="dock-sep"></div>
+            <input class="inp" placeholder="Скажи или напиши…">
+            <div class="dock-sep"></div>
+            <button class="btn sm pill st-ready" title="Модель · X">gemma-4-e4b</button>
+            <button class="btn ico ghost" title="Вложение">＋</button>
+            <button class="btn ico" title="Отправить">→</button>
+          </div>
+        </div>
+
+        <div id="ctx">
+          <div class="card tile lift" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <span class="cap" style="align-self:flex-start">Состояние</span>
+            <div id="ring-wrap-mini">
+              <canvas id="ring-mini"></canvas>
+              <div id="ring-core-mini"><b>ANAMORF</b></div>
+            </div>
+          </div>
+
+          <div class="card tile lift">
+            <span class="cap">Нагрузка</span>
+            <div class="stat"><span>ЦП · 24 потока</span><b>18%</b></div>
+            <div class="bar" style="margin-bottom:10px"><i style="width:18%"></i></div>
+            <div class="stat"><span>ОЗУ</span><b>21.4 / 64 ГБ</b></div>
+            <div class="bar" style="margin-bottom:10px"><i style="width:33%"></i></div>
+            <div class="stat"><span>VRAM · RTX 4070 Ti S</span><b>10.7 / 16 ГБ</b></div>
+            <div class="bar"><i style="width:67%"></i></div>
+          </div>
+
+          <div class="card tile lift">
+            <span class="cap">Доверие</span>
+            <div class="row" style="justify-content:space-between;margin-bottom:6px">
+              <span style="font-size:11.5px" class="dim">делает молча</span>
+              <b class="h-md">6</b>
+            </div>
+            <input type="range" min="1" max="10" value="6">
+            <div class="row" style="margin-top:10px">
+              <div class="sw on"><i></i></div><span style="font-size:11.5px">Руки в системе</span>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <div class="sw"><i></i></div><span style="font-size:11.5px">Любые папки</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ ВИД: ДОРОЖНАЯ КАРТА ============ -->
+      <div class="view" id="map-view">
+        <div id="map-head" class="tile">
+          <span class="h-md">Дорога проекта</span>
+          <span class="dim" style="font-size:11.5px">63 сделано · 4 в работе · 31 в планах</span>
+          <div class="spacer"></div>
+          <div class="legend">
+            <span class="lg-done"><i></i>пройдено</span>
+            <span class="lg-doing"><i></i>в работе</span>
+            <span class="lg-plan"><i></i>впереди</span>
+            <span class="lg-idea"><i></i>идея</span>
+          </div>
+        </div>
+
+        <div id="map-wrap">
+          <div id="map-scroll" class="tile">
+            <div id="map-canvas">
+              <svg id="map-svg"></svg>
+            </div>
+            <div id="map-nav">
+              <button class="btn ico sm" id="map-prev">‹</button>
+              <button class="btn ico sm" id="map-next">›</button>
+            </div>
+          </div>
+
+          <div id="report" class="tile">
+            <div id="rep-head">
+              <span class="cap" id="rep-when">—</span>
+              <div class="h-md" id="rep-title" style="margin-top:6px">Выбери этап</div>
+              <div class="dim" id="rep-sum" style="font-size:11.5px;margin-top:6px">Кружки слева — этапы. Нажми, чтобы открыть отчёт: что делали, чем кончилось.</div>
+            </div>
+            <div id="rep-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ ВИД: КОМПОНЕНТЫ ============ -->
+      <div class="view" id="kit-view">
+        <div id="kit" class="tile">
+          <div class="h-lg" style="margin-bottom:4px">Graphite</div>
+          <div class="dim" style="margin-bottom:26px;font-size:12.5px">Монохром, глубина слоями, стекло, подъём при наведении. Ни одного цветного акцента — статус читается контуром и яркостью.</div>
+
+          <div class="kit-sec">
+            <span class="cap">Поверхности и глубина</span>
+            <div class="swatches">
+              <div class="sw-item" style="background:var(--s0)"><span>--s0 · подложка</span></div>
+              <div class="sw-item" style="background:var(--s1);box-shadow:var(--e1)"><span>--s1 · плитка</span></div>
+              <div class="sw-item" style="background:var(--s2);box-shadow:var(--e2)"><span>--s2 · наведение</span></div>
+              <div class="sw-item" style="background:var(--s3);box-shadow:var(--e3)"><span>--s3 · активное</span></div>
+              <div class="sw-item" style="background:var(--s1);box-shadow:var(--press)"><span>--press · вдавлено</span></div>
+            </div>
+            <div class="hint">Тень = рассеянная + контактная + внутренний блик сверху. При наведении плитка поднимается на 3px и тень растёт — глубина, а не цвет.</div>
+          </div>
+
+          <div class="kit-sec">
+            <span class="cap">Кнопки и состояния процесса</span>
+            <div class="row">
+              <button class="btn">Обычная</button>
+              <button class="btn on">Включена</button>
+              <button class="btn ghost">Призрак</button>
+              <button class="btn st-ready">✓ Готово</button>
+              <button class="btn st-load">Греется</button>
+              <button class="btn st-work">Работает</button>
+              <button class="btn st-err">Сломано</button>
+              <button class="btn ico">◉</button>
+              <button class="btn ico sm">＋</button>
+              <button class="btn pill sm">чип</button>
+            </div>
+            <div class="hint">«Греется» — бегущий контур по кругу. «Работает» — дышащая рамка. Заливка не меняется никогда: глаз ловит движение контура, а плитка остаётся спокойной.</div>
+          </div>
+
+          <div class="kit-sec">
+            <span class="cap">Ввод</span>
+            <div class="row">
+              <input class="inp" style="width:230px" placeholder="Поле ввода">
+              <div class="sw on"><i></i></div>
+              <div class="sw"><i></i></div>
+              <input type="range" style="width:180px" value="62">
+              <div style="width:180px"><div class="bar indet"><i></i></div></div>
+              <div style="width:180px"><div class="bar"><i style="width:64%"></i></div></div>
+            </div>
+          </div>
+
+          <div class="kit-sec">
+            <span class="cap">Типографика</span>
+            <div class="type-row"><span class="cap">h-lg · 200</span><span class="h-lg">Сайка слышит</span></div>
+            <div class="type-row"><span class="cap">h-md · 300</span><span class="h-md">Дорога проекта</span></div>
+            <div class="type-row"><span class="cap">body · 300</span><span>Обычный текст интерфейса, 14px, межбуквенное +0.01em</span></div>
+            <div class="type-row"><span class="cap">cap · 500</span><span class="cap">Заголовок раздела</span></div>
+            <div class="type-row"><span class="cap">num · 200</span><span class="num">10.7</span></div>
+            <div class="type-row"><span class="cap">mono</span><span class="mono">v0.9.4 · 8f21c0e · stable</span></div>
+            <div class="hint">Inter Variable — один файл, кладётся в ui/fonts/ и подключается через @font-face. Интерфейс остаётся полностью офлайн.</div>
+          </div>
+
+          <div class="kit-sec">
+            <span class="cap">Плитки</span>
+            <div class="row">
+              <div class="tile lift card" style="width:190px"><span class="cap">Слух</span><div class="num">gigaam</div><div class="dim" style="font-size:11px;margin-top:4px">черновик · vosk</div></div>
+              <div class="tile lift card st-load" style="width:190px;position:relative"><span class="cap">Голос</span><div class="num">qwen3</div><div class="dim" style="font-size:11px;margin-top:4px">поднимается…</div></div>
+              <div class="tile lift card" style="width:190px"><span class="cap">Зрение</span><div class="num">выкл</div><div class="dim" style="font-size:11px;margin-top:4px">2 монитора</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /work -->
+  </div><!-- /body -->
+</div><!-- /app -->
+
+<style>
+/* ============================================================
+   ЦЕНТРАЛЬНОЕ КОЛЬЦО — процессы и голос вокруг имени
+   ============================================================ */
+#ring-wrap{position:relative;width:min(78vh,720px);aspect-ratio:1;display:grid;place-items:center}
+#ring{position:absolute;inset:0;width:100%;height:100%}
+#ring-core{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#ring-plate{
+  position:absolute;width:43%;aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle at 38% 30%, rgba(255,255,255,.97), rgba(226,229,234,.86) 62%, rgba(206,210,218,.72));
+  box-shadow:0 26px 60px -26px rgba(0,0,0,.85), inset 0 2px 3px rgba(255,255,255,1), inset 0 -12px 24px -12px rgba(20,24,32,.28);
+  left:50%;top:50%;transform:translate(-50%,-50%);
+}
+[data-theme="light"] #ring-plate{
+  background:radial-gradient(circle at 38% 30%, #fff, #f0f1f4 64%, #e3e5ea);
+  box-shadow:14px 18px 40px -18px rgba(20,24,32,.32), -12px -12px 30px -12px #fff, inset 0 2px 2px #fff;
+}
+#ring-name{
+  position:relative;z-index:3;
+  font:200 clamp(15px,2.5vh,25px)/1 var(--font-d);
+  letter-spacing:.26em;text-indent:.26em;
+  color:#0b0b0d;
+}
+#ring-sub{position:relative;z-index:3;margin-top:9px;font:500 8px/1 var(--font);letter-spacing:.3em;color:rgba(11,11,13,.42)}
+#ring-clock{position:relative;z-index:3;margin-top:12px;font-size:10px;letter-spacing:.2em;color:rgba(11,11,13,.34)}
+
+.sect{position:absolute;z-index:3;text-align:center;pointer-events:none;transform:translate(-50%,-50%);white-space:nowrap}
+.sect b{display:block;font:500 8px/1 var(--font);letter-spacing:.2em;color:var(--dim2)}
+.sect i{display:block;margin-top:4px;font:300 13px/1 var(--font-d);font-style:normal;color:var(--txt)}
+
+#ctx2{width:280px;flex:none;display:flex;flex-direction:column;gap:var(--pad);overflow:auto}
+
+/* мини-кольцо в колонке чата */
+#ring-wrap-mini{position:relative;width:100%;aspect-ratio:1;max-width:206px;display:grid;place-items:center}
+#ring-mini{position:absolute;inset:0;width:100%;height:100%}
+#ring-core-mini{position:relative;z-index:2;width:52%;aspect-ratio:1;border-radius:50%;display:grid;place-items:center;
+  background:radial-gradient(circle at 38% 30%, rgba(255,255,255,.96), rgba(224,227,232,.84) 65%, rgba(203,207,215,.7));
+  box-shadow:0 16px 34px -18px rgba(0,0,0,.8), inset 0 1px 2px rgba(255,255,255,1);}
+[data-theme="light"] #ring-core-mini{background:radial-gradient(circle at 38% 30%, #fff, #eef0f3 66%, #e2e4e9);box-shadow:8px 10px 22px -12px rgba(20,24,32,.3), -6px -6px 16px -8px #fff}
+#ring-core-mini b{font:200 11px/1 var(--font-d);letter-spacing:.22em;text-indent:.22em;color:#0b0b0d}
+</style>
+
+<script>
+(function(){
+"use strict";
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+/* ---------------- тема ---------------- */
+const root = document.documentElement;
+$('#theme-btn').onclick = () => {
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+};
+
+/* ---------------- переключение видов ---------------- */
+$$('.rbtn[data-view]').forEach(b => b.onclick = () => {
+  $$('.rbtn').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  $$('.view').forEach(v => v.classList.remove('on'));
+  $('#' + b.dataset.view + '-view').classList.add('on');
+  if (b.dataset.view === 'map') focusCurrent();
+});
+/* первые две кнопки рельса — Пульт и Чат */
+const rail = $$('.rbtn');
+rail[0].dataset.view = 'chat';
+/* добавляем Пульт первым */
+(function(){
+  const b = document.createElement('button');
+  b.className = 'rbtn'; b.dataset.view = 'hub';
+  b.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8.5"/><path d="M12 1.5v2M12 20.5v2M1.5 12h2M20.5 12h2"/></svg>Пульт';
+  $('#rail').prepend(b);
+  b.onclick = () => {
+    $$('.rbtn').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    $$('.view').forEach(v => v.classList.remove('on'));
+    $('#hub-view').classList.add('on');
+  };
+})();
+
+/* ---------------- тумблеры ---------------- */
+$$('.sw').forEach(s => s.onclick = () => s.classList.toggle('on'));
+
+/* ============================================================
+   КОЛЬЦО: сектора процессов + голос
+   ============================================================ */
+const SECTORS = [
+  {k:'cpu',   label:'ЦП',    a0:-96,  a1:-26,  base:.18, fmt:v=>Math.round(v*100)+'%'},
+  {k:'ram',   label:'ОЗУ',   a0:-18,  a1:52,   base:.34, fmt:v=>(v*64).toFixed(1)+' ГБ'},
+  {k:'vram',  label:'VRAM',  a0:60,   a1:130,  base:.67, fmt:v=>(v*16).toFixed(1)+' ГБ'},
+  {k:'gpu',   label:'GPU',   a0:138,  a1:196,  base:.41, fmt:v=>Math.round(v*100)+'%'},
+  {k:'voice', label:'ГОЛОС', a0:204,  a1:264,  base:.5,  voice:true, fmt:()=> 'слышу'}
+];
+
+function makeRing(canvas, opts){
+  const cv = canvas, ctx = cv.getContext('2d');
+  const BARS = opts.bars || 168;
+  const vals = new Float32Array(BARS);
+  const tgt  = new Float32Array(BARS);
+  let t = 0, W = 0, H = 0, DPR = 1;
+
+  function size(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const r = cv.getBoundingClientRect();
+    W = r.width; H = r.height;
+    cv.width = W * DPR; cv.height = H * DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  new ResizeObserver(size).observe(cv); size();
+
+  /* «живые» значения подсистем */
+  const load = {cpu:.18, ram:.34, vram:.67, gpu:.41, voice:.3};
+
+  function step(){
+    t += 0.016;
+    /* мягкий дрейф нагрузок */
+    for (const s of SECTORS){
+      const n = s.base + Math.sin(t*(0.3+s.base) + s.base*9)*0.06 + Math.sin(t*1.7+s.base*3)*0.02;
+      load[s.k] += (Math.max(0.04, Math.min(0.98, n)) - load[s.k]) * 0.05;
+    }
+    /* голос — «речь»: пачки энергии */
+    const speech = Math.max(0, Math.sin(t*0.7) ) * (0.55 + 0.45*Math.sin(t*5.3));
+
+    for (let i=0;i<BARS;i++){
+      const ang = (i/BARS)*360 - 90;          // -90 = верх
+      const a = ((ang+360)%360);
+      let v = 0, inSec = false;
+      for (const s of SECTORS){
+        const A0 = (s.a0+360)%360, A1=(s.a1+360)%360;
+        const inside = A0 < A1 ? (a>=A0 && a<=A1) : (a>=A0 || a<=A1);
+        if (!inside) continue;
+        inSec = true;
+        const p = A0 < A1 ? (a-A0)/(A1-A0) : ((a-A0+360)%360)/((A1-A0+360)%360);
+        const edge = Math.sin(p*Math.PI);      // мягкие края сектора
+        if (s.voice){
+          v = speech * edge * (0.35 + 0.65*Math.abs(Math.sin(i*2.3 + t*9)));
+        } else {
+          const fill = load[s.k];
+          const shape = (p < fill) ? 1 : 0.14;  // заполненная доля сектора
+          v = shape * edge * (0.72 + 0.28*Math.abs(Math.sin(i*1.7 + t*1.4)));
+        }
+        break;
+      }
+      tgt[i] = inSec ? v : 0;
+      vals[i] += (tgt[i]-vals[i]) * (tgt[i] > vals[i] ? 0.35 : 0.08);
+    }
+  }
+
+  function draw(){
+    const dark = root.dataset.theme === 'dark';
+    const cx = W/2, cy = H/2;
+    const R  = Math.min(W,H) * (opts.r0 || 0.30);   // внутренний радиус баров
+    const L  = Math.min(W,H) * (opts.len || 0.19);  // максимальная длина бара
+    const bw = Math.max(1.2, Math.min(W,H) * (opts.bw || 0.0075));
+
+    ctx.clearRect(0,0,W,H);
+    if (!(R > 30)) return;
+
+    /* — тонкие направляющие кольца — */
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,.09)' : 'rgba(20,24,32,.10)';
+    ctx.beginPath(); ctx.arc(cx,cy,R-6,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,.055)' : 'rgba(20,24,32,.06)';
+    ctx.beginPath(); ctx.arc(cx,cy,R+L+22,0,Math.PI*2); ctx.stroke();
+
+    /* — две вращающиеся дуги (пульс системы) — */
+    const arcs = [
+      {r:R-13, w:2.5, from:t*0.5,        span:2.1, a:dark?.34:.26},
+      {r:R-19, w:1.5, from:-t*0.32+2.4,  span:1.2, a:dark?.20:.16}
+    ];
+    for (const A of arcs){
+      ctx.lineWidth = A.w; ctx.lineCap = 'round';
+      ctx.strokeStyle = dark ? `rgba(255,255,255,${A.a})` : `rgba(20,24,32,${A.a})`;
+      ctx.beginPath(); ctx.arc(cx,cy,A.r,A.from,A.from+A.span); ctx.stroke();
+    }
+
+    /* — бары — */
+    ctx.lineCap = 'round';
+    for (let i=0;i<BARS;i++){
+      const v = vals[i]; if (v < 0.02) continue;
+      const ang = ((i/BARS)*360 - 90) * Math.PI/180;
+      const len = 4 + v*L;
+      const x0 = cx + Math.cos(ang)*R, y0 = cy + Math.sin(ang)*R;
+      const x1 = cx + Math.cos(ang)*(R+len), y1 = cy + Math.sin(ang)*(R+len);
+      const g = ctx.createLinearGradient(x0,y0,x1,y1);
+      if (dark){
+        g.addColorStop(0, `rgba(255,255,255,${0.16+v*0.30})`);
+        g.addColorStop(1, `rgba(255,255,255,${0.55+v*0.42})`);
+      } else {
+        g.addColorStop(0, `rgba(20,24,32,${0.10+v*0.16})`);
+        g.addColorStop(1, `rgba(20,24,32,${0.34+v*0.42})`);
+      }
+      ctx.strokeStyle = g; ctx.lineWidth = bw;
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+    }
+
+    /* — засечки-разделители между секторами — */
+    if (!opts.mini){
+      ctx.strokeStyle = dark ? 'rgba(255,255,255,.22)' : 'rgba(20,24,32,.22)';
+      ctx.lineWidth = 1;
+      for (const s of SECTORS){
+        for (const a of [s.a0, s.a1]){
+          const ang = a*Math.PI/180;
+          ctx.beginPath();
+          ctx.moveTo(cx+Math.cos(ang)*(R+L+6), cy+Math.sin(ang)*(R+L+6));
+          ctx.lineTo(cx+Math.cos(ang)*(R+L+16), cy+Math.sin(ang)*(R+L+16));
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  /* подписи секторов — раскладываем по кругу */
+  if (!opts.mini){
+    const wrap = $('#ring-wrap');
+    const place = () => {
+      const R = wrap.clientWidth * (opts.r0||0.263) + wrap.clientWidth*(opts.len||0.19) + 44;
+      $$('.sect').forEach(el => {
+        const s = SECTORS.find(x=>x.k===el.dataset.k);
+        const a = ((s.a0+s.a1)/2) * Math.PI/180;
+        el.style.left = (50 + Math.cos(a)*R/wrap.clientWidth*100) + '%';
+        el.style.top  = (50 + Math.sin(a)*R/wrap.clientWidth*100) + '%';
+      });
+    };
+    new ResizeObserver(place).observe(wrap); place();
+    setInterval(() => {
+      $$('.sect').forEach(el => {
+        const s = SECTORS.find(x=>x.k===el.dataset.k);
+        el.querySelector('i').textContent = s.fmt(load[s.k]);
+      });
+      const d = new Date();
+      $('#ring-clock').textContent = String(d.getHours()).padStart(2,'0')+' · '+String(d.getMinutes()).padStart(2,'0')+' · '+String(d.getSeconds()).padStart(2,'0');
+    }, 400);
+  }
+
+  (function loop(){ step(); draw(); requestAnimationFrame(loop); })();
+}
+makeRing($('#ring'), {bars:232, r0:.263, len:.20, bw:.0044});
+makeRing($('#ring-mini'), {bars:104, r0:.32, len:.16, bw:.014, mini:true});
+
+/* ============================================================
+   ДОРОЖНАЯ КАРТА
+   ============================================================ */
+const STAGES = [
+  {id:'s1', col:0, lane:0, st:'done', n:'01', title:'Первый голос', when:'16 июля', next:['s2'],
+   sum:'Собрали связку слух → мозги → голос и заставили её не падать на старте.',
+   items:[
+     {tag:'голос', text:'Вывод голоса на устройство + дубль + громкости'},
+     {tag:'слух', text:'Режим слуха: обычный (всё) / умный (по имени)'},
+     {tag:'слух', text:'Узнавание имени: нечёткое — зайка/сайра/майка'},
+     {tag:'мозги', text:'Стоп-команды перехватываются до LLM', note:'Реакция быстрее, чем модель успевает начать думать.'},
+     {tag:'ui', text:'Индикаторы веса/загрузки на LLM/STT/TTS'},
+     {tag:'старт', text:'Одна вкладка, F5 при рестарте (BOOT_ID)'},
+     {tag:'фикс', text:'HF-таймаут 10→60 с — лечит зависшие загрузки'}
+   ]},
+  {id:'s2', col:1, lane:0, st:'done', n:'02', title:'Беймакс и самопочинка', when:'17 июля', next:['s3','s4','s5'],
+   sum:'Система научилась объяснять свои поломки словами и чинить их без человека.',
+   items:[
+     {tag:'починка', text:'Беймакс: диагностика человеческим языком'},
+     {tag:'починка', text:'Переименовать консольного доктора в Беймакса'},
+     {tag:'старт', text:'Освобождение порта 8765 при старте'},
+     {tag:'связь', text:'Мессенджеры: Telegram + VK, управление ПК', note:'Токен в secrets.json, управление закрыто отдельным рубильником.'},
+     {tag:'карта', text:'Дев-доска 🗺 + авто DEVBOARD.md для другой ИИ'},
+     {tag:'память', text:'Сайка читает свою историю разработки'},
+     {tag:'ui', text:'Горячие клавиши: V замолчать, M микро, B доска'}
+   ]},
+  {id:'s3', col:2, lane:-1, st:'done', n:'03', title:'Слух дорос до живого', when:'23 июля', next:['s6'],
+   sum:'Ветка слуха: VAD, предролл, шумодав и черновик — чтобы не терять начало фразы.',
+   items:[
+     {tag:'слух', text:'Адаптивный VAD + предролл 240 мс'},
+     {tag:'слух', text:'Пачка фиксов движков распознавания'},
+     {tag:'слух', text:'Фикс «странных диалогов» из фонового шума'},
+     {tag:'слух', text:'GigaAM: авто-снос битого чекпоинта'},
+     {tag:'слух', text:'T-one: кадры по 2400 сэмплов'}
+   ]},
+  {id:'s4', col:2, lane:0, st:'done', n:'04', title:'Скорость и паспорт моделей', when:'23 июля', next:['s6'],
+   sum:'Убрали «думала 3–4 секунды»: KV-кэш перестал сбрасываться, опросы ушли в фон.',
+   items:[
+     {tag:'скорость', text:'Якорь истории — KV-кэш живёт между ходами', note:'Скользящее окно каждый раз сдвигало префикс и убивало кэш.'},
+     {tag:'скорость', text:'Фикс «промпт 1516 мс»: опрос HandsPC ушёл в фон'},
+     {tag:'скорость', text:'Быстрый старт: doctor --fast'},
+     {tag:'мозги', text:'Паспорт v2: проба формата tool-вызовов', note:'Лечит класс багов «модель сказала, что сделала, но инструмент не вызвался».'},
+     {tag:'мозги', text:'Harmony-вызовы gpt-oss ловятся и исполняются'},
+     {tag:'руки', text:'Поиск глубже: web_search читает топ-2 страницы'}
+   ]},
+  {id:'s5', col:2, lane:1, st:'done', n:'05', title:'Свой аватар', when:'25 июля', next:['s6'],
+   sum:'Отвязались от чужих программ-аватаров: VRM живёт внутри интерфейса.',
+   items:[
+     {tag:'аватар', text:'Свой VRM-аватар внутри интерфейса (без сторонних программ)'},
+     {tag:'аватар', text:'Липсинк по реальному звуку озвучки'},
+     {tag:'аватар', text:'Разговорные жесты + маркеры [жест:имя] в ответе'},
+     {tag:'аватар', text:'Взгляд, саккады, довороты головы и корпуса на зрителя'},
+     {tag:'аватар', text:'Архитектура анимаций в 3 слоя + мягкое смешивание'},
+     {tag:'чистка', text:'Код каналов в чужие аватары удалён полностью (−436 строк)'}
+   ]},
+  {id:'s6', col:3, lane:0, st:'done', n:'06', title:'Свои глаза и руки', when:'5 августа', next:['s7'],
+   sum:'Сайка научилась читать собственные логи и работать с файлами проекта.',
+   items:[
+     {tag:'руки', text:'Инструменты fs_log / fs_lasterr / fs_grep / fs_slice'},
+     {tag:'зрение', text:'Захват экрана и камеры, наблюдение за сценой'},
+     {tag:'ue', text:'UE 5.8: чертёж липсинка и мост в движок готовы'}
+   ]},
+  {id:'s7', col:4, lane:0, st:'done', n:'07', title:'Порядок в проекте', when:'17 августа', next:['s8'],
+   sum:'Появились документы, по которым проект можно читать и чинить, и замок на зависимости.',
+   items:[
+     {tag:'док', text:'ARCHITECTURE.md — карта подсистем и план распила main.py'},
+     {tag:'док', text:'CONFIG.md — справочник всех настроек, генерится из кода'},
+     {tag:'док', text:'RULES.md — как строить проект, который легко проверять'},
+     {tag:'сборка', text:'Зависимости зафиксированы: requirements.txt + lock'},
+     {tag:'ui', text:'Стенд интерфейса с настоящим браузером — tools/ui_stand/'},
+     {tag:'связь', text:'В мессенджерах отвечает она сама, а не разборщик команд'}
+   ]},
+  {id:'s8', col:5, lane:0, st:'doing', n:'08', title:'Сборка в приложение', when:'сейчас', next:['s9','s10','s11'],
+   sum:'Превращаем рабочий стенд в программу: окно, версия, разделение «код / данные / модели».',
+   items:[
+     {tag:'сборка', text:'Окно pywebview вместо вкладки браузера'},
+     {tag:'сборка', text:'Раскладка Saika.exe · runtime\\ · app\\ · models\\ · data\\'},
+     {tag:'сборка', text:'VERSION + /api/version, канал stable/beta/dev'},
+     {tag:'чистка', text:'Убрать runtime pip install из browser_hands, desk_avatar, hotkeys'},
+     {tag:'чистка', text:'Вырезать дев-инструменты и личные пути автора из клиентского билда'},
+     {tag:'ui', text:'Новая оболочка: монохром, глубина, пересобранная раскладка'}
+   ]},
+  {id:'s9', col:6, lane:-1, st:'plan', n:'09', title:'Обновления по каналам', when:'дальше', next:['s12'],
+   sum:'Автор пушит тег — клиент получает обновление сам, с проверкой и откатом.',
+   items:[
+     {tag:'обновления', text:'GitHub Actions: тег → сборка пакета → Release'},
+     {tag:'обновления', text:'manifest.json с sha256 и подписью'},
+     {tag:'обновления', text:'Атомарная замена app\\ + откат на app.prev'},
+     {tag:'конфиг', text:'config.default.json (обновляется) / config.user.json (нет)'}
+   ]},
+  {id:'s10', col:6, lane:0, st:'plan', n:'10', title:'Распил и тесты', when:'дальше', next:['s12'],
+   sum:'main.py на 9600 строк разбирается на подсистемы, каждая проверяется на push.',
+   items:[
+     {tag:'распил', text:'ШАГ 1: 156 роутов → server/api/ по подсистемам'},
+     {tag:'распил', text:'ШАГ 2: run_dialog (2046 строк) → server/dialog/'},
+     {tag:'распил', text:'ШАГ 3: ws_endpoint (2212 строк) → server/ws/'},
+     {tag:'качество', text:'276 мест except Exception: pass — заменить на логирование'},
+     {tag:'качество', text:'Тесты и CI: pytest на чистую логику + прогон на каждый push'},
+     {tag:'качество', text:'Развязать кольцевые импорты: server/runtime.py'}
+   ]},
+  {id:'s11', col:6, lane:1, st:'plan', n:'11', title:'Владелец по голосу', when:'дальше', next:['s12'],
+   sum:'Узнавание владельца с любого микрофона и на тихом голосе.',
+   items:[
+     {tag:'голос', text:'Узнавание владельца с ЛЮБОГО микрофона и на тихом голосе'},
+     {tag:'голос', text:'Перепечатать owner_voice_key — старый потерян вместе с диском'},
+     {tag:'слух', text:'Разобраться с точностью STT — самое кривое место системы'}
+   ]},
+  {id:'s12', col:7, lane:0, st:'plan', n:'12', title:'Живое общение', when:'потом', next:['s13'],
+   sum:'Она говорит не только с владельцем: Дискорд, коллеги, рабочие папки.',
+   items:[
+     {tag:'связь', text:'Дискорд: она болтает с людьми + размеченные голоса для тестов'},
+     {tag:'связь', text:'Полноценная интеграция с Discord и Telegram: группы и серверы'},
+     {tag:'работа', text:'Находить любые файлы на рабочем ПК и показывать папку'},
+     {tag:'работа', text:'Скрипты работы с почтой и рабочими папками'}
+   ]},
+  {id:'s13', col:8, lane:0, st:'idea', n:'13', title:'Сайка как игра', when:'горизонт', next:[],
+   sum:'Финал: интерфейс на UE 5.8, ААА-персонаж, один билд со встроенной LLM.',
+   items:[
+     {tag:'ue', text:'Интерфейс на UE 5.8: полный редизайн + ААА-персонаж'},
+     {tag:'ue', text:'Один билд как игра: Сайка со встроенной LLM'},
+     {tag:'мозги', text:'Дообучить модель под интерфейс и Windows 11'},
+     {tag:'идея', text:'Сайка-соведущая: контент и заработок'},
+     {tag:'идея', text:'Генерация картинок: баннеры, чертежи под станки'}
+   ]}
+];
+
+const COLW = 236, LANEH = 152, PAD_L = 118;
+const canvas = $('#map-canvas'), svg = $('#map-svg');
+const pos = {};
+
+function layout(){
+  const h = $('#map-scroll').clientHeight;
+  const cy = h/2 - 10;
+  const maxCol = Math.max(...STAGES.map(s=>s.col));
+  canvas.style.width = (PAD_L*2 + maxCol*COLW) + 'px';
+  STAGES.forEach(s => { pos[s.id] = {x: PAD_L + s.col*COLW, y: cy + s.lane*LANEH}; });
+}
+
+function render(){
+  layout();
+  canvas.querySelectorAll('.node,.lane-label').forEach(n=>n.remove());
+  const W = canvas.clientWidth, H = $('#map-scroll').clientHeight;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.style.width = W+'px';
+
+  /* связи */
+  let d = '';
+  STAGES.forEach(s => s.next.forEach(nid => {
+    const a = pos[s.id], b = pos[nid];
+    const dx = (b.x-a.x)*0.45;
+    const dash = (s.st!=='done' || STAGES.find(x=>x.id===nid).st!=='done') ? ' class="dash"' : '';
+    d += `<path${dash} d="M ${a.x+52} ${a.y} C ${a.x+52+dx} ${a.y}, ${b.x-52-dx} ${b.y}, ${b.x-52} ${b.y}"/>`;
+  }));
+  svg.innerHTML = d;
+
+  /* узлы */
+  STAGES.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'node ' + (s.st==='plan'||s.st==='idea' ? 'plan ' : '') + (s.st==='doing' ? 'doing ' : '');
+    el.style.left = pos[s.id].x + 'px';
+    el.style.top  = pos[s.id].y + 'px';
+    el.innerHTML =
+      `<div class="disc"><div><div class="n">${s.n}</div><div class="sub">${s.st==='done'?'пройдено':s.st==='doing'?'в работе':s.st==='idea'?'идея':'впереди'}</div></div>
+        <div class="badge">${s.items.length}</div></div>
+       <div class="lbl">${s.title}</div><div class="when">${s.when}</div>`;
+    el.onclick = () => openStage(s, el);
+    canvas.appendChild(el);
+  });
+}
+
+function openStage(s, el){
+  $$('.node').forEach(n=>n.classList.remove('sel'));
+  el.classList.add('sel');
+  $('#rep-when').textContent = s.when + ' · этап ' + s.n;
+  $('#rep-title').textContent = s.title;
+  $('#rep-sum').textContent = s.sum;
+  $('#rep-body').innerHTML = s.items.map(i =>
+    `<div class="ritem"><span class="tag">${i.tag}</span>${i.text}${i.note?`<div class="note">${i.note}</div>`:''}</div>`
+  ).join('');
+}
+
+const scroller = $('#map-scroll');
+$('#map-prev').onclick = () => scroller.scrollBy({left:-COLW*2, behavior:'smooth'});
+$('#map-next').onclick = () => scroller.scrollBy({left: COLW*2, behavior:'smooth'});
+scroller.addEventListener('wheel', e => {
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); scroller.scrollLeft += e.deltaY; }
+}, {passive:false});
+
+new ResizeObserver(() => { if ($('#map-view').classList.contains('on')) render(); }).observe($('#map-scroll'));
+render();
+/* открыть текущий этап */
+function focusCurrent(){
+  render();
+  requestAnimationFrame(() => {
+    const cur = [...canvas.querySelectorAll('.node')][7];
+    if (cur) cur.click();
+    scroller.scrollLeft = Math.max(0, pos['s8'].x - scroller.clientWidth/2);
+  });
+}
+window.focusCurrent = focusCurrent;
+setTimeout(focusCurrent, 60);
+
+})();
+</script>
+</body>
+</html>

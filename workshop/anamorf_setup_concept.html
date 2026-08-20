@@ -1,0 +1,1131 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ANAMORF — первый запуск и сборка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=Inter+Tight:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+
+/* ============================================================
+   САЙКА — ДИЗАЙН-СИСТЕМА «GRAPHITE»
+   монохром · глубина · стекло · подъём при наведении
+   ============================================================ */
+
+:root{
+  /* ---- геометрия ---- */
+  --r-xl:26px; --r-lg:20px; --r-md:14px; --r-sm:10px; --r-pill:999px;
+  --pad:14px;
+  --rail:76px;
+  --ease:cubic-bezier(.2,.85,.25,1);
+  --t:190ms;
+
+  /* ---- типографика ---- */
+  --font:"Inter","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --font-d:"Inter Tight","Inter",system-ui,sans-serif;
+  --font-m:ui-monospace,"SF Mono",Consolas,monospace;
+}
+
+/* ---------- ТЁМНАЯ (по умолчанию) ---------- */
+[data-theme="dark"]{
+  --bg:#0c0c0e;
+  --bg-a:rgba(255,255,255,.045);   /* пятно света 1 */
+  --bg-b:rgba(255,255,255,.028);   /* пятно света 2 */
+
+  --s0:rgba(255,255,255,.028);     /* фон-подложка секции */
+  --s1:rgba(255,255,255,.052);     /* плитка */
+  --s2:rgba(255,255,255,.078);     /* плитка при наведении */
+  --s3:rgba(255,255,255,.115);     /* активный элемент */
+  --s-solid:#141416;
+
+  --line:rgba(255,255,255,.085);
+  --line-2:rgba(255,255,255,.14);
+
+  --txt:#eceef1;
+  --dim:rgba(236,238,241,.52);
+  --dim2:rgba(236,238,241,.30);
+  --hi:#ffffff;
+
+  --glass:blur(28px) saturate(150%);
+
+  /* глубина: рассеянная тень + контактная + внутренний блик сверху */
+  --e0:inset 0 1px 0 rgba(255,255,255,.055);
+  --e1:0 1px 1px rgba(0,0,0,.5), 0 10px 26px -14px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.07);
+  --e2:0 2px 3px rgba(0,0,0,.45), 0 24px 48px -20px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.11);
+  --e3:0 3px 6px rgba(0,0,0,.5), 0 44px 80px -30px rgba(0,0,0,1), inset 0 1px 0 rgba(255,255,255,.14);
+  --press:inset 0 2px 6px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.05);
+
+  --ring:rgba(255,255,255,.55);
+  --ok:rgba(226,255,236,.85);
+  --warn:rgba(255,238,205,.85);
+  --err:rgba(255,206,201,.9);
+  --scrim:rgba(0,0,0,.55);
+}
+
+/* ---------- СВЕТЛАЯ (мягкий рельеф, как на референсах) ---------- */
+[data-theme="light"]{
+  --bg:#e8eaee;
+  --bg-a:rgba(255,255,255,.9);
+  --bg-b:rgba(255,255,255,.5);
+
+  --s0:rgba(255,255,255,.45);
+  --s1:rgba(255,255,255,.72);
+  --s2:rgba(255,255,255,.92);
+  --s3:rgba(255,255,255,1);
+  --s-solid:#f2f3f6;
+
+  --line:rgba(16,18,22,.07);
+  --line-2:rgba(16,18,22,.13);
+
+  --txt:#16181d;
+  --dim:rgba(22,24,29,.55);
+  --dim2:rgba(22,24,29,.32);
+  --hi:#000;
+
+  --glass:blur(24px) saturate(140%);
+
+  --e0:inset 0 1px 0 rgba(255,255,255,.9);
+  --e1:6px 8px 18px -10px rgba(20,24,32,.30), -6px -6px 14px -8px rgba(255,255,255,.95), inset 0 1px 0 rgba(255,255,255,.85);
+  --e2:10px 14px 28px -12px rgba(20,24,32,.34), -8px -8px 20px -8px rgba(255,255,255,1), inset 0 1px 0 rgba(255,255,255,.95);
+  --e3:16px 22px 44px -16px rgba(20,24,32,.38), -12px -12px 28px -10px rgba(255,255,255,1), inset 0 1px 0 rgba(255,255,255,1);
+  --press:inset 4px 5px 10px -4px rgba(20,24,32,.28), inset -3px -3px 8px -3px rgba(255,255,255,.9);
+
+  --ring:rgba(20,24,32,.5);
+  --ok:rgba(24,60,38,.85);
+  --warn:rgba(88,62,10,.85);
+  --err:rgba(96,26,22,.9);
+  --scrim:rgba(210,214,220,.6);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--txt);
+  font:300 14px/1.55 var(--font);
+  -webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.01em;
+  overflow:hidden;
+}
+/* мягкий объёмный фон — источник «света» для рельефа */
+body::before{
+  content:'';position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(52% 42% at 18% 8%, var(--bg-a), transparent 65%),
+    radial-gradient(46% 44% at 88% 92%, var(--bg-b), transparent 62%);
+  filter:blur(20px);
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ============================================================
+   БАЗОВЫЕ ПОВЕРХНОСТИ
+   ============================================================ */
+.tile{
+  background:var(--s1);
+  border:1px solid var(--line);
+  border-radius:var(--r-lg);
+  box-shadow:var(--e1);
+  backdrop-filter:var(--glass);
+  -webkit-backdrop-filter:var(--glass);
+  transition:transform var(--t) var(--ease), box-shadow var(--t) var(--ease),
+             background var(--t) var(--ease), border-color var(--t) var(--ease);
+}
+.tile.lift:hover{
+  transform:translateY(-3px);
+  background:var(--s2);
+  border-color:var(--line-2);
+  box-shadow:var(--e2);
+}
+.tile.lift:active{transform:translateY(-1px);box-shadow:var(--e1)}
+
+.cap{
+  font:500 9.5px/1 var(--font);
+  letter-spacing:.16em; text-transform:uppercase;
+  color:var(--dim2);
+}
+.h-lg{font:200 30px/1.1 var(--font-d);letter-spacing:-.02em}
+.h-md{font:300 17px/1.25 var(--font-d);letter-spacing:-.01em}
+.num{font:200 40px/1 var(--font-d);letter-spacing:-.03em}
+.dim{color:var(--dim)}
+.mono{font-family:var(--font-m);font-size:11.5px}
+
+/* ============================================================
+   КНОПКИ
+   ============================================================ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  height:38px;padding:0 15px;
+  border-radius:var(--r-md);
+  border:1px solid var(--line);
+  background:var(--s1);
+  color:var(--txt);
+  font:400 12.5px/1 var(--font);letter-spacing:.005em;
+  box-shadow:var(--e1);
+  cursor:pointer;
+  backdrop-filter:var(--glass);-webkit-backdrop-filter:var(--glass);
+  transition:transform var(--t) var(--ease), box-shadow var(--t) var(--ease),
+             background var(--t) var(--ease), border-color var(--t) var(--ease), color var(--t);
+  position:relative;
+}
+.btn:hover{transform:translateY(-2px);background:var(--s2);border-color:var(--line-2);box-shadow:var(--e2)}
+.btn:active{transform:translateY(0);box-shadow:var(--press);background:var(--s1)}
+.btn.ico{width:38px;padding:0;font-size:15px}
+.btn.sm{height:30px;padding:0 11px;font-size:11.5px;border-radius:var(--r-sm)}
+.btn.sm.ico{width:30px;padding:0}
+.btn.pill{border-radius:var(--r-pill)}
+.btn.on{background:var(--s3);border-color:var(--line-2);box-shadow:var(--press);transform:none}
+.btn.ghost{background:transparent;box-shadow:none;border-color:transparent}
+.btn.ghost:hover{background:var(--s1);border-color:var(--line);box-shadow:var(--e1)}
+
+/* ---- состояния процесса: КОНТУР, а не заливка ---- */
+.btn.st-ready{border-color:var(--line-2);box-shadow:var(--e1), inset 0 0 0 1px rgba(255,255,255,.10)}
+[data-theme="light"] .btn.st-ready{box-shadow:var(--e1), inset 0 0 0 1px rgba(20,24,32,.10)}
+
+.btn.st-load::after,.tile.st-load::after,.node.st-load .disc::after{
+  content:'';position:absolute;inset:-1px;border-radius:inherit;pointer-events:none;
+  padding:1px;
+  background:conic-gradient(from 0deg, transparent 0deg, var(--ring) 40deg, transparent 110deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor; mask-composite:exclude;
+  animation:spin 1.5s linear infinite;
+}
+@keyframes spin{to{transform:rotate(1turn)}}
+
+.btn.st-work{animation:breath 2.2s var(--ease) infinite}
+@keyframes breath{
+  0%,100%{border-color:var(--line-2);box-shadow:var(--e1), 0 0 0 0 rgba(255,255,255,0)}
+  50%{border-color:var(--ring);box-shadow:var(--e2), 0 0 0 3px rgba(255,255,255,.045)}
+}
+[data-theme="light"] .btn.st-work{animation:breathL 2.2s var(--ease) infinite}
+@keyframes breathL{
+  0%,100%{border-color:var(--line-2);box-shadow:var(--e1)}
+  50%{border-color:rgba(20,24,32,.35);box-shadow:var(--e2), 0 0 0 3px rgba(20,24,32,.05)}
+}
+.btn.st-err{border-color:var(--err);color:var(--err)}
+
+/* индикаторы-точки */
+.dot{width:6px;height:6px;border-radius:99px;background:var(--dim2);flex:none;transition:all var(--t)}
+.dot.ok{background:var(--txt);box-shadow:0 0 0 3px rgba(255,255,255,.07)}
+[data-theme="light"] .dot.ok{box-shadow:0 0 0 3px rgba(20,24,32,.07)}
+.dot.load{background:var(--dim);animation:pulse 1.4s var(--ease) infinite}
+.dot.err{background:var(--err)}
+@keyframes pulse{50%{opacity:.25;transform:scale(.7)}}
+
+/* полоса прогресса */
+.bar{height:3px;border-radius:99px;background:var(--s0);overflow:hidden;box-shadow:var(--press)}
+.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--dim2),var(--txt));transition:width .6s var(--ease)}
+.bar.indet i{width:34%;animation:slide 1.5s var(--ease) infinite}
+@keyframes slide{0%{margin-left:-34%}100%{margin-left:100%}}
+
+/* переключатель */
+.sw{width:38px;height:21px;border-radius:99px;background:var(--s0);box-shadow:var(--press);border:1px solid var(--line);position:relative;cursor:pointer;flex:none;transition:all var(--t) var(--ease)}
+.sw i{position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:99px;background:var(--dim);box-shadow:var(--e1);transition:all var(--t) var(--ease)}
+.sw.on{background:var(--s3)}
+.sw.on i{left:20px;background:var(--txt)}
+
+/* слайдер */
+input[type=range]{-webkit-appearance:none;width:100%;height:20px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:var(--s0);box-shadow:var(--press)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:99px;background:var(--txt);box-shadow:var(--e1);transition:transform var(--t) var(--ease)}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.18)}
+
+/* поле ввода */
+.inp{
+  height:38px;padding:0 13px;width:100%;
+  border-radius:var(--r-md);border:1px solid var(--line);
+  background:var(--s0);color:var(--txt);
+  font:300 13px/1 var(--font);
+  box-shadow:var(--press);outline:none;
+  transition:border-color var(--t),box-shadow var(--t);
+}
+.inp::placeholder{color:var(--dim2)}
+.inp:focus{border-color:var(--line-2);box-shadow:var(--press),0 0 0 3px rgba(255,255,255,.05)}
+[data-theme="light"] .inp:focus{box-shadow:var(--press),0 0 0 3px rgba(20,24,32,.05)}
+
+/* ============================================================
+   КАРКАС
+   ============================================================ */
+#app{height:100%;display:flex;flex-direction:column;gap:var(--pad);padding:var(--pad)}
+
+/* --- шапка --- */
+#top{
+  height:52px;flex:none;display:flex;align-items:center;gap:12px;padding:0 8px 0 14px;
+  border-radius:var(--r-lg);
+}
+.brand{display:flex;align-items:center;gap:10px;padding-right:6px}
+.brand .mark{
+  width:26px;height:26px;border-radius:9px;flex:none;
+  background:var(--s3);box-shadow:var(--e1);
+  display:grid;place-items:center;font:500 11px/1 var(--font-d);letter-spacing:.02em;
+}
+.brand b{font:400 14px/1 var(--font-d);letter-spacing:.06em}
+.brand span{font:300 10.5px/1 var(--font);color:var(--dim2);letter-spacing:.1em;text-transform:uppercase}
+
+.vitals{display:flex;align-items:center;gap:3px;margin-left:6px}
+.vital{display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-pill);
+  background:var(--s0);border:1px solid transparent;font-size:11px;color:var(--dim);
+  transition:all var(--t) var(--ease);cursor:default}
+.vital:hover{background:var(--s1);border-color:var(--line);box-shadow:var(--e1);transform:translateY(-1px);color:var(--txt)}
+
+.spacer{flex:1}
+
+/* --- тело --- */
+#body{flex:1;min-height:0;display:flex;gap:var(--pad)}
+
+/* --- левый рельс --- */
+#rail{
+  width:var(--rail);flex:none;border-radius:var(--r-xl);
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0;
+}
+.rbtn{
+  width:50px;height:46px;border-radius:var(--r-md);border:1px solid transparent;background:transparent;
+  color:var(--dim);cursor:pointer;position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font:400 8.5px/1 var(--font);letter-spacing:.06em;text-transform:uppercase;
+  transition:all var(--t) var(--ease);
+}
+.rbtn svg{width:19px;height:19px;stroke:currentColor;stroke-width:1.25;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.rbtn:hover{transform:translateY(-2px);color:var(--txt);background:var(--s1);border-color:var(--line);box-shadow:var(--e1)}
+.rbtn.on{color:var(--txt);background:var(--s2);border-color:var(--line-2);box-shadow:var(--e2)}
+.rbtn.on::before{content:'';position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:2px;height:18px;border-radius:99px;background:var(--txt)}
+.rail-sep{width:26px;height:1px;background:var(--line);margin:4px 0}
+
+/* --- рабочая область --- */
+#work{flex:1;min-width:0;display:flex;gap:var(--pad)}
+.view{display:none;flex:1;min-width:0;gap:var(--pad)}
+.view.on{display:flex}
+
+/* ============================================================
+   ВИД: ЧАТ
+   ============================================================ */
+#chat-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--pad)}
+#stream{flex:1;min-height:0;overflow:auto;padding:22px 26px;display:flex;flex-direction:column;gap:16px}
+.msg{max-width:74%;padding:11px 15px;border-radius:16px;font-size:13.5px;line-height:1.6;box-shadow:var(--e1);border:1px solid var(--line)}
+.msg.me{align-self:flex-end;background:var(--s2);border-bottom-right-radius:5px}
+.msg.her{align-self:flex-start;background:var(--s0);border-bottom-left-radius:5px}
+.msg .meta{margin-top:7px;font-size:10px;color:var(--dim2);letter-spacing:.04em;display:flex;gap:10px}
+
+/* нижний док */
+#dock{flex:none;padding:9px;display:flex;align-items:center;gap:8px;border-radius:var(--r-lg)}
+#dock .inp{border-radius:var(--r-md)}
+#dock .btn{flex:none;white-space:nowrap}
+.dock-sep{width:1px;height:22px;background:var(--line);margin:0 2px}
+
+/* правая колонка контекста */
+#ctx{width:264px;flex:none;display:flex;flex-direction:column;gap:var(--pad);overflow:auto}
+.card{padding:14px;border-radius:var(--r-lg)}
+.card .cap{margin-bottom:11px;display:block}
+.stat{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;font-size:11.5px;color:var(--dim)}
+.stat b{font:300 12.5px/1 var(--font-d);color:var(--txt)}
+.mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mini{padding:11px;border-radius:var(--r-md);background:var(--s0);border:1px solid var(--line);
+  transition:all var(--t) var(--ease);cursor:pointer}
+.mini:hover{transform:translateY(-2px);background:var(--s2);box-shadow:var(--e2);border-color:var(--line-2)}
+.mini .num{font-size:22px;margin-bottom:2px}
+.mini .cap{font-size:8.5px}
+
+/* ============================================================
+   ВИД: ДОРОЖНАЯ КАРТА
+   ============================================================ */
+#map-view{flex-direction:column}
+#map-head{flex:none;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:var(--r-lg)}
+.legend{display:flex;gap:14px;font-size:10.5px;color:var(--dim);align-items:center}
+.legend i{width:8px;height:8px;border-radius:99px;display:inline-block;margin-right:5px;vertical-align:middle;border:1px solid var(--line-2)}
+.lg-done i{background:var(--txt);border-color:var(--txt)}
+.lg-doing i{background:transparent;box-shadow:inset 0 0 0 2px var(--txt)}
+.lg-plan i{background:transparent;border-style:dashed}
+.lg-idea i{background:var(--s3)}
+
+#map-wrap{flex:1;min-height:0;display:flex;gap:var(--pad)}
+#map-scroll{
+  flex:1;min-width:0;border-radius:var(--r-xl);position:relative;overflow-x:auto;overflow-y:hidden;
+  scroll-behavior:smooth;
+}
+#map-canvas{position:relative;height:100%;min-width:100%}
+#map-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#map-svg path{fill:none;stroke:var(--line-2);stroke-width:1.5}
+#map-svg path.dash{stroke-dasharray:5 7;stroke:var(--line)}
+
+.lane-label{position:absolute;left:14px;transform:translateY(-50%);
+  font:500 9px/1 var(--font);letter-spacing:.18em;text-transform:uppercase;color:var(--dim2);pointer-events:none}
+
+.node{position:absolute;transform:translate(-50%,-50%);cursor:pointer;text-align:center;width:150px}
+.node .disc{
+  width:88px;height:88px;margin:0 auto;border-radius:50%;
+  background:var(--s1);border:1px solid var(--line);
+  box-shadow:var(--e2);backdrop-filter:var(--glass);-webkit-backdrop-filter:var(--glass);
+  display:grid;place-items:center;position:relative;
+  transition:all var(--t) var(--ease);
+}
+.node .disc .n{font:200 25px/1 var(--font-d);letter-spacing:-.03em}
+.node .disc .sub{font:400 8px/1 var(--font);letter-spacing:.15em;color:var(--dim2);text-transform:uppercase;margin-top:3px}
+.node:hover .disc{transform:translateY(-4px) scale(1.03);background:var(--s2);box-shadow:var(--e3);border-color:var(--line-2)}
+.node.sel .disc{background:var(--s3);border-color:var(--ring);box-shadow:var(--e3), 0 0 0 4px rgba(255,255,255,.06)}
+[data-theme="light"] .node.sel .disc{box-shadow:var(--e3), 0 0 0 4px rgba(20,24,32,.06)}
+.node .lbl{margin-top:9px;font:400 11px/1.35 var(--font);color:var(--txt);transition:color var(--t)}
+.node .when{margin-top:2px;font:400 9px/1 var(--font);letter-spacing:.1em;color:var(--dim2)}
+.node.plan .disc{background:transparent;border-style:dashed;box-shadow:none}
+.node.plan .lbl{color:var(--dim)}
+.node.plan:hover .disc{background:var(--s1);box-shadow:var(--e1)}
+.node.doing .disc::before{
+  content:'';position:absolute;inset:-5px;border-radius:50%;
+  border:1px solid var(--ring);opacity:.5;
+  animation:halo 2.4s var(--ease) infinite;
+}
+@keyframes halo{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.07);opacity:.12}}
+
+.node .badge{position:absolute;top:-2px;right:26px;min-width:20px;height:20px;padding:0 6px;border-radius:99px;
+  background:var(--s-solid);border:1px solid var(--line-2);box-shadow:var(--e1);
+  font:400 10px/18px var(--font);color:var(--dim)}
+
+/* панель отчёта */
+#report{width:340px;flex:none;border-radius:var(--r-xl);padding:0;display:flex;flex-direction:column;overflow:hidden}
+#rep-head{flex:none;padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+#rep-body{flex:1;overflow:auto;padding:16px 20px 20px;display:flex;flex-direction:column;gap:9px}
+.ritem{padding:10px 12px;border-radius:var(--r-md);background:var(--s0);border:1px solid var(--line);
+  font-size:12px;line-height:1.5;transition:all var(--t) var(--ease)}
+.ritem:hover{background:var(--s2);transform:translateX(2px);box-shadow:var(--e1)}
+.ritem .tag{font:500 8.5px/1 var(--font);letter-spacing:.14em;text-transform:uppercase;color:var(--dim2);display:block;margin-bottom:5px}
+.ritem .note{margin-top:6px;font-size:11px;color:var(--dim);line-height:1.5}
+
+#map-nav{position:absolute;bottom:14px;right:16px;display:flex;gap:7px;z-index:5}
+
+/* ============================================================
+   ВИД: КОМПОНЕНТЫ
+   ============================================================ */
+#kit-view{overflow:auto}
+#kit{flex:1;padding:22px 26px;border-radius:var(--r-xl);overflow:auto}
+.kit-sec{margin-bottom:30px}
+.kit-sec>.cap{display:block;margin-bottom:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}
+.sw-item{padding:12px;border-radius:var(--r-md);border:1px solid var(--line);box-shadow:var(--e1)}
+.sw-item span{font-size:9.5px;color:var(--dim);display:block;margin-top:26px;font-family:var(--font-m)}
+.type-row{display:flex;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--line)}
+.type-row .cap{width:120px;flex:none}
+
+/* прокрутка вне экрана */
+.hint{font-size:11px;color:var(--dim2);margin-top:8px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ============================================================
+   ЭКРАНЫ ПЕРВОГО ЗАПУСКА И СБОРКИ
+   ============================================================ */
+#shell{height:100%;display:flex;flex-direction:column;gap:var(--pad);padding:var(--pad)}
+#hd{height:52px;flex:none;display:flex;align-items:center;gap:12px;padding:0 8px 0 16px;border-radius:var(--r-lg)}
+#hd .tabs{display:flex;gap:4px;margin-left:14px}
+.tab{height:32px;padding:0 14px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;
+  color:var(--dim);font:400 12px/1 var(--font);cursor:pointer;transition:all var(--t) var(--ease)}
+.tab:hover{transform:translateY(-2px);color:var(--txt);background:var(--s1);border-color:var(--line);box-shadow:var(--e1)}
+.tab.on{color:var(--txt);background:var(--s2);border-color:var(--line-2);box-shadow:var(--e2)}
+#scr{flex:1;min-height:0;position:relative}
+.pane{position:absolute;inset:0;display:none;gap:var(--pad)}
+.pane.on{display:flex}
+
+.sheet{flex:1;min-width:0;border-radius:var(--r-xl);overflow:auto;padding:30px 36px}
+.lead{max-width:640px;margin-bottom:26px}
+.lead .h-lg{margin-bottom:8px}
+.lead p{color:var(--dim);font-size:13px;line-height:1.65}
+
+/* ---- карточки подключений ---- */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px;max-width:1180px}
+.conn{padding:16px;border-radius:var(--r-lg);cursor:pointer;position:relative;display:flex;flex-direction:column;gap:9px}
+.conn .top{display:flex;align-items:center;gap:10px}
+.conn .ic{width:34px;height:34px;flex:none;border-radius:11px;background:var(--s0);box-shadow:var(--press);
+  display:grid;place-items:center;font-size:15px}
+.conn .nm{font:400 13.5px/1.2 var(--font-d)}
+.conn .bl{font-size:11.5px;color:var(--dim);line-height:1.5;min-height:34px}
+.conn .ft{display:flex;align-items:center;gap:8px;margin-top:2px}
+.conn .state{font:400 10px/1 var(--font);letter-spacing:.1em;text-transform:uppercase;color:var(--dim2)}
+.conn.done .state{color:var(--txt)}
+.conn.open{background:var(--s2);border-color:var(--line-2);box-shadow:var(--e3)}
+.conn .opt{position:absolute;top:14px;right:14px;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2)}
+
+/* ---- панель ввода ключа ---- */
+#key-pane{width:394px;flex:none;border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden}
+#kp-head{flex:none;padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+#kp-body{flex:1;overflow:auto;padding:18px 22px 22px;display:flex;flex-direction:column;gap:16px}
+.steps{counter-reset:s;display:flex;flex-direction:column;gap:10px}
+.step{display:flex;gap:11px;font-size:12px;line-height:1.55;color:var(--dim)}
+.step::before{counter-increment:s;content:counter(s);flex:none;width:20px;height:20px;border-radius:99px;
+  background:var(--s0);box-shadow:var(--press);display:grid;place-items:center;
+  font:400 10px/1 var(--font);color:var(--txt)}
+.step b{color:var(--txt);font-weight:400}
+.gives{display:flex;flex-direction:column;gap:6px}
+.gives div{font-size:11.5px;color:var(--dim);padding-left:14px;position:relative}
+.gives div::before{content:'';position:absolute;left:0;top:7px;width:5px;height:1px;background:var(--dim2)}
+.field{position:relative}
+.verdict{font-size:11px;margin-top:8px;color:var(--dim)}
+.verdict.ok{color:var(--txt)}
+.verdict.bad{color:var(--err)}
+
+/* ---- коуч-марк: затемнение с окном ---- */
+#coach{position:fixed;inset:0;z-index:60;display:none}
+#coach.on{display:block}
+#hole{position:absolute;border-radius:var(--r-md);
+  box-shadow:0 0 0 9999px rgba(0,0,0,.74), 0 0 0 1px rgba(255,255,255,.5), 0 0 34px 4px rgba(255,255,255,.14);
+  transition:all .34s var(--ease);pointer-events:none}
+[data-theme="light"] #hole{box-shadow:0 0 0 9999px rgba(12,14,18,.62), 0 0 0 1px rgba(255,255,255,.9), 0 0 30px 4px rgba(255,255,255,.4)}
+#tip{position:absolute;width:330px;padding:18px 20px;border-radius:var(--r-lg);
+  background:var(--s-solid);border:1px solid var(--line-2);box-shadow:var(--e3);
+  transition:all .34s var(--ease)}
+#tip .cap{display:block;margin-bottom:8px}
+#tip .h-md{margin-bottom:8px}
+#tip p{font-size:12px;line-height:1.6;color:var(--dim)}
+#tip .row{margin-top:15px;justify-content:space-between}
+#coach-dots{display:flex;gap:5px}
+#coach-dots i{width:5px;height:5px;border-radius:99px;background:var(--line-2);display:block}
+#coach-dots i.on{background:var(--txt);width:14px}
+
+/* ---- модели ---- */
+.sealed{padding:22px;border-radius:var(--r-xl);display:flex;align-items:center;gap:20px;max-width:1180px;margin-bottom:14px}
+.sealed .badge-big{width:70px;height:70px;flex:none;border-radius:22px;background:var(--s0);box-shadow:var(--press);
+  display:grid;place-items:center;font:200 24px/1 var(--font-d)}
+.sealed .meta{display:flex;gap:22px;margin-top:9px}
+.sealed .meta div{font-size:11px;color:var(--dim)}
+.sealed .meta b{display:block;font:300 14px/1.2 var(--font-d);color:var(--txt);margin-bottom:2px}
+
+/* ---- компилятор ---- */
+#build-pane{flex:1;min-width:0;display:flex;gap:var(--pad)}
+#feat{flex:1;min-width:0;border-radius:var(--r-xl);overflow:auto;padding:20px 24px}
+.grp{margin-bottom:20px}
+.grp>.cap{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.grp>.cap::after{content:'';flex:1;height:1px;background:var(--line)}
+.f{display:flex;align-items:center;gap:12px;padding:10px 13px;border-radius:var(--r-md);
+  background:var(--s0);border:1px solid transparent;margin-bottom:6px;cursor:pointer;
+  transition:all var(--t) var(--ease)}
+.f:hover{transform:translateY(-2px);background:var(--s2);border-color:var(--line);box-shadow:var(--e1)}
+.f.locked{opacity:.62;cursor:default}
+.f.locked:hover{transform:none;box-shadow:none;background:var(--s0);border-color:transparent}
+.cb{width:17px;height:17px;flex:none;border-radius:5px;background:var(--s0);border:1px solid var(--line-2);
+  box-shadow:var(--press);display:grid;place-items:center;font-size:10px;color:transparent;transition:all var(--t)}
+.f.on .cb{background:var(--txt);color:var(--bg);border-color:var(--txt);box-shadow:var(--e1)}
+.f .fn{flex:1;min-width:0;font-size:12.5px}
+.f .fn small{display:block;font-size:10.5px;color:var(--dim2);margin-top:2px}
+.f .sz{font-size:10.5px;color:var(--dim);font-family:var(--font-m);flex:none}
+.f .lv{font:500 8px/1 var(--font);letter-spacing:.13em;text-transform:uppercase;color:var(--dim2);
+  padding:4px 7px;border-radius:99px;border:1px solid var(--line);flex:none}
+.f .lv.lab{border-style:dashed}
+.f .lv.risk{color:var(--err);border-color:var(--err)}
+
+#sum{width:320px;flex:none;border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden}
+#sum-head{flex:none;padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+#sum-body{flex:1;overflow:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+#sum-foot{flex:none;padding:16px 22px 20px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.kv{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;color:var(--dim)}
+.kv b{font:300 15px/1 var(--font-d);color:var(--txt)}
+.warn{padding:10px 12px;border-radius:var(--r-md);background:var(--s0);border:1px solid var(--line);font-size:11px;line-height:1.5;color:var(--dim)}
+.warn b{color:var(--txt);font-weight:400;display:block;margin-bottom:3px}
+#log{font-family:var(--font-m);font-size:10.5px;line-height:1.75;color:var(--dim);
+  background:var(--s0);border-radius:var(--r-md);box-shadow:var(--press);padding:11px 13px;max-height:190px;overflow:auto;white-space:pre-wrap}
+.presets{display:flex;gap:6px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div id="shell">
+
+  <div id="hd" class="tile">
+    <div class="brand" style="display:flex;align-items:center;gap:10px">
+      <div class="mark" style="width:26px;height:26px;border-radius:9px;background:var(--s3);box-shadow:var(--e1);display:grid;place-items:center;font:500 11px/1 var(--font-d)">A</div>
+      <div>
+        <b style="font:400 14px/1 var(--font-d);letter-spacing:.12em">ANAMORF</b><br>
+        <span style="font:300 10px/1 var(--font);color:var(--dim2);letter-spacing:.1em;text-transform:uppercase">персона: Сайка</span>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab on" data-p="keys">Подключения</button>
+      <button class="tab" data-p="models">Мозги</button>
+      <button class="tab" data-p="build">Сборка клиента <span style="opacity:.45">· dev</span></button>
+    </div>
+    <div class="spacer" style="flex:1"></div>
+    <button class="btn ico ghost" id="theme-btn" title="Тема">◐</button>
+  </div>
+
+  <div id="scr">
+
+    <!-- ========================= ПОДКЛЮЧЕНИЯ ========================= -->
+    <div class="pane on" id="keys-pane">
+      <div class="sheet tile">
+        <div class="lead">
+          <div class="h-lg">Что подключим?</div>
+          <p>Ничего не обязательно — ANAMORF работает без единого ключа: слышит, говорит, видит экран
+          и управляет компьютером своей встроенной моделью. Ключи открывают то, что живёт в интернете.
+          Любой можно добавить позже, в настройках.</p>
+        </div>
+        <div class="cards" id="conn-cards"></div>
+      </div>
+
+      <div id="key-pane" class="tile">
+        <div id="kp-head">
+          <span class="cap" id="kp-grp">выбери подключение</span>
+          <div class="h-md" id="kp-title" style="margin-top:6px">Слева — список</div>
+          <p class="dim" id="kp-blurb" style="font-size:11.5px;margin-top:6px;line-height:1.6">
+            Нажми на карточку — здесь появится поле для ключа, шаги «где взять» и что это даст.</p>
+        </div>
+        <div id="kp-body"></div>
+      </div>
+    </div>
+
+    <!-- ========================= МОЗГИ ========================= -->
+    <div class="pane" id="models-pane">
+      <div class="sheet tile">
+        <div class="lead">
+          <div class="h-lg">Мозги</div>
+          <p>Одна модель уже внутри и работает без интернета. Остальные — по желанию:
+          можно подключить свой сервер моделей или облако по ключу.</p>
+        </div>
+
+        <div class="sealed tile" id="sealed">
+          <div class="badge-big">e4b</div>
+          <div style="flex:1">
+            <div class="row" style="gap:9px"><span class="h-md">gemma-4-e4b</span>
+              <span class="lv" style="font:500 8px/1 var(--font);letter-spacing:.13em;text-transform:uppercase;color:var(--dim2);padding:4px 7px;border-radius:99px;border:1px solid var(--line)">в комплекте</span>
+              <i class="dot ok"></i></div>
+            <p class="dim" style="font-size:12px;margin-top:6px;line-height:1.6">Запечатана в приложение на движке llama.cpp. Ничего скачивать и настраивать не нужно — она уже отвечает.</p>
+            <div class="meta">
+              <div><b>3.2 ГБ</b>GGUF Q4_K_M</div>
+              <div><b>6 ГБ</b>нужно видеопамяти</div>
+              <div><b>есть</b>работает на CPU</div>
+              <div><b>~34</b>ток/с на 4070 Ti</div>
+            </div>
+          </div>
+          <button class="btn st-ready">Проверить</button>
+        </div>
+
+        <span class="cap" style="display:block;margin:26px 0 12px">Подключить ещё</span>
+        <div class="cards" id="brain-cards"></div>
+      </div>
+
+      <div id="key-pane2" class="tile" style="width:394px;flex:none;border-radius:var(--r-xl);display:flex;flex-direction:column;overflow:hidden">
+        <div style="flex:none;padding:20px 22px 16px;border-bottom:1px solid var(--line)">
+          <span class="cap" id="bp-grp">экскурсия</span>
+          <div class="h-md" id="bp-title" style="margin-top:6px">Выбери способ</div>
+          <p class="dim" id="bp-blurb" style="font-size:11.5px;margin-top:6px;line-height:1.6">Нажми на плитку — покажу по шагам, что скачать и куда вставить.</p>
+        </div>
+        <div id="bp-body" style="flex:1;overflow:auto;padding:18px 22px 22px;display:flex;flex-direction:column;gap:16px"></div>
+      </div>
+    </div>
+
+    <!-- ========================= СБОРКА ========================= -->
+    <div class="pane" id="build-pane-wrap">
+      <div id="build-pane">
+        <div id="feat" class="tile">
+          <div class="lead" style="margin-bottom:18px">
+            <div class="h-lg">Сборка клиента</div>
+            <p>Отметь, что попадёт в билд. Ядро снять нельзя. Дев-инструменты в клиента не едут никогда.
+            «Проверить» прогоняет сухую сборку: импортирует выбранное и ищет ссылки на выключенное.</p>
+          </div>
+          <div class="presets">
+            <button class="btn sm on" data-preset="base">Базовый</button>
+            <button class="btn sm" data-preset="full">Полный</button>
+            <button class="btn sm" data-preset="min">Минимум</button>
+            <button class="btn sm ghost" data-preset="clear">Снять всё</button>
+          </div>
+          <div id="groups"></div>
+        </div>
+
+        <div id="sum" class="tile">
+          <div id="sum-head">
+            <span class="cap">итог сборки</span>
+            <div class="h-md" style="margin-top:6px">ANAMORF 0.9.5</div>
+            <p class="dim" style="font-size:11.5px;margin-top:5px">канал stable · Windows x64</p>
+          </div>
+          <div id="sum-body">
+            <div class="kv"><span>Размер установщика</span><b id="s-size">—</b></div>
+            <div class="bar"><i id="s-bar" style="width:0%"></i></div>
+            <div class="kv"><span>Модулей в билде</span><b id="s-mods">—</b></div>
+            <div class="kv"><span>Пакетов Python</span><b id="s-pip">—</b></div>
+            <div class="kv"><span>Докачиваемых блоков</span><b id="s-packs">—</b></div>
+            <div id="warns" style="display:flex;flex-direction:column;gap:8px"></div>
+            <div id="log">готов к сборке
+ждёт команды</div>
+          </div>
+          <div id="sum-foot">
+            <button class="btn" id="b-check">Проверить сборку</button>
+            <div class="row" style="gap:8px">
+              <button class="btn" style="flex:1" id="b-folder">Собрать папку</button>
+              <button class="btn" style="flex:1" id="b-inst">Установщик</button>
+            </div>
+            <button class="btn ghost sm" id="b-pub">Опубликовать релиз →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- коуч-марк -->
+<div id="coach">
+  <div id="hole"></div>
+  <div id="tip">
+    <span class="cap" id="tip-cap">шаг</span>
+    <div class="h-md" id="tip-title"></div>
+    <p id="tip-text"></p>
+    <div class="row" id="tip-row">
+      <div id="coach-dots"></div>
+      <div class="row" style="gap:7px">
+        <button class="btn sm ghost" id="c-skip">Пропустить</button>
+        <button class="btn sm" id="c-next">Дальше</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const root=document.documentElement;
+$('#theme-btn').onclick=()=>root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';
+$$('.tab').forEach(t=>t.onclick=()=>{
+  $$('.tab').forEach(x=>x.classList.remove('on')); t.classList.add('on');
+  $$('.pane').forEach(p=>p.classList.remove('on'));
+  ({keys:'#keys-pane',models:'#models-pane',build:'#build-pane-wrap'})[t.dataset.p]
+    && $(({keys:'#keys-pane',models:'#models-pane',build:'#build-pane-wrap'})[t.dataset.p]).classList.add('on');
+});
+
+/* ============================================================
+   РЕЕСТР ПОДКЛЮЧЕНИЙ — из него строится этот экран,
+   он же кормит компилятор билда и установщик зависимостей
+   ============================================================ */
+const CONNECTIONS = [
+  { id:'telegram', ic:'✈', name:'Телеграм', group:'Связь', opt:'не обязательно',
+    blurb:'Писать ей с телефона и управлять компьютером из любой точки.',
+    key:{label:'Токен бота', ph:'1234567890:AAF-xxxxxxxxxxxxxxxxxxxxxxxx', secret:true},
+    where:{label:'Открыть @BotFather', url:'https://t.me/BotFather'},
+    steps:[
+      'Открой в Телеграме бота <b>@BotFather</b> и нажми «Запустить».',
+      'Отправь ему команду <b>/newbot</b>, придумай имя и адрес бота.',
+      'В ответ придёт строка вида <b>1234567890:AAF-…</b> — это токен.',
+      'Скопируй её и вставь в поле выше, нажми «Проверить».'
+    ],
+    gives:['Переписка с Сайкой в личке и в группе','Команды: статус, найди файл, запусти, закрой','Уведомления, когда что-то сломалось'],
+    needs:['Интернет','Управление компьютером включается отдельным рубильником'] },
+
+  { id:'cloud', ic:'☁', name:'Облачные мозги', group:'Мозги', opt:'не обязательно',
+    blurb:'Подключить сильную модель по ключу, когда своей не хватает.',
+    key:{label:'API-ключ', ph:'sk-or-v1-…', secret:true},
+    where:{label:'Открыть OpenRouter', url:'https://openrouter.ai/keys'},
+    steps:[
+      'Заведи аккаунт на <b>openrouter.ai</b> (или GigaChat, Groq, Mistral — на выбор).',
+      'Зайди в раздел <b>Keys</b> и нажми <b>Create key</b>.',
+      'Скопируй ключ целиком — второй раз его не покажут.',
+      'Вставь в поле выше и выбери модель в списке.'
+    ],
+    gives:['Тяжёлые задачи уходят в облако, лёгкие остаются локально','Запасной мозг, когда локальная модель занята','Есть бесплатные тиры — отмечены в списке'],
+    needs:['Интернет','Часть провайдеров недоступна из РФ без VPN'] },
+
+  { id:'vk', ic:'◈', name:'VK', group:'Связь', opt:'не обязательно',
+    blurb:'То же, что Телеграм, только через сообщения сообщества.',
+    key:{label:'Ключ доступа сообщества', ph:'vk1.a.…', secret:true},
+    where:{label:'Открыть управление', url:'https://vk.com/groups?tab=admin'},
+    steps:[
+      'Создай сообщество или открой своё → <b>Управление</b>.',
+      '<b>Работа с API</b> → <b>Создать ключ</b>, отметь «Сообщения сообщества».',
+      'Включи <b>Long Poll API</b> и события «Входящее сообщение».',
+      'Скопируй ключ и вставь выше.'
+    ],
+    gives:['Ответы в сообщениях сообщества','Те же команды, что в Телеграме'],
+    needs:['Интернет'] },
+
+  { id:'github', ic:'◆', name:'GitHub', group:'Служебное', opt:'не обязательно',
+    blurb:'Убирает ограничение на скачивание анимаций и обновлений.',
+    key:{label:'Personal access token', ph:'ghp_…', secret:true},
+    where:{label:'Открыть настройки токенов', url:'https://github.com/settings/tokens'},
+    steps:[
+      'Открой <b>Settings → Developer settings → Personal access tokens</b>.',
+      'Нажми <b>Generate new token (classic)</b>.',
+      'Права можно не отмечать вообще — нужен только лимит запросов.',
+      'Скопируй токен и вставь выше.'
+    ],
+    gives:['Обновления качаются без ограничения 60 запросов в час','Библиотека анимаций аватара скачивается целиком'],
+    needs:['Интернет'] },
+
+  { id:'tailscale', ic:'⌘', name:'Доступ снаружи', group:'Связь', opt:'не обязательно',
+    blurb:'Дотянуться до своего компьютера из другой сети.',
+    key:{label:'Не нужен ключ — нужна установка', ph:'', none:true},
+    where:{label:'Скачать Tailscale', url:'https://tailscale.com/download/windows'},
+    steps:[
+      'Скачай и установи <b>Tailscale</b> на этот компьютер.',
+      'Войди в тот же аккаунт на телефоне.',
+      'Вернись сюда и нажми «Проверить» — адрес подставится сам.',
+      'В окне «Телефон» появится QR-код для входа.'
+    ],
+    gives:['Интерфейс открывается с телефона из любой сети','Шифрованный канал, порт наружу не открывается'],
+    needs:['Установленный Tailscale','Один аккаунт на обоих устройствах'] }
+];
+
+/* ---- рендер карточек подключений ---- */
+const cc = $('#conn-cards');
+CONNECTIONS.forEach(c => {
+  const el = document.createElement('div');
+  el.className = 'conn tile lift';
+  el.innerHTML = `<span class="opt">${c.opt}</span>
+    <div class="top"><div class="ic">${c.ic}</div><div><div class="nm">${c.name}</div>
+      <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);margin-top:2px">${c.group}</div></div></div>
+    <div class="bl">${c.blurb}</div>
+    <div class="ft"><i class="dot"></i><span class="state">не подключено</span></div>`;
+  el.onclick = () => openKey(c, el);
+  cc.appendChild(el);
+});
+
+function openKey(c, el){
+  $$('.conn').forEach(x=>x.classList.remove('open')); el.classList.add('open');
+  $('#kp-grp').textContent = c.group;
+  $('#kp-title').textContent = c.name;
+  $('#kp-blurb').textContent = c.blurb;
+  $('#kp-body').innerHTML = `
+    ${c.key.none ? '' : `
+    <div class="field">
+      <span class="cap" style="display:block;margin-bottom:8px">${c.key.label}</span>
+      <input class="inp" id="kf" type="${c.key.secret?'password':'text'}" placeholder="${c.key.ph}">
+      <div class="row" style="margin-top:9px;gap:8px">
+        <button class="btn sm" id="kv">Проверить</button>
+        <button class="btn sm ghost" id="kshow">Показать</button>
+        <div class="spacer" style="flex:1"></div>
+        <button class="btn sm ghost" id="khelp">Где взять?</button>
+      </div>
+      <div class="verdict" id="kver"></div>
+    </div>`}
+    <div>
+      <span class="cap" style="display:block;margin-bottom:11px">Где взять</span>
+      <div class="steps">${c.steps.map(s=>`<div class="step"><div>${s}</div></div>`).join('')}</div>
+      <a class="btn sm" style="margin-top:12px;text-decoration:none" href="${c.where.url}" target="_blank">${c.where.label} ↗</a>
+    </div>
+    <div>
+      <span class="cap" style="display:block;margin-bottom:9px">Что это даст</span>
+      <div class="gives">${c.gives.map(g=>`<div>${g}</div>`).join('')}</div>
+    </div>
+    <div>
+      <span class="cap" style="display:block;margin-bottom:9px">Что нужно</span>
+      <div class="gives">${c.needs.map(g=>`<div>${g}</div>`).join('')}</div>
+    </div>`;
+
+  const kf=$('#kf');
+  if (kf){
+    $('#kshow').onclick=()=>kf.type = kf.type==='password'?'text':'password';
+    $('#khelp').onclick=()=>coachStart(c, el);
+    $('#kv').onclick=()=>{
+      const b=$('#kv'); b.classList.add('st-load'); b.textContent='Проверяю…';
+      $('#kver').textContent=''; $('#kver').className='verdict';
+      setTimeout(()=>{
+        b.classList.remove('st-load'); b.textContent='Проверить';
+        const ok = kf.value.trim().length > 8;
+        $('#kver').className='verdict '+(ok?'ok':'bad');
+        $('#kver').textContent = ok
+          ? '✓ Ключ принят. ' + c.name + ' подключён — можно закрывать.'
+          : 'Не похоже на ключ. Проверь, что скопировал строку целиком, без пробелов.';
+        if (ok){ el.classList.add('done'); el.querySelector('.dot').className='dot ok';
+                 el.querySelector('.state').textContent='подключено'; }
+      }, 900);
+    };
+  }
+}
+
+/* ============================================================
+   КОУЧ-МАРК: экран гаснет, светится только нужное
+   ============================================================ */
+const COACH = {
+  telegram:[
+    {sel:'#kf', t:'Сюда вставится токен', x:'Пока поле пустое. Сейчас покажу, где взять строку, которую в него надо положить.'},
+    {sel:'.steps', t:'Три шага в Телеграме', x:'Открываешь @BotFather, шлёшь /newbot, придумываешь имя. Он отвечает строкой с двоеточием посередине — это и есть токен.'},
+    {sel:'#kv', t:'Проверка на месте', x:'Вставил — жми. ANAMORF сам спросит у Телеграма, живой ли бот, и скажет словами, если что-то не так.'},
+    {sel:'.gives', t:'Что появится', x:'После подключения Сайка начнёт отвечать в личке. Управление компьютером из чата включается отдельно — оно по умолчанию закрыто.'}
+  ],
+  _default:[
+    {sel:'#kf', t:'Поле для ключа', x:'Ключ хранится только на этом компьютере, в файле secrets.json. Никуда не отправляется.'},
+    {sel:'.steps', t:'Пошагово', x:'Здесь описано, что нажимать на сайте. Кнопка ниже откроет нужную страницу сразу.'},
+    {sel:'#kv', t:'Проверка', x:'Не надо гадать, правильный ли ключ — нажми и увидишь ответ.'}
+  ]
+};
+let cSteps=[], cI=0;
+function coachStart(c){
+  cSteps = COACH[c.id] || COACH._default; cI = 0;
+  $('#coach').classList.add('on');
+  $('#coach-dots').innerHTML = cSteps.map(()=>'<i></i>').join('');
+  coachShow();
+}
+function coachShow(){
+  const s = cSteps[cI], el = document.querySelector(s.sel);
+  if (!el) return coachEnd();
+  const r = el.getBoundingClientRect(), p = 10;
+  const hole=$('#hole');
+  hole.style.left=(r.left-p)+'px'; hole.style.top=(r.top-p)+'px';
+  hole.style.width=(r.width+p*2)+'px'; hole.style.height=(r.height+p*2)+'px';
+  const tip=$('#tip');
+  let tx = r.left - 350; if (tx < 16) tx = r.right + 20;
+  if (tx + 330 > innerWidth-16) tx = innerWidth-346;
+  let ty = r.top - 20; if (ty + 220 > innerHeight) ty = innerHeight-236;
+  tip.style.left=tx+'px'; tip.style.top=Math.max(16,ty)+'px';
+  $('#tip-cap').textContent = `шаг ${cI+1} из ${cSteps.length}`;
+  $('#tip-title').textContent = s.t;
+  $('#tip-text').innerHTML = s.x;
+  $('#c-next').textContent = cI===cSteps.length-1 ? 'Понятно' : 'Дальше';
+  [...$('#coach-dots').children].forEach((d,i)=>d.classList.toggle('on', i===cI));
+}
+function coachEnd(){ $('#coach').classList.remove('on'); }
+$('#c-next').onclick=()=>{ cI++; cI>=cSteps.length ? coachEnd() : coachShow(); };
+$('#c-skip').onclick=coachEnd;
+addEventListener('keydown',e=>{ if(e.key==='Escape') coachEnd(); });
+
+/* ============================================================
+   МОЗГИ: экскурсии по способам подключения
+   ============================================================ */
+const BRAINS = [
+  { id:'ollama', ic:'▣', name:'Ollama', group:'Свой сервер', opt:'бесплатно',
+    blurb:'Менеджер локальных моделей. Одна команда — новая модель.',
+    where:{label:'Скачать Ollama', url:'https://ollama.com/download'},
+    steps:['Скачай и установи <b>Ollama</b> — она сама поднимет службу.',
+      'Открой командную строку и набери <b>ollama pull qwen3:8b</b>.',
+      'Дождись загрузки — ANAMORF увидит модель сам.',
+      'Выбери её в списке мозгов, ключ не нужен.'],
+    gives:['Любая модель из библиотеки Ollama в один запрос','Переключение между моделями на лету','Работает офлайн'],
+    needs:['~5 ГБ на модель','Видеокарта желательна, но не обязательна'] },
+  { id:'lmstudio', ic:'◫', name:'LM Studio', group:'Свой сервер', opt:'бесплатно',
+    blurb:'То же, но с окном: видно, сколько памяти ест модель.',
+    where:{label:'Скачать LM Studio', url:'https://lmstudio.ai'},
+    steps:['Установи <b>LM Studio</b> и найди модель в поиске внутри программы.',
+      'Скачай её кнопкой <b>Download</b>.',
+      'Вкладка <b>Developer</b> → включи <b>Local Server</b> (порт 1234).',
+      'ANAMORF подхватит сервер сам.'],
+    gives:['Наглядный подбор модели под свою видеокарту','Тонкая настройка слоёв на GPU','Работает офлайн'],
+    needs:['Порт 1234 свободен','Сервер должен быть запущен'] },
+  { id:'gguf', ic:'◍', name:'Своя GGUF', group:'В комплекте', opt:'без программ',
+    blurb:'Положить файл модели рядом — встроенный движок её поднимет.',
+    where:{label:'Открыть Hugging Face', url:'https://huggingface.co/models?library=gguf'},
+    steps:['Найди модель с пометкой <b>GGUF</b>, размер <b>Q4_K_M</b>.',
+      'Скачай один файл <b>.gguf</b> (обычно 3–6 ГБ).',
+      'Положи его в папку <b>models\\gguf</b> — кнопка ниже откроет её.',
+      'Модель появится в списке. Больше ничего ставить не надо.'],
+    gives:['Никаких сторонних программ — движок уже внутри','Работает на слабой видеокарте и на процессоре','Полностью офлайн'],
+    needs:['Место на диске','Q4_K_M ~3 ГБ на каждые 7–8 млрд параметров'] },
+  { id:'cloud2', ic:'☁', name:'Облако по ключу', group:'Интернет', opt:'есть бесплатные',
+    blurb:'GigaChat, Groq, Mistral, OpenRouter и ещё десяток.',
+    where:{label:'Список провайдеров', url:'https://openrouter.ai/models'},
+    steps:['Выбери провайдера — рядом с каждым помечено «без VPN» или «нужен VPN».',
+      'Заведи аккаунт и создай API-ключ.',
+      'Вставь ключ во вкладке «Подключения».',
+      'Выбери модель — она встанет в общий список рядом с локальными.'],
+    gives:['Сильная модель для тяжёлых задач','Запасной мозг, когда локальная занята','Счётчик расхода — видно, сколько потрачено'],
+    needs:['Интернет','У части провайдеров нужна карта'] }
+];
+const bc = $('#brain-cards');
+BRAINS.forEach(c=>{
+  const el=document.createElement('div'); el.className='conn tile lift';
+  el.innerHTML=`<span class="opt">${c.opt}</span>
+    <div class="top"><div class="ic">${c.ic}</div><div><div class="nm">${c.name}</div>
+      <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);margin-top:2px">${c.group}</div></div></div>
+    <div class="bl">${c.blurb}</div>
+    <div class="ft"><span class="state">показать, как</span></div>`;
+  el.onclick=()=>{
+    $$('#brain-cards .conn').forEach(x=>x.classList.remove('open')); el.classList.add('open');
+    $('#bp-grp').textContent=c.group; $('#bp-title').textContent=c.name; $('#bp-blurb').textContent=c.blurb;
+    $('#bp-body').innerHTML=`
+      <div><span class="cap" style="display:block;margin-bottom:11px">По шагам</span>
+        <div class="steps">${c.steps.map(s=>`<div class="step"><div>${s}</div></div>`).join('')}</div>
+        <a class="btn sm" style="margin-top:12px;text-decoration:none" href="${c.where.url}" target="_blank">${c.where.label} ↗</a></div>
+      <div><span class="cap" style="display:block;margin-bottom:9px">Что это даст</span>
+        <div class="gives">${c.gives.map(g=>`<div>${g}</div>`).join('')}</div></div>
+      <div><span class="cap" style="display:block;margin-bottom:9px">Что нужно</span>
+        <div class="gives">${c.needs.map(g=>`<div>${g}</div>`).join('')}</div></div>`;
+  };
+  bc.appendChild(el);
+});
+
+/* ============================================================
+   РЕЕСТР ФИЧ — ОДИН ИСТОЧНИК ПРАВДЫ
+   из него: чекбоксы сборки, набор pip, список модулей в app\,
+   докачиваемые блоки и экраны подключений
+   ============================================================ */
+const GROUPS = [
+  { g:'Ядро', note:'снять нельзя', items:[
+    {id:'core',    n:'Диалог, память, конфиг',   s:'main · persona · memory · routing · focus', mb:180, mods:26, pip:14, lock:1},
+    {id:'heal',    n:'Самопочинка и диагностика', s:'doctor · diagnostics · triage · fallbacks', mb:12, mods:9, pip:1, lock:1},
+    {id:'trust',   n:'Доверие и подтверждения',   s:'trust · send_gate · guard', mb:3, mods:3, pip:0, lock:1},
+  ]},
+  { g:'Мозги', items:[
+    {id:'llama',   n:'Движок llama.cpp + gemma-4-e4b', s:'запечатана в билд, работает офлайн', mb:4350, mods:3, pip:0, on:1, base:1},
+    {id:'servers', n:'Ollama и LM Studio',        s:'подключение к своему серверу моделей', mb:2, mods:2, pip:0, on:1, base:1},
+    {id:'cloud',   n:'Облачные провайдеры',       s:'13 провайдеров по ключу + бесплатные тиры', mb:4, mods:3, pip:1, on:1, base:1},
+    {id:'sampling',n:'Тонкая настройка ответа',   s:'сэмплинг, пресеты речи', mb:1, mods:1, pip:0, on:1, base:1},
+  ]},
+  { g:'Слух', items:[
+    {id:'gigaam',  n:'GigaAM v3 — точный русский', s:'основной движок распознавания', mb:1250, mods:2, pip:3, torch:1, on:1, base:1},
+    {id:'draft',   n:'Черновик на лету (Vosk)',    s:'показывает слова, пока точный движок думает', mb:90, mods:1, pip:1, on:1, base:1},
+    {id:'fwhisper',n:'faster-whisper',             s:'многоязычный запасной движок', mb:1600, mods:1, pip:2, torch:1},
+    {id:'whcpp',   n:'whisper.cpp',                s:'лёгкий движок для слабых машин', mb:1500, mods:1, pip:1},
+    {id:'denoise', n:'Шумодав',                    s:'быстрые движки без нейросети', mb:15, mods:1, pip:2, on:1, base:1},
+    {id:'denoisenn',n:'Шумодав нейронный',         s:'DeepFilterNet — чище, но тяжелее', mb:420, mods:1, pip:2, torch:1, lvl:'beta'},
+    {id:'vprint',  n:'Узнавание по голосу',        s:'кто говорит + печать владельца', mb:190, mods:7, pip:2, torch:1, on:1, base:1},
+    {id:'tone',    n:'T-one',                      s:'ещё один русский движок, 11 ГБ', mb:11000, mods:1, pip:1, torch:1, lvl:'lab'},
+    {id:'voxtral', n:'Voxtral Realtime',           s:'отдельный воркер в своём окружении', mb:9100, mods:2, pip:0, pack:1, lvl:'lab'},
+  ]},
+  { g:'Голос', items:[
+    {id:'silero',  n:'Silero',                     s:'быстрый и лёгкий синтез', mb:65, mods:1, pip:1, torch:1, on:1, base:1},
+    {id:'edge',    n:'Edge-TTS',                   s:'облачные голоса Microsoft, бесплатно', mb:3, mods:1, pip:1, on:1, base:1},
+    {id:'qwen3',   n:'Qwen3-TTS — клон голоса',    s:'говорит голосом с образца', mb:7900, mods:2, pip:4, torch:1, lvl:'beta'},
+    {id:'voices',  n:'Витрина голосов',            s:'скачивание и прослушка пресетов', mb:120, mods:1, pip:0, on:1, base:1},
+  ]},
+  { g:'Руки', items:[
+    {id:'pc',      n:'Программы, окна, громкость', s:'каталог из «Пуска», медиа-пульт', mb:25, mods:4, pip:5, on:1, base:1},
+    {id:'files',   n:'Файлы в рабочей папке',      s:'жёстко заперты в разрешённых корнях', mb:6, mods:2, pip:0, on:1, base:1},
+    {id:'uia',     n:'Клики внутри окон',          s:'дерево интерфейса, печать, клавиши', mb:40, mods:2, pip:2, on:1, base:1},
+    {id:'glow',    n:'Подсветка цели',             s:'светящийся контур вокруг того, что делает', mb:3, mods:2, pip:0, on:1, base:1},
+    {id:'browser', n:'Свой браузер (Playwright)',  s:'поиск и чтение страниц, Chromium докачкой', mb:480, mods:1, pip:3, pack:1, lvl:'beta'},
+  ]},
+  { g:'Зрение', items:[
+    {id:'screen',  n:'Экран',                      s:'захват, детектор изменений, наблюдение', mb:190, mods:1, pip:5, on:1, base:1},
+    {id:'cam',     n:'Камера',                     s:'вебка, живое окно, проверка устройств', mb:12, mods:1, pip:2, on:1, base:1},
+    {id:'ocr',     n:'Чтение текста с экрана',     s:'Windows.Media.Ocr, 50–150 мс', mb:8, mods:1, pip:1, on:1, base:1},
+    {id:'pdf',     n:'PDF и чертежи',              s:'страница в картинку и дальше в зрение', mb:45, mods:1, pip:1},
+  ]},
+  { g:'Образ', items:[
+    {id:'vrm',     n:'Аватар в окне',              s:'VRM-модель прямо в интерфейсе', mb:24, mods:3, pip:0, on:1, base:1},
+    {id:'desk',    n:'Аватар на рабочем столе',    s:'отдельное окно поверх всех, Qt', mb:620, mods:2, pip:1, pack:1, lvl:'beta'},
+    {id:'anim',    n:'Библиотека анимаций',        s:'скачивание жестов, нужен ключ GitHub', mb:6, mods:2, pip:0},
+  ]},
+  { g:'Связь', note:'по умолчанию выключено', items:[
+    {id:'tg',      n:'Телеграм и VK',              s:'управление ПК из интернета', mb:4, mods:2, pip:1, lvl:'risk'},
+    {id:'phone',   n:'Доступ с телефона',          s:'QR по локальной сети, HTTPS', mb:12, mods:1, pip:2, lvl:'risk'},
+  ]},
+  { g:'Лаборатория', note:'недоделанное', items:[
+    {id:'dream',   n:'DreamPC (LLaDA-8B)',         s:'диффузионная модель, отдельное окружение', mb:15000, mods:2, pip:0, pack:1, lvl:'lab'},
+    {id:'panns',   n:'Метки звуков (PANNs)',       s:'что вообще звучит вокруг', mb:340, mods:2, pip:1, torch:1, lvl:'lab'},
+    {id:'clap',    n:'Свои метки звуков (CLAP)',   s:'zero-shot по описанию', mb:1800, mods:1, pip:1, torch:1, lvl:'lab'},
+    {id:'earlog',  n:'Журнал слуха',               s:'час записи → отчёт по звукам', mb:5, mods:1, pip:0, lvl:'lab'},
+    {id:'beat',    n:'Битбокс и карта звуков',     s:'перкуссия буквами, кластеры источников', mb:3, mods:2, pip:0, lvl:'lab'},
+    {id:'script',  n:'Стенограмма',                s:'непрерывная расшифровка потока', mb:4, mods:1, pip:0, lvl:'lab'},
+  ]},
+  { g:'Инструменты разработчика', note:'в клиента не едут никогда', dev:1, items:[
+    {id:'board',   n:'Дорожная карта проекта',     s:'devboard + отчёты по этапам', mb:2, mods:1, pip:0, dev:1},
+    {id:'git',     n:'Git-панель',                 s:'коммит, пуш, подтянуть обновления', mb:1, mods:1, pip:0, dev:1},
+    {id:'train',   n:'Обучение характера (LoRA)',  s:'датасет, Hugging Face, экспорт GGUF', mb:8, mods:2, pip:0, pack:1, dev:1},
+    {id:'ue',      n:'Мост в Unreal Engine',       s:'управление моделью и интерфейсом в UE', mb:4, mods:2, pip:0, dev:1},
+    {id:'bench',   n:'Стенды и замеры',            s:'слух, задержки, шумодав', mb:3, mods:4, pip:0, dev:1},
+    {id:'selfread',n:'Чтение своего исходника',    s:'fs_log · fs_grep · fs_slice', mb:1, mods:1, pip:0, dev:1},
+  ]}
+];
+
+const state = {};
+GROUPS.forEach(g=>g.items.forEach(f=>state[f.id] = !!(f.lock || f.on)));
+
+const LV = {beta:'бета', lab:'лаба', risk:'риск'};
+const gr = $('#groups');
+GROUPS.forEach(g=>{
+  const box=document.createElement('div'); box.className='grp';
+  box.innerHTML = `<span class="cap">${g.g}${g.note?` <span style="text-transform:none;letter-spacing:.02em;font-weight:400">· ${g.note}</span>`:''}</span>`;
+  g.items.forEach(f=>{
+    const el=document.createElement('div');
+    el.className='f'+(state[f.id]?' on':'')+((f.lock||f.dev)?' locked':'');
+    el.innerHTML=`<div class="cb">✓</div>
+      <div class="fn">${f.n}<small>${f.s}</small></div>
+      ${f.lvl?`<span class="lv ${f.lvl==='lab'?'lab':''}${f.lvl==='risk'?' risk':''}">${LV[f.lvl]}</span>`:''}
+      <span class="sz">${f.mb>=1000?(f.mb/1000).toFixed(1)+' ГБ':f.mb+' МБ'}</span>`;
+    if(!f.lock && !f.dev) el.onclick=()=>{ state[f.id]=!state[f.id]; el.classList.toggle('on',state[f.id]); recalc(); };
+    box.appendChild(el);
+  });
+  gr.appendChild(box);
+});
+
+const PRESETS = {
+  base:  f=>!!(f.lock||f.base),
+  full:  f=>!f.dev && f.lvl!=='risk' && f.id!=='dream' && f.id!=='tone',
+  min:   f=>!!f.lock || ['llama','servers','gigaam','silero','pc','files'].includes(f.id),
+  clear: f=>!!f.lock
+};
+$$('[data-preset]').forEach(b=>b.onclick=()=>{
+  $$('[data-preset]').forEach(x=>x.classList.remove('on'));
+  if(b.dataset.preset!=='clear') b.classList.add('on');
+  const fn=PRESETS[b.dataset.preset];
+  GROUPS.forEach(g=>g.items.forEach(f=>state[f.id]=f.dev?false:fn(f)));
+  $$('.f').forEach((el,i)=>{ const f=GROUPS.flatMap(g=>g.items)[i]; el.classList.toggle('on', state[f.id]); });
+  recalc();
+});
+
+function recalc(){
+  const all=GROUPS.flatMap(g=>g.items).filter(f=>state[f.id] && !f.dev);
+  const torch = all.some(f=>f.torch);
+  const mb = 520 + (torch?2900:0) + all.reduce((a,f)=>a+f.mb,0);
+  const mods = 12 + all.reduce((a,f)=>a+f.mods,0);
+  const pip = 38 + all.reduce((a,f)=>a+f.pip,0);
+  const packs = all.filter(f=>f.pack).length;
+  $('#s-size').textContent = (mb/1000).toFixed(1)+' ГБ';
+  $('#s-bar').style.width = Math.min(100, mb/45000*100)+'%';
+  $('#s-mods').textContent = mods;
+  $('#s-pip').textContent = pip;
+  $('#s-packs').textContent = packs;
+
+  const w=[];
+  if(torch) w.push(['В сборку добавлен torch','Его тянут выбранные фичи слуха, голоса или зрения. +2.9 ГБ к установщику. Снимешь их все — уйдёт и он.']);
+  if(state.tg||state.phone) w.push(['Открытая дверь наружу','Телеграм и телефон дают доступ к компьютеру из сети. В клиентском билде включаются только вручную и с предупреждением на экране.']);
+  if(packs) w.push([`${packs} блока качаются отдельно`,'Playwright, Qt и тяжёлые воркеры не пакуются в установщик — клиент дотянет их готовыми архивами по кнопке, без pip.']);
+  if(!all.some(f=>['gigaam','fwhisper','whcpp','tone','voxtral'].includes(f.id))) w.push(['Нет ни одного движка слуха','Билд соберётся, но микрофон работать не будет. Оставь хотя бы GigaAM.']);
+  if(mb>25000) w.push(['Тяжёлый установщик','Больше 25 ГБ — качать будут долго. Подумай, что перенести в докачку.']);
+  $('#warns').innerHTML = w.map(([t,x])=>`<div class="warn"><b>${t}</b>${x}</div>`).join('');
+}
+recalc();
+
+/* ---- сухая сборка и билд ---- */
+function run(lines, btn, label){
+  const b=$(btn), old=b.textContent; b.classList.add('st-load'); b.textContent=label;
+  const log=$('#log'); log.textContent='';
+  let i=0;
+  (function tick(){
+    if(i>=lines.length){ b.classList.remove('st-load'); b.textContent=old; return; }
+    log.textContent += (i?'\n':'')+lines[i++]; log.scrollTop=log.scrollHeight;
+    setTimeout(tick, 260);
+  })();
+}
+$('#b-check').onclick=()=>{
+  const all=GROUPS.flatMap(g=>g.items).filter(f=>state[f.id]&&!f.dev);
+  run([
+    '› сухая сборка ANAMORF 0.9.5 (stable)',
+    `  фич выбрано: ${all.length}`,
+    '  проверяю импорты выбранных модулей … ok',
+    '  ищу ссылки на выключенные фичи …',
+    state.browser ? '  ok — жёстких ссылок нет' : '  ! anamorf/llm/tools.py:812 зовёт web_search, а «Свой браузер» выключен',
+    state.browser ? '  реестр ключей: 5 записей, все с шагами … ok' : '  → включи фичу или заверни вызов в features.on("browser")',
+    '  проверяю, что личные пути автора не попали в пакет … ok',
+    '  config.default.json без секретов … ok',
+    '  собираю requirements для runtime … ok',
+    '› проверка пройдена — можно собирать'
+  ], '#b-check', 'Проверяю…');
+};
+$('#b-folder').onclick=()=>run([
+  '› сборка папки build/ANAMORF-0.9.5',
+  '  копирую anamorf/ по списку фич … 214 файлов',
+  '  копирую ui/ … 9 файлов',
+  '  собираю runtime/ из requirements.lock.txt …',
+  '  прогреваю кэш comtypes … ok',
+  '  кладу gemma-4-e4b.Q4_K_M.gguf … 3.2 ГБ',
+  '  пишу VERSION, build.json, config.default.json',
+  '› готово: build\\ANAMORF-0.9.5\\  — можно запускать и щупать'
+], '#b-folder', 'Собираю…');
+$('#b-inst').onclick=()=>run([
+  '› упаковка установщика (Inno Setup)',
+  '  сжимаю runtime … 2.9 ГБ → 1.1 ГБ',
+  '  сжимаю модель … 3.2 ГБ → 3.1 ГБ',
+  '  ярлык, автозапуск, удаление через Панель управления … ok',
+  '  считаю sha256 … a41f0c9e…',
+  '› готово: ANAMORF-Setup-0.9.5.exe'
+], '#b-inst', 'Пакую…');
+$('#b-pub').onclick=()=>run([
+  '› публикация релиза v0.9.5 в канал stable',
+  '  прогоняю tests/ … 13 файлов, 0 падений',
+  '  собираю manifest.json (sha256 + подпись)',
+  '  загружаю app-0.9.5.zip … 24 МБ',
+  '  загружаю ANAMORF-Setup-0.9.5.exe … 4.3 ГБ',
+  '› релиз опубликован. Клиенты на stable увидят обновление в течение суток.'
+], '#b-pub', 'Публикую…');
+
+/* открыть первую карточку */
+setTimeout(()=>document.querySelector('#conn-cards .conn').click(), 80);
+})();
+</script>
+</body>
+</html>
