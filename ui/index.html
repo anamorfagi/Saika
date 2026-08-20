@@ -12222,8 +12222,11 @@ body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,
 .ztool{position:absolute;transform:translate(-50%,-50%) translateZ(20px) scale(.4);
   opacity:0;pointer-events:none;z-index:6;transform-style:preserve-3d;
   width:132px;padding:11px 10px;border-radius:16px;text-align:center;
-  background:linear-gradient(168deg,rgba(40,40,46,.97),rgba(24,24,28,.97));
-  border:1px solid rgba(255,255,255,.15);cursor:pointer;
+  /* Карточка обязана быть СВЕТЛЕЕ того, на чём лежит. Пока веер открыт,
+     сцена под ней уходит почти в чёрное — и прежние #282830 → #18181c
+     оказывались вровень с фоном: силуэт был, надписи не было. */
+  background:linear-gradient(168deg,rgba(62,62,71,.985),rgba(37,37,44,.985));
+  border:1px solid rgba(255,255,255,.24);cursor:pointer;
   box-shadow:0 3px 6px rgba(0,0,0,.5), 0 44px 80px -30px rgba(0,0,0,1),
              inset 0 1px 0 rgba(255,255,255,.16);
   transition:opacity .3s var(--zease), transform .42s var(--zspring),
@@ -12233,9 +12236,9 @@ body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,
 .ztool:hover{background:linear-gradient(168deg,rgba(54,54,61,.98),rgba(32,32,37,.98));
   border-color:rgba(255,255,255,.3)}
 .ztool .zti{font-size:16px;line-height:1;margin-bottom:6px;display:block}
-.ztool .ztn{display:block;font:400 11.5px/1.25 inherit}
+.ztool .ztn{display:block;font:400 11.5px/1.25 inherit;color:rgba(236,238,241,.94)}
 .ztool .ztv{display:block;margin-top:4px;font:400 9.5px/1.2 inherit;
-  color:rgba(236,238,241,.30);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  color:rgba(236,238,241,.46);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ztool.on{border-color:rgba(255,255,255,.45)}
 .ztool.on .ztv{color:var(--text)}
 /* Блик развёрнут к лампе вычисленным углом. Тени без бликов дают силуэты
@@ -12252,10 +12255,13 @@ body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,
   opacity:0;transition:opacity .38s var(--zease),transform .44s var(--zspring),
              filter .3s var(--zease)}
 .ztool.show::after{opacity:1}
-/* Внимание сохраняется: чтобы одно стало ярче, другое обязано
-   потускнеть. Без этого «крупнее» читается только вплотную, а издали
-   веер выглядит ровным рядом одинаковых плашек. */
-body.zopen .ztool.show:not(.aim){opacity:.6;filter:brightness(.8) saturate(.88)}
+/* Внимание сохраняется: чтобы ОДНО стало ярче, другое обязано
+   потускнеть. Но «другое» появляется только тогда, когда есть первое.
+   Вчера правило было записано как body.zopen — то есть тускнели все и
+   всегда, включая случай «рука ещё нигде», когда смотреть надо на весь
+   веер сразу. Экономия внимания превратилась в налог на чтение: тусклое
+   на тёмном не читается вовсе. Тускнеем только при наведении. */
+body.zaim .ztool.show:not(.aim){opacity:.5;filter:brightness(.72) saturate(.9)}
 .ztool.aim{border-color:rgba(255,255,255,.62);
   background:linear-gradient(168deg,rgba(72,72,82,.99),rgba(42,42,50,.99));
   transform:translate(-50%,-50%) translateZ(215px) scale(1.15)}
@@ -12275,22 +12281,29 @@ body.zopen .ztool.show:not(.aim){opacity:.6;filter:brightness(.8) saturate(.88)}
   box-shadow:none;transform:translate(-50%,-50%) translateZ(200px) scale(1.06)}
 .ztool.zdrum::before,.ztool.zdrum::after{display:none}
 .zdcap{display:inline-flex;align-items:center;gap:7px;position:relative;z-index:2;
-  padding:5px 12px;border-radius:999px;background:rgba(30,30,35,.9);
+  padding:5px 12px;border-radius:999px;background:rgba(48,48,56,.94);
   border:1px solid var(--border);
   box-shadow:0 12px 20px -8px rgba(0,0,0,.9), 0 2px 3px rgba(0,0,0,.5);
   font:400 10px/1 inherit;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
 .ztool.zdrum.aim .zdcap{color:var(--text);border-color:rgba(255,255,255,.15)}
 .zdnum{opacity:.55;letter-spacing:.1em;font-style:normal}
+/* Барабан ЗАКРЫТ своей коробкой. Капсулы стоят на общей оси и, повёрнутые
+   каждая на свой угол, вылезали далеко за неё — вверх и вниз на две
+   капсулы в каждую сторону. Из-за этого, во-первых, соседние карточки
+   веера ложились прямо на чужие капсулы, а во-вторых, расталкивание
+   считало барабан по разметке и честно не знало, что настоящий он вдвое
+   выше. Окно на колесо — это и есть барабан; торчащие наружу капсулы
+   были не глубиной, а протечкой. */
 .zdstage{position:relative;height:118px;margin-top:9px;perspective:600px;
-  transition:height .3s var(--zease)}
+  overflow:hidden;transition:height .3s var(--zease)}
 .ztool.zdrum:hover .zdstage,.ztool.zdrum.aim .zdstage{height:140px}
 .zdbar{position:absolute;inset:0;transform-style:preserve-3d}
-.zdi{position:absolute;left:-14px;right:-14px;top:50%;height:32px;margin-top:-16px;
+.zdi{position:absolute;left:0;right:0;top:50%;height:32px;margin-top:-16px;
   display:flex;align-items:center;justify-content:center;backface-visibility:hidden}
 .zpill{display:inline-flex;align-items:center;gap:8px;max-width:100%;height:32px;
   padding:0 15px;border-radius:999px;white-space:nowrap;overflow:hidden;
-  background:linear-gradient(168deg,rgba(46,46,53,.98),rgba(27,27,32,.98));
-  border:1px solid rgba(255,255,255,.15);cursor:pointer;
+  background:linear-gradient(168deg,rgba(64,64,73,.985),rgba(38,38,45,.985));
+  border:1px solid rgba(255,255,255,.22);cursor:pointer;
   box-shadow:0 9px 16px -6px rgba(0,0,0,.8), 0 2px 4px rgba(0,0,0,.5),
              inset 0 1px 0 rgba(255,255,255,.06);
   font:400 11px/1 inherit;color:var(--dim);
@@ -12298,7 +12311,7 @@ body.zopen .ztool.show:not(.aim){opacity:.6;filter:brightness(.8) saturate(.88)}
   transition:transform .34s var(--zspring),opacity .26s var(--zease),
              background .2s,border-color .2s,color .2s}
 .zdi.in .zpill{transform:scale(1);opacity:1}
-.zpill small{font-size:8.5px;color:rgba(236,238,241,.30);
+.zpill small{font-size:8.5px;color:rgba(236,238,241,.44);
   overflow:hidden;text-overflow:ellipsis}
 .zdi.cur .zpill{transform:scale(calc(1.11 + var(--pop,0)));color:var(--text);
   transition:transform .09s linear,background .2s,border-color .2s,color .2s,box-shadow .25s;
@@ -12311,6 +12324,21 @@ body.zopen .ztool.show:not(.aim){opacity:.6;filter:brightness(.8) saturate(.88)}
 .zdi.cur .zpill:hover{transform:scale(1.14)}
 .zdi.zsel .zpill{border-color:rgba(255,255,255,.55)}
 .zdi.zsel .zpill::before{content:'●';font-size:7px;color:var(--text);margin-right:2px}
+
+/* ── РЕЖИМ РАССТАНОВКИ ──
+   Углы лучей закреплены навсегда — но закрепляет их владелец, а не мы.
+   Правило говорит «не пересортировывать по частоте за спиной у человека»,
+   потому что стирается мышечная память; человек, переставивший плашку
+   своей рукой, ровно эту память и записывает. Поэтому расстановка не
+   отменяет правило, а отдаёт его в те руки, которым оно служит. */
+body.zarrange #zstage{cursor:grab}
+body.zarrange .ztool.show{opacity:1 !important;filter:none !important;
+  transition:opacity .2s, box-shadow .2s}
+body.zarrange .ztool{outline:1px dashed rgba(255,255,255,.28);outline-offset:5px}
+body.zarrange .ztool.zmoved{outline-color:rgba(255,255,255,.6)}
+body.zarrange .ztool.zdrag{cursor:grabbing;outline-color:#fff;
+  transition:none !important;z-index:9}
+body.zarrange #zchat{border-style:dashed;color:var(--text)}
 
 #zthreads{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;
   transform:translateZ(60px)}
@@ -12465,6 +12493,7 @@ const PLACES = [
      значило бы завести второй список, который разойдётся с первым на
      следующей же неделе и будет врать молча. */
   {ic:'⚙', n:'Утилиты',  drum:headerRows, leave:true},
+  {ic:'✥', n:'Расстановка', call:() => window.saikaArrange(true)},
 ];
 
 function headerRows(){
@@ -12479,6 +12508,17 @@ function headerRows(){
       sub:  (b.title || '').split(/[:(—·]/).slice(1).join(' ').trim().slice(0,22),
       sel:  b.classList.contains('on'),
     }));
+}
+
+/* ─────────────── ГДЕ ЧТО СТОИТ ───────────────
+   Углы и радиусы, переставленные рукой владельца. Храним угол и ДОЛЮ от
+   меньшей стороны сцены, а не пиксели: окно меняет размер, плашка обязана
+   остаться на своём луче, а не уехать в угол. Ключ — орган и номер луча,
+   потому что именно пара «орган + место» и есть то, что запоминает рука. */
+let PLACED = {};
+try { PLACED = JSON.parse(localStorage.saika_zplace || '{}') || {}; } catch(e){ PLACED = {}; }
+function savePlaced(){
+  try { localStorage.saika_zplace = JSON.stringify(PLACED); } catch(e){}
 }
 
 // ─────────────────────────── сборка ───────────────────────────
@@ -12665,17 +12705,17 @@ function geometry(){
 
 function spread(z){
   const n = z.tools.length;
-  if (z.id === '__core'){            // места раскрываются кольцом вокруг центра
-    const step = 360/n;
-    return z.tools.map((t,i) => ({...t, ang: -90 + i*step}));
-  }
   /* Сорок градусов, а не тридцать четыре: соседние карточки на прежнем
      шаге стояли плечом к плечу, и наведение на нужную требовало
      прицелиться — ровно тот налог, ради снятия которого затевались
      секторы. Восьмой луч при таком шаге даёт 280°, поэтому правило «не
      больше восьми» остаётся жёстким. */
-  const step = 40, base = z.a - (n-1)*step/2;
-  return z.tools.map((t,i) => ({...t, ang: base + i*step}));
+  const step = z.id === '__core' ? 360/n : 40;
+  const base = z.id === '__core' ? -90 : z.a - (n-1)*step/2;
+  return z.tools.map((t,i) => {
+    const p = PLACED[z.id+':'+i];
+    return {...t, ang: p ? p.a : base + i*step, put: p || null};
+  });
 }
 
 /* Сначала честный веер по закреплённым углам — это то, что запоминает
@@ -12709,13 +12749,15 @@ function place(z){
      Отсюда предел по разметке — он и стоит в clamp ниже. */
   const KZ = 1400/(1400-215), KS = 1.15;
   const OX = W/2, OY = H*0.46, PAD = 16;
+  const M = Math.min(W,H);
   const it = spread(z).map((t,i) => {
     const el = nd.tools[i];
     const big = el.classList.contains('zdrum');
-    const r = R * (big ? 1.30 : 1);
+    const r = t.put ? t.put.r*M : R * (big ? 1.30 : 1);
+    el.classList.toggle('zmoved', !!t.put);
     const bw = el.offsetWidth  || (big?236:132);
     const bh = el.offsetHeight || (big?180:74);
-    return {el,
+    return {el, fix: !!t.put,
       // расталкивание: коробка плюс воздух, чтобы карточки не липли
       w: bw + (big?40:34), h: bh + (big?118:26),
       // удержание в кадре: настоящая коробка плюс запас барабану на пилюли
@@ -12726,11 +12768,16 @@ function place(z){
   for (let pass=0; pass<70; pass++){
     for (let i=0;i<it.length;i++) for (let j=i+1;j<it.length;j++){
       const a=it[i], b=it[j];
+      /* Поставленное рукой не двигаем ВООБЩЕ. Расталкивание — способ
+         разрулить то, чего никто не решал; там, где решение уже принято,
+         оно превращается в спор с человеком, и человек проигрывает. */
+      if (a.fix && b.fix) continue;
       const dx=b.x-a.x, dy=b.y-a.y;
       const ox=(a.w+b.w)/2-Math.abs(dx), oy=(a.h+b.h)/2-Math.abs(dy);
       if (ox<=0 || oy<=0) continue;
-      if (ox < oy){ const s=(dx<0?-1:1)*ox/2; a.x-=s; b.x+=s; }
-      else        { const s=(dy<0?-1:1)*oy/2; a.y-=s; b.y+=s; }
+      const ka = a.fix ? 0 : (b.fix ? 1 : .5), kb = b.fix ? 0 : (a.fix ? 1 : .5);
+      if (ox < oy){ const sg=(dx<0?-1:1)*ox; a.x-=sg*ka; b.x+=sg*kb; }
+      else        { const sg=(dy<0?-1:1)*oy; a.y-=sg*ka; b.y+=sg*kb; }
     }
     it.forEach(o => {
       const hw = o.cw/2*KS, hh = o.ch/2*KS;
@@ -12798,13 +12845,24 @@ function buildDrum(el, z, t){
     const go = ev => { ev.stopPropagation(); el._drum.i = i; spin(el._drum,0); commit(el); };
     d.addEventListener('pointerup', go);
     d.addEventListener('click', go);
-    d.addEventListener('pointerenter', () => {
-      const D = el._drum; if (!D || D.i === i) return;
-      const now = performance.now();
-      if (now - lastMove > 90) return;            // капсула сама подъехала
-      if (now - (D.lastWheel||0) < 260) return;   // колесо ещё договаривает
-      D.i = i; spin(D, 0);
-    });
+    /* НАВЕДЕНИЕ БАРАБАН НЕ КРУТИТ (2026-08-20).
+
+       Крутило — и улетало. Барабан это цилиндр: капсулы стоят на общей
+       оси, повёрнутые каждая на свой угол, и у самого края силуэта их
+       проекции ложатся друг на друга плотно. Проведёшь там мышью на
+       десять пикселей — пересечёшь три капсулы подряд. Хуже того, это
+       было самоподдерживающимся: доступными к наведению держались только
+       соседи текущей (±2), но стоило прыгнуть на две — под курсором
+       оказывались следующие две, и список улетал в конец за долю секунды.
+
+       Владелец сказал прямо: «лучше при зажатой клавише буду крутить
+       колесиком, чем оно будет летать вниз-вверх просто при наведении».
+       Он прав. Выбор в списке — намеренное действие, и у него уже есть
+       два честных способа: колесо (щелчок — шаг) и клик по капсуле.
+       Третий, срабатывающий сам от того, что рука проходила мимо, —
+       не способ выбрать, а способ промахнуться.
+
+       Подсветка при наведении осталась: она в CSS и ничего не двигает. */
     // Капсулы проявляются по одной: список собирается на глазах, а не
     // выпрыгивает готовым куском.
     setTimeout(() => d.classList.add('in'), 60 + Math.abs(i-start)*45);
@@ -12901,6 +12959,7 @@ function show(z){
     N[k].lines.forEach(l => l.classList.remove('show'));
   });
   aimed = null;
+  document.body.classList.remove('zaim');
   open = z.id;                  // переезд между секторами шагом не считается
   document.body.classList.add('zopen');
   SFX.open();
@@ -12924,7 +12983,11 @@ function show(z){
       el.innerHTML = '<span class="zti">'+t.ic+'</span><span class="ztn">'+t.n+
                      '</span><span class="ztv">'+value(t)+'</span>';
     }
-    el.onclick = ev => { ev.stopPropagation(); if (!el._drum) pick(z,t,i); };
+    el.onclick = ev => {
+      ev.stopPropagation();
+      if (document.body.classList.contains('zarrange')) return;  // тут её двигают, а не жмут
+      if (!el._drum) pick(z,t,i);
+    };
   });
   place(z);
   /* Каскад, а не очередь. Сорок миллисекунд на карточку означали, что
@@ -12957,7 +13020,7 @@ function hide(){
     if (n.bead && n.bead !== core) n.bead.classList.remove('active');
   });
   aimed = null;
-  document.body.classList.remove('zopen');
+  document.body.classList.remove('zopen','zaim');
   field.style.transform = 'translate3d(0,0,0)';
   open = null;
   say();
@@ -13040,6 +13103,10 @@ function say(html){
     return;
   }
   if (html){ hintEl.classList.remove('idle'); sp.innerHTML = html; return; }
+  /* Вернулись в покой — и если что-то сломано или грузится, строка
+     говорит об этом, а не зовёт в разговор. Приглашение подождёт;
+     поломка — нет. */
+  if (saidTrouble){ hintEl.classList.remove('idle'); sp.innerHTML = saidTrouble; return; }
   hintEl.classList.add('idle');
   sp.innerHTML = 'Скажи, напиши или брось сюда файл';
 }
@@ -13057,6 +13124,7 @@ function setAim(el){
   if (aimed) aimed.classList.remove('aim');
   aimed = el;
   if (aimed) aimed.classList.add('aim');
+  document.body.classList.toggle('zaim', !!aimed);
 }
 /* Веер раскрывается НА НАЖАТИИ, а не через четверть секунды после него.
    Задержка была платой за жест «нажал и сразу дёрнул»: он выбирал вслепую,
@@ -13154,7 +13222,7 @@ function wire(){
        что и для короткого клика по ядру: центр закрывает. Жест при этом
        жив: вернулся в сектор — веер открылся снова, и не надо отпускать
        кнопку и начинать заново. */
-    if (!nz){ if (open) hide(); return; }
+    if (!nz){ if (open && !document.body.classList.contains('zarrange')) hide(); return; }
     if (open && nz.id === press.z.id) return;
     if (press.lock) return;
     press.lock = true;
@@ -13173,7 +13241,8 @@ function wire(){
      под рукой. */
   let leaveT = 0;
   addEventListener('pointermove', ev => {
-    if (press || !open){ clearTimeout(leaveT); return; }
+    if (press || !open || document.body.classList.contains('zarrange')){
+      clearTimeout(leaveT); return; }
     const el = document.elementFromPoint(ev.clientX, ev.clientY);
     const inTool = !!(el && el.closest && el.closest('.ztool'));
     let inside = inTool;
@@ -13207,12 +13276,76 @@ function wire(){
     press = null;
   });
 
+  /* ───────── РЕЖИМ РАССТАНОВКИ ─────────
+     Тяни плашку куда удобно — там она и останется, у этого органа,
+     навсегда. Двойной клик возвращает её на общее место. Esc выходит.
+
+     Веер в этом режиме не закрывается сам ни от чего: расстановка —
+     работа руками по разложенному, и всё, что убирает разложенное из-под
+     руки, здесь вредительство, а не вежливость. */
+  function arrange(on){
+    document.body.classList.toggle('zarrange', on);
+    if (on){
+      if (!open) show(N.__core.z);
+      say('<b>РАССТАНОВКА</b> — тяни плашки куда удобно · двойной клик вернёт на место · Esc выйти');
+    } else { hide(); say(); }
+  }
+  let drag = null;
+  layer.addEventListener('pointerdown', ev => {
+    if (!document.body.classList.contains('zarrange')) return;
+    const el = ev.target.closest && ev.target.closest('.ztool');
+    if (!el) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const r = S.getBoundingClientRect();
+    drag = {el, dx: parseFloat(el.style.left) - (ev.clientX - r.left),
+                dy: parseFloat(el.style.top)  - (ev.clientY - r.top)};
+    el.classList.add('zdrag');
+    try { el.setPointerCapture(ev.pointerId); } catch(e){}
+  });
+  layer.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const r = S.getBoundingClientRect();
+    drag.el.style.left = (ev.clientX - r.left + drag.dx) + 'px';
+    drag.el.style.top  = (ev.clientY - r.top  + drag.dy) + 'px';
+  });
+  addEventListener('pointerup', () => {
+    if (!drag) return;
+    const el = drag.el; drag = null;
+    el.classList.remove('zdrag');
+    if (!open) return;
+    const nd = N[open], i = nd.tools.indexOf(el);
+    if (i < 0) return;
+    const x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+    const dx = x - nd.ax, dy = y - nd.ay;
+    PLACED[open+':'+i] = {
+      a: Math.atan2(dy,dx)*180/Math.PI,
+      r: Math.hypot(dx,dy)/Math.min(W,H),
+    };
+    savePlaced();
+    el.classList.add('zmoved');
+    place(nd.z);
+    SFX.pick();
+  });
+  layer.addEventListener('dblclick', ev => {
+    if (!document.body.classList.contains('zarrange') || !open) return;
+    const el = ev.target.closest && ev.target.closest('.ztool');
+    if (!el) return;
+    const i = N[open].tools.indexOf(el);
+    if (i < 0) return;
+    delete PLACED[open+':'+i];
+    savePlaced();
+    el.classList.remove('zmoved');
+    place(N[open].z);
+    SFX.close();
+  });
+  window.saikaArrange = arrange;
+
   /* Нажал мимо — веер закрылся. Раньше уходил только увод мыши, а
      нажатие в пустоту веер не трогало: человек честно «щёлкал, чтобы
      закрыть», и ничего не происходило. Свои же мишени — карточки,
      секторы, капли, ядро — пропускаем: их обработчики решают сами. */
   addEventListener('pointerdown', ev => {
-    if (!open) return;
+    if (!open || document.body.classList.contains('zarrange')) return;
     const t = ev.target;
     if (t && t.closest && (t.closest('.ztool') || t.closest('.zdrop')
         || t.closest('#zcore') || t.closest('#zsvg'))) return;
@@ -13264,7 +13397,12 @@ function wire(){
     const t = ev.target;
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
                          || t.isContentEditable);
-    if (ev.key === 'Escape'){ goBack(); return; }
+    if (ev.key === 'Escape'){
+      if (document.body.classList.contains('zarrange')){
+        window.saikaArrange(false); return;
+      }
+      goBack(); return;
+    }
     if (ev.key === 'Backspace' && !typing){ ev.preventDefault(); goBack(); }
   };
   addEventListener('keydown', onEsc);
@@ -13367,10 +13505,16 @@ const ORGANS = [
   {k:'ears',  a:150,  n:'Слух'},
   {k:'face',  a:210,  n:'Образ'},
 ];
-const hw   = {cpu:0, ram:0, vram:0, gpu:0};
-const st   = {eyes:'off', brain:'off', hands:'ready', voice:'off', ears:'off', face:'off'};
-const fill = {eyes:0, brain:0, hands:0, voice:0, ears:0, face:0};
+const hw  = {cpu:0, ram:0, vram:0, gpu:0};
+const st  = {eyes:'off', brain:'off', hands:'off', voice:'off', ears:'off', face:'off'};
+/* val — куда дуга стремится, cur — где она сейчас. Разведены, чтобы дуга
+   НАЛИВАЛАСЬ, а не перескакивала: полоска загрузки, которая мгновенно
+   прыгает из нуля в сотню, не читается как загрузка вовсе. */
+const val = {eyes:0, brain:0, hands:0, voice:0, ears:0, face:0};
+const cur = {eyes:0, brain:0, hands:0, voice:0, ears:0, face:0};
 let RW=0, RH=0, t0=0, rctx=null;
+const NBAND = 84;                       // полос на половину круга
+const bOut = new Float32Array(NBAND), bInn = new Float32Array(NBAND);
 
 async function poll(){
   try{
@@ -13402,13 +13546,50 @@ async function poll(){
       st.eyes = isOn('#eyes-toggle') ? 'ready' : 'off';
       const fr = document.getElementById('av-frame');
       st.face = fr && fr.getAttribute('src') ? 'ready' : 'off';
-      fill.brain = hw.vram;
-      fill.hands = hw.cpu;
-      fill.face  = hw.gpu;
-      fill.eyes  = st.eyes === 'ready' ? 1 : 0;
+      const bc = document.getElementById('btn-control');
+      st.hands = bc && /— ВКЛ/.test(bc.title || '') ? 'ready' : 'off';
+      /* Дуга — это ШКАЛА ГОТОВНОСТИ, от нуля до ста: ноль это «не
+         работает и не загружено», сто это «поднято и разогрето». Ничего
+         другого она не показывает.
+
+         Вчера в неё была залита занятость ресурса — VRAM, ЦП, GPU, — и
+         вышла ложь по обоим концам сразу: орган, прекрасно работающий на
+         двадцати процентах памяти, рисовался огрызком и читался как
+         выключенный, а полный VRAM у выключенного движка нарисовал бы
+         полную дугу. Занятость железа — честное число, но это ДРУГОЕ
+         число, и живёт оно на экране «Система», где рядом подписи. */
+      Object.keys(val).forEach(k => { val[k] = st[k] === 'ready' ? 1 : 0; });
+      trouble();
     }
   }catch(e){}
   setTimeout(poll, 1000);
+}
+
+/* КОЛЬЦО ПОКАЗЫВАЕТ, СТРОКА ГОВОРИТ.
+
+   Форма отвечает на вопрос «всё ли в порядке» с одного взгляда, но она
+   не умеет назвать причину, а когда не в порядке — нужна именно причина.
+   Владелец, глядя на кольцо, спросил словами: «почему ощущение, что
+   модели не грузятся и система не работает?» — и был прав в главном:
+   интерфейс, который знает ответ и молчит, хуже интерфейса, который не
+   знает. Ответ у нас есть, /api/ready отдаёт его вместе с состоянием.
+
+   Говорим только когда есть что сказать, и только в покое: под раскрытым
+   веером строка занята рукой, а перебивать руку ради новости, которая
+   подождёт секунду, — худшее, что можно сделать с подсказкой. */
+const ORGNAME = {brain:'МОЗГИ', voice:'ГОЛОС', ears:'СЛУХ',
+                 eyes:'ГЛАЗА', face:'ОБРАЗ', hands:'РУКИ'};
+let saidTrouble = '';
+function trouble(){
+  const bad  = Object.keys(ORGNAME).find(k => st[k] === 'broken');
+  const busy = Object.keys(ORGNAME).find(k => st[k] === 'loading');
+  const line = bad  ? '<b>'+ORGNAME[bad]+'</b> не поднялись — движок сломался, загляни в орган'
+             : busy ? '<b>'+ORGNAME[busy]+'</b> ещё грузятся — можно ждать, можно не ждать'
+             : '';
+  if (line === saidTrouble) return;
+  saidTrouble = line;
+  if (open) return;                        // рука занята — не перебиваем
+  if (line) say(line); else say();
 }
 
 function sizeRing(){
@@ -13436,13 +13617,57 @@ function hearData(){
     if (s.ctx !== hCtx || s.stream !== hStream || !hA){
       hCtx = s.ctx; hStream = s.stream;
       hA = s.ctx.createAnalyser();
-      hA.fftSize = 1024; hA.smoothingTimeConstant = .6;
+      /* 2048, а не 1024. На тысяче бинов нижние полосы логарифмической
+         шкалы оказывались уже одного бина, и соседние полоски выходили
+         СОВЕРШЕННО одинаковыми — по три-четыре подряд. Владелец увидел
+         эти четвёрки и справедливо заподозрил, что кольцо рисует не звук,
+         а узор. Оно рисовало звук, но с разрешением, которого не хватало
+         на низах, где как раз вся речь. */
+      hA.fftSize = 2048; hA.smoothingTimeConstant = .6;
       s.ctx.createMediaStreamSource(s.stream).connect(hA);
       hF = new Uint8Array(hA.frequencyBinCount);
     }
     hA.getByteFrequencyData(hF);
     return hF;
   }catch(e){ hA=hCtx=hStream=null; return null; }
+}
+
+/* ── ИЗ БИНОВ В ПОЛОСЫ ──
+   Точечная выборка по логарифмической шкале — то, с чего мы начали, — на
+   низах берёт ОДИН И ТОТ ЖЕ бин для нескольких соседних полосок: между
+   двадцатью и сорока герцами бинов всего ничего, а полосок мы просим
+   десяток. Отсюда одинаковые четвёрки: не звук повторяется, а вопрос
+   задаётся четыре раза одному и тому же числу.
+
+   Как это делают правильно и делают все: границы полос логарифмические
+   (октава — удвоение, ухо слышит именно так), а внутри полосы берётся
+   СРЕДНЕЕ по всем попавшим бинам. Там, где полоса уже одного бина,
+   среднее брать не из чего — интерполируем между соседними, и полоски
+   различаются, потому что различается сам спектр между ними.
+
+   Наклон +3 дБ на октаву — стандартный «розовый» наклон анализаторов:
+   в реальном звуке энергия падает с частотой, и без наклона верхняя
+   половина круга всегда мертва, сколько бы там ни было слышимого.
+   Это не приукрашивание: наклон постоянный, одинаковый для всех частот
+   и не зависит от сигнала — он выравнивает шкалу, а не подкручивает
+   показания. */
+function toBands(a, out){
+  if (!a){ out.fill(0); return out; }
+  const nb = a.length, lo = 2, hi = Math.floor(nb*0.62), n = out.length;
+  for (let k=0;k<n;k++){
+    const f0 = lo*Math.pow(hi/lo, k/n), f1 = lo*Math.pow(hi/lo, (k+1)/n);
+    let v;
+    if (f1 - f0 < 1.5){
+      const c = (f0+f1)/2, i0 = Math.floor(c), t = c - i0;
+      v = a[i0]*(1-t) + a[Math.min(nb-1, i0+1)]*t;
+    } else {
+      let sum = 0, cnt = 0;
+      for (let i = Math.floor(f0); i < Math.min(nb, Math.ceil(f1)); i++){ sum += a[i]; cnt++; }
+      v = cnt ? sum/cnt : 0;
+    }
+    out[k] = Math.min(1, (v/255) * (0.62 + 0.55*Math.pow(k/n, .7)));
+  }
+  return out;
 }
 
 // ── ЧТО ОНА ГОВОРИТ ── тот же анализатор, что кормил старую полоску.
@@ -13459,19 +13684,15 @@ function selfData(){
   }catch(e){}
   return null;
 }
-function rms(a){
-  if (!a) return 0;
-  let s = 0, n = Math.floor(a.length*.6);
-  for (let i=0;i<n;i++) s += a[i]*a[i];
-  return Math.min(1, Math.sqrt(s/n)/128);
-}
-
 /* Дуга органа. Состояние рисуется ФОРМОЙ, а не цветом: в графите цвета
    нет вообще, и заводить его ради четырёх состояний значило бы завести
    вторую систему обозначений на том же экране. */
 function organArc(ctx, cx, cy, r, o, dim){
   const HALF = 25, a0 = o.a - HALF, a1 = o.a + HALF;
-  const s = st[o.k] || 'off', v = Math.max(0, Math.min(1, fill[o.k] || 0));
+  const s = st[o.k] || 'off';
+  // догоняем цель за полсекунды: дуга наливается, а не щёлкает
+  cur[o.k] += ((val[o.k] || 0) - (cur[o.k] || 0)) * .07;
+  const v = Math.max(0, Math.min(1, cur[o.k]));
   ctx.lineCap = 'butt';
   // след дуги виден всегда: место органа не должно исчезать вместе с ним
   ctx.lineWidth = 2;
@@ -13479,31 +13700,51 @@ function organArc(ctx, cx, cy, r, o, dim){
   ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a1)); ctx.stroke();
   if (s === 'off') return;
   if (s === 'loading'){
-    // бежит сегмент — «идёт», а не «сколько». Процента загрузки бэкенд не
-    // сообщает, и рисовать его значило бы придумывать число.
-    const w = 16, p = (t0*46) % (HALF*2 + w) - w;
-    const b0 = Math.max(a0, a0 + p), b1 = Math.min(a1, a0 + p + w);
-    if (b1 > b0){
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(255,255,255,'+(.62*dim)+')';
-      ctx.beginPath(); ctx.arc(cx,cy,r,rad(b0),rad(b1)); ctx.stroke();
-    }
+    /* Загрузка НЕОПРЕДЕЛЁННАЯ: сколько осталось — бэкенд не знает и не
+       сообщает, а дорисовать проценты значило бы придумать число, ради
+       которого человек станет ждать. Дуга налита от нуля, но край её
+       дышит и до конца не доходит: «идёт, и ещё не дошло» — ровно то,
+       что мы знаем, и ни слова сверх. */
+    const p = .18 + .42*(0.5 + 0.5*Math.sin(t0*1.9));
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(255,255,255,'+(.55*dim)+')';
+    ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a0+(a1-a0)*p)); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,'+(.95*dim)+')';   // край: докуда дошло
+    ctx.beginPath();
+    ctx.arc(cx,cy,r,rad(a0+(a1-a0)*Math.max(0,p-.07)),rad(a0+(a1-a0)*p));
+    ctx.stroke();
     return;
   }
   if (s === 'broken'){
-    // рвань: не «пусто» и не «полно», а «сломалось» — третья форма
+    /* «Сломалось» рисуется как ОБОРВАННАЯ дуга с поперечной засечкой.
+
+       Сначала здесь была рвань пунктиром — и владелец, увидев её первым,
+       спросил: «почему какие-то пунктиры?». Справедливо: пунктир в
+       интерфейсах значит «черновик», «неактивно», «подсказка» — что
+       угодно, только не аварию. Форма обязана объясняться сама, иначе
+       она не форма, а шифр, к которому нужен ключ.
+
+       Поперечная планка поперёк дороги читается одинаково у всех и без
+       обучения: дальше хода нет. Дуга при этом честно начата — движок
+       пытался подняться, — и честно оборвана. */
+    const bp = a0 + (a1-a0)*.34;
     ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(255,255,255,'+(.5*dim)+')';
-    for (let k=0;k<5;k++){
-      const c0 = a0 + k*(HALF*2/5) + 1.5, c1 = c0 + HALF*2/5 - 5;
-      ctx.beginPath(); ctx.arc(cx,cy,r,rad(c0),rad(c1)); ctx.stroke();
-    }
+    ctx.strokeStyle = 'rgba(255,255,255,'+(.55*dim)+')';
+    ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(bp)); ctx.stroke();
+    const ar = rad(bp), c1 = Math.cos(ar), s1 = Math.sin(ar);
+    ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx + c1*(r-9), cy + s1*(r-9));
+    ctx.lineTo(cx + c1*(r+9), cy + s1*(r+9));
+    ctx.stroke();
+    ctx.lineCap = 'butt';
     return;
   }
-  // готово: заливка ровно на ту долю, которую занимает ресурс органа
+  // ноль — только след; сто — дуга целиком и в полную яркость
+  if (v <= .015) return;
   ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(255,255,255,'+((.30 + v*.55)*dim)+')';
-  ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a0 + (a1-a0)*Math.max(.05,v))); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,'+((.45 + v*.5)*dim)+')';
+  ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a0 + (a1-a0)*v)); ctx.stroke();
 }
 
 function ringLoop(){
@@ -13526,8 +13767,6 @@ function ringLoop(){
     }
 
     const hd = hearData(), sd = selfData();
-    fill.ears  = st.ears  === 'ready' ? rms(hd) : 0;
-    fill.voice = st.voice === 'ready' ? rms(sd) : 0;
 
     /* Спектр на все 360°, а не огрызками между столбиками. Ось частот
        разложена симметрично относительно вертикали: так у круга нет шва,
@@ -13535,25 +13774,18 @@ function ringLoop(){
        как одно тело, а не как лента, свёрнутая в кольцо.
        Наружу — что слышит, внутрь — что говорит. Разные направления,
        потому что это разные вещи: одно приходит извне, другое уходит. */
-    const NB = 260;
+    toBands(hd, bOut); toBands(sd, bInn);
+    const NB = NBAND*2;
     ctx.lineCap = 'round';
     const lw = Math.max(1.1, Math.min(RW,RH)*.0040);
     for (let i=0;i<NB;i++){
       const p = i/NB;
-      const f = p < .5 ? p*2 : (1-p)*2;        // ось частот туда и обратно
+      // ось частот разложена симметрично: от низов сверху к верхам внизу
+      // и обратно — у круга нет шва, в котором верх стыкуется с низом
+      const k = i < NBAND ? i : NB-1-i;
       const ang = rad(p*360 - 90);
       const cs = Math.cos(ang), sn = Math.sin(ang);
-      /* Ось частот ЛОГАРИФМИЧЕСКАЯ. На линейной вся звуковая энергия
-         сидит в первых бинах, и «эквалайзер на 360°» превращается в
-         пучок палок сверху и мёртвый круг вокруг. Ухо слышит частоту
-         логарифмом — октава это удвоение, — поэтому и рисуем логарифмом:
-         тогда голос занимает половину круга, а не одну восьмую. */
-      const bin = a => {
-        if (!a) return 0;
-        const lo = 2, hi = Math.max(lo+1, Math.floor(a.length*.55));
-        return a[Math.min(a.length-1, Math.round(lo*Math.pow(hi/lo, f)))]/255;
-      };
-      const out = bin(hd), inn = bin(sd);
+      const out = bOut[k], inn = bInn[k];
       if (out > .02){
         const len = 3 + out*L;
         const x0=cx+cs*(R+2), y0=cy+sn*(R+2);
