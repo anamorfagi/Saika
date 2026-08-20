@@ -35,7 +35,7 @@ GPU-torch из main_env.pth. Модель на 8B тогда лезет груз
   python setup/install_dreampc.py --remove   удалить окружение целиком
 
 Вызывается и вручную человеком, и автоматически сервером в фоне (без окна,
-см. server/llm/dreampc.py) — поэтому НИЧЕГО не должно ждать ввода с
+см. anamorf/llm/dreampc.py) — поэтому НИЧЕГО не должно ждать ввода с
 клавиатуры (pause есть только в install_dreampc.bat, не здесь).
 """
 import os

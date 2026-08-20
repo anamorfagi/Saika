@@ -176,7 +176,7 @@ def has_problems(report):
 
 
 def ask_llm(ctx):
-    from server.llm import manager as llm
+    from anamorf.llm import manager as llm
     if not any(llm.backend_status().values()):
         _log("[X] Ни один LLM-бэкенд не отвечает — ИИ-Беймаксу не с кем думать.")
         return None
@@ -186,7 +186,7 @@ def ask_llm(ctx):
     # править конфиг, и мелкая модель тут ЛОМАЕТ (живой случай 2026-07-29:
     # решила «для общего исправления» переустановить torch — колесо без CUDA
     # снесло бы видеокарту всему проекту). Ключи doctor.backend/doctor.model.
-    from server.config import CFG
+    from anamorf.config import CFG
     d_backend = CFG.get("doctor.backend", "") or ""
     d_model = CFG.get("doctor.model", "") or ""
     msgs = [{"role": "system", "content": SYSTEM},
@@ -283,7 +283,7 @@ def execute(act) -> str:
     elif a == "set_config":
         key = str(act.get("key", ""))
         if key.startswith(ALLOWED_CFG_PREFIX):
-            from server.config import CFG
+            from anamorf.config import CFG
             _log(f"[fix] config {key} = {act.get('value')}")
             CFG.set(key, act.get("value"))
         else:

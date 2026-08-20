@@ -18,10 +18,10 @@ import numpy as np
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 
-from server.config import CFG          # noqa: E402
-from server.voiceprint.encoder import Encoder, cosine   # noqa: E402
-from server.voiceprint.projector import Projector       # noqa: E402
-from server.voiceprint.registry import Registry         # noqa: E402
+from anamorf.config import CFG          # noqa: E402
+from anamorf.voiceprint.encoder import Encoder, cosine   # noqa: E402
+from anamorf.voiceprint.projector import Projector       # noqa: E402
+from anamorf.voiceprint.registry import Registry         # noqa: E402
 
 SR = 16000
 
@@ -178,7 +178,7 @@ def _noise_test():
     Это была живая жалоба: клац мышкой — и на карте появляется точка с
     подписью «незнакомый голос». Порог громкости про строение звука ничего
     не знает, поэтому проверяем именно его — отдельно от всего остального."""
-    from server.voiceprint.encoder import speechiness
+    from anamorf.voiceprint.encoder import speechiness
     print("\nотсев не-голоса (порог 0.5):")
     rng = np.random.default_rng(5)
     n = int(SR * 1.2)
@@ -222,7 +222,7 @@ def _pipeline_test():
     """Прогон ЖИВОГО пути: feed() -> очередь -> рабочий поток -> события.
     Проверяет то, чего не видно в поштучных вызовах: VAD, скользящее окно,
     запись эталона, отсутствие блокировок."""
-    from server import voiceprint as vp
+    from anamorf import voiceprint as vp
     print("\nживой путь (feed -> поток -> события):")
     got = []
     vp.S.reg.speakers.clear()
@@ -272,7 +272,7 @@ def _pipeline_test():
 
 
 def _thr(dim):
-    from server.voiceprint.registry import _floor as _default_threshold
+    from anamorf.voiceprint.registry import _floor as _default_threshold
     return _default_threshold(dim)
 
 

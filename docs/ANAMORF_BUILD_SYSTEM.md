@@ -5,7 +5,7 @@
 и ответ про pip.
 
 Решения этого захода: движок запечатанной модели — **llama.cpp**; переименование —
-**полное** (`server/` → `anamorf/`); компилятор выдаёт **папку + установщик**;
+**полное** (`anamorf/` → `anamorf/`); компилятор выдаёт **папку + установщик**;
 обучение — **затемнение с подсветкой поля**. ANAMORF — система, Сайка — персона.
 
 ---
@@ -258,9 +258,9 @@ if features.on("telegram"):
 
 1. `git mv server anamorf`, `git mv workers anamorf_workers` (или оставить `workers`).
 2. Автозамена по всем `.py .bat .md .html .json`:
-   `from server` → `from anamorf`, `import server` → `import anamorf`,
+   `from server` → `from anamorf`, `import anamorf` → `import anamorf`,
    `server.` → `anamorf.` (осторожно: `server.host` в конфиге — это другое,
-   см. п. 4), `python -m server.main` → `python -m anamorf.main`.
+   см. п. 4), `python -m anamorf.main` → `python -m anamorf.main`.
 3. Ключи конфига `server.host/port/token` → `app.host/port/token`
    с миграцией в `config.py`: читаем новый ключ, если нет — старый, и пишем новый.
 4. `/api` **не трогаем** — это внутренний адрес между сервером и его же

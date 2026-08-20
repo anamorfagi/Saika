@@ -15,8 +15,8 @@ import time
 
 def run():
     rows = []
-    from server import triage
-    from server.config import CFG
+    from anamorf import triage
+    from anamorf.config import CFG
 
     steps = []
     down = dict(triage.DOWN)

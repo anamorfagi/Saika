@@ -189,7 +189,7 @@ def _pull_default_model():
 
 
 def _voice_ready():
-    from server.config import CFG, resolve
+    from anamorf.config import CFG, resolve
     wav = resolve(CFG.get("tts.voice_ref_wav"))
     text = CFG.get("tts.voice_ref_text", "")
     if wav.exists() and text:
@@ -216,7 +216,7 @@ def _cuda_ok():
 def _stt_engine_valid():
     """Выбранный STT-движок хотя бы импортируется? Иначе переключаем.
     Внешние движки (со своим venv, напр. voxtral) валидны, если venv на месте."""
-    from server.config import CFG
+    from anamorf.config import CFG
     order = CFG.get("stt.fallback_order", [])
     mods = {"faster_whisper": "faster_whisper", "gigaam": "gigaam",
             "vosk": "vosk", "whispercpp": "pywhispercpp", "tone": "tone",
@@ -298,7 +298,7 @@ def _fix_editable():
         ok, _ = _sub_import("qwen_tts")
         if not ok:
             raise ImportError("qwen_tts всё ещё не импортируется")
-        from server.config import CFG
+        from anamorf.config import CFG
         if CFG.get("tts.engine") != "qwen3":
             CFG.set("tts.engine", "qwen3")
     except Exception:
@@ -307,10 +307,10 @@ def _fix_editable():
 
 def _best_backup_tts():
     """Запасной голос — лучший ПО РЕЙТИНГУ этого ПК, а не хардкод silero."""
-    from server.config import CFG
+    from anamorf.config import CFG
     order = CFG.get("tts.fallback_order", ["silero", "edge"])
     try:
-        from server import ratings
+        from anamorf import ratings
         best = ratings.best_tts(order, exclude=("qwen3",),
                                 favorites=CFG.get("tts.favorites", []))
     except Exception:
@@ -322,7 +322,7 @@ def _qwen_tts_ok():
     ok, detail = _sub_import("qwen_tts")
     if ok:
         return True, "пакет установлен"
-    from server.config import CFG
+    from anamorf.config import CFG
     best = _best_backup_tts()
     CFG.set("tts.engine", best)
     return False, (f"qwen_tts сломан ({detail}) -> TTS переключён на {best} "
@@ -338,12 +338,12 @@ def _from_black_box(fix) -> bool:
     пакет, — а падал не пакет. Нативный обвал не оставляет ни исключения,
     ни строчки в логе, и по «последней записи» доктор чинил не то.
 
-    Теперь опасные участки помечают себя на диске (server/stage.py).
+    Теперь опасные участки помечают себя на диске (anamorf/stage.py).
     Метка пережила падение — значит умерли ровно там, и это ФАКТ, а не
     догадка по хвосту лога. Отсюда и лечение: точечное и по адресу."""
     try:
         sys.path.insert(0, str(ROOT))
-        from server import stage
+        from anamorf import stage
         where = stage.crashed_at()
     except Exception:
         return False
@@ -355,7 +355,7 @@ def _from_black_box(fix) -> bool:
     # должен видеть, что до этого система поднималась нормально сотни раз:
     # тогда он чинит ПОСЛЕДНЕЕ изменение, а не «всё вообще».
     try:
-        from server import repairs
+        from anamorf import repairs
         repairs.note_crash()
         hist = repairs.summary()
         if hist["healthy"]:
@@ -369,7 +369,7 @@ def _from_black_box(fix) -> bool:
         pass
     if not fix:
         return True
-    from server.config import CFG
+    from anamorf.config import CFG
     if "vosk" in name.lower() or "черновик" in name.lower():
         CFG.set("stt.draft", False)
         print("[fix] Это черновик распознавания (Vosk/Kaldi) — он роняет "
@@ -377,7 +377,7 @@ def _from_black_box(fix) -> bool:
               "движок работает как работал, пропадёт только серый текст "
               "по ходу фразы. Вернуть: stt.draft = true.")
         try:
-            from server import repairs as _rp
+            from anamorf import repairs as _rp
             _rp.note_fix("обвал в черновике Vosk", "выключил stt.draft")
         except Exception:
             pass
@@ -418,7 +418,7 @@ def _recover_from_crash(fix):
                        and "модель готова" not in joined
                        and "загружен (attn" not in joined)
     if crashed_on_qwen:
-        from server.config import CFG
+        from anamorf.config import CFG
         # временно уводим на лучший ПО РЕЙТИНГУ запасной голос, чтобы
         # разорвать петлю крашей и поднять сервер. qwen3 НЕ отключаем
         # насовсем (это её родной клон-голос) — как освободится VRAM,

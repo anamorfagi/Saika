@@ -13,7 +13,7 @@ def run():
         import numpy as np
     except Exception as e:
         return [("свечение", None, f"нет numpy ({e})")]
-    from server import highlight as hl
+    from anamorf import highlight as hl
 
     w, h, t = 400, 300, 16
     bits = hl._contour_bits(w, h, t, (255, 154, 60), 1.0, 8)

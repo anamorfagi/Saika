@@ -14,7 +14,7 @@
 
 ПОРЯДОК РАБОТЫ СО СТЕНДОМ — RULES п.5, и он тут не формальность. Тест на
 разворот ОБЯЗАН краснеть на старом коде. Проверить это можно за минуту:
-верни в server/pc_control.py в _force_front безусловный
+верни в anamorf/pc_control.py в _force_front безусловный
     user32.ShowWindow(hwnd, 9)
 вместо
     if user32.IsIconic(hwnd): user32.ShowWindow(hwnd, 9)
@@ -35,7 +35,7 @@ import time
 sys.path.insert(0, __import__("os").path.dirname(
     __import__("os").path.dirname(__import__("os").path.abspath(__file__))))
 
-from server import pc_control as pc            # noqa: E402
+from anamorf import pc_control as pc            # noqa: E402
 
 OK, FAIL = "  ОК   ", "  ПРОВАЛ"
 _score = {"ok": 0, "fail": 0}
@@ -111,7 +111,7 @@ def snapshot():
 def phrases():
     """Живые фразы из лога 2026-08-18 — те самые, на которых она встала."""
     print("\n=== РАЗБОР ФРАЗ РЕФЛЕКСОМ ===")
-    from server import reflex
+    from anamorf import reflex
     cases = [
         ("Сделай проводник слева на экране.",
          "window_place", {"match": "проводник", "position": "left"}),

@@ -5,7 +5,7 @@
 bitsandbytes, и мешать её с основным venv (Qwen3-TTS/faster-whisper и т.д.)
 рискованно (см. docstring install_train.py).
 
-Запускается сервером по требованию (server/llm/train_manager.py), вручную:
+Запускается сервером по требованию (anamorf/llm/train_manager.py), вручную:
   .venv_train\\Scripts\\python.exe workers\\train_worker.py --port 8769
 
 Протокол (обычный HTTP, не SSE — обучение идёт долго, UI просто поллит

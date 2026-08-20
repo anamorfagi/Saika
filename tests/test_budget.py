@@ -11,7 +11,7 @@ TOOLS = 9712        # столько весили схемы инструмен�
 
 
 def _hist(model, cap_cfg=9000, cap_max=40000):
-    from server.llm import brains
+    from anamorf.llm import brains
     win = brains.window_chars_of(model)
     cap = cap_cfg
     if win:
@@ -21,7 +21,7 @@ def _hist(model, cap_cfg=9000, cap_max=40000):
 
 def run():
     rows = []
-    from server.llm import brains
+    from anamorf.llm import brains
 
     win, cap, hist = _hist("google/gemma-4-e4b")
     rows.append(("локальная модель в таблице окон не значится",

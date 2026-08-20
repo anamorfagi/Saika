@@ -122,7 +122,7 @@ has actually played»*.
 
 ## 3. Серверная часть: что добавить в Сайку
 
-Новый модуль **`server/face/`** рядом с `tts/`:
+Новый модуль **`anamorf/face/`** рядом с `tts/`:
 
 | Файл | Роль |
 |---|---|
@@ -306,7 +306,7 @@ Convai шлёт метку + силу 1..3, считает `score = clamp(scale/
 morphs… read scores with Get Emotion Score and apply them to morph targets»*.
 Веса градаций: `LessIntense = 0.25`, `Basic = 0.60`, `MoreIntense = 1.00`.
 
-У нас источник уже есть — `server/tone.py` с метками тона реплики. Отдаём
+У нас источник уже есть — `anamorf/tone.py` с метками тона реплики. Отдаём
 скаляры, раскладываем в UE:
 
 | Эмоция | Морфы Августы |
@@ -458,7 +458,7 @@ dot-product среди помеченных объектов, побеждает
 4. Импорт в UE 5.8, проверка морфов в редакторе.
 
 **Этап B — липсинк end-to-end**
-5. `server/face/` — генерация кадров визем из TTS.
+5. `anamorf/face/` — генерация кадров визем из TTS.
 6. Расширение `/ws` сообщениями `face_seq` / `emotion` / `lookat`.
 7. `USaikaFaceSyncComponent` + `USaikaAudioStreamer` в UE.
 8. `FAnimNode_SaikaFaceSync` в отдельном UncookedOnly-модуле.

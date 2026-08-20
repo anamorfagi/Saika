@@ -12,7 +12,7 @@
 
 def run():
     rows = []
-    from server import reflex, services as sv
+    from anamorf import reflex, services as sv
 
     # 1. «Включи музыку» — это привычка, а не площадка и не папка.
     #    До правки уходило в go_to и открывало пустую системную папку

@@ -1,4 +1,4 @@
-"""Переименование пакета server/ в anamorf/ — одним заходом.
+"""Переименование пакета anamorf/ в anamorf/ — одним заходом.
 
 Система называется ANAMORF, Сайка — имя персоны внутри неё. Пакет должен
 называться так же, как продукт: иначе через полгода никто не вспомнит, что
@@ -57,23 +57,23 @@ SKIP_LINE = (
 # Каждая замена — с объяснением, что именно она ловит.
 RULES = [
     (re.compile(r"\bfrom server import\b"),      "from anamorf import",
-     "from server import X"),
-    (re.compile(r"\bfrom server\."),             "from anamorf.",
-     "from server.X import Y"),
-    (re.compile(r"\bimport server\.(\w)"),       r"import anamorf.\1",
-     "import server.X"),
-    (re.compile(r"\bimport server\b(?!\.)"),     "import anamorf",
-     "import server"),
+     "from anamorf import X"),
+    (re.compile(r"\bfrom anamorf\."),             "from anamorf.",
+     "from anamorf.X import Y"),
+    (re.compile(r"\bimport anamorf\.(\w)"),       r"import anamorf.\1",
+     "import anamorf.X"),
+    (re.compile(r"\bimport anamorf\b(?!\.)"),     "import anamorf",
+     "import anamorf"),
     (re.compile(r"\bserver\.main\b"),            "anamorf.main",
-     "python -m server.main"),
-    (re.compile(r"(?<![\w./\\-])server/"),       "anamorf/",
-     "путь server/..."),
-    (re.compile(r"(?<![\w./-])server\\\\"),      r"anamorf\\\\",
-     "путь server\\... в строке Python"),
-    (re.compile(r"(?<![\w./-])server\\(?![\\])"), r"anamorf\\",
-     "путь server\\... в bat"),
-    (re.compile(r'ROOT / "server"'),             'ROOT / "anamorf"',
-     'ROOT / "server"'),
+     "python -m anamorf.main"),
+    (re.compile(r"(?<![\w./\\-])anamorf/"),       "anamorf/",
+     "путь anamorf/..."),
+    (re.compile(r"(?<![\w./-])anamorf\\\\"),      r"anamorf\\\\",
+     "путь anamorf\\... в строке Python"),
+    (re.compile(r"(?<![\w./-])anamorf\\(?![\\])"), r"anamorf\\",
+     "путь anamorf\\... в bat"),
+    (re.compile(r'ROOT / "anamorf"'),             'ROOT / "anamorf"',
+     'ROOT / "anamorf"'),
 ]
 
 
@@ -119,7 +119,7 @@ def process(path: Path):
 
 def main():
     print("=" * 72)
-    print("ПЕРЕИМЕНОВАНИЕ server/ → anamorf/   " +
+    print("ПЕРЕИМЕНОВАНИЕ anamorf/ → anamorf/   " +
           ("(ПРИМЕНЯЮ)" if APPLY else "(только показываю, ничего не меняю)"))
     print("=" * 72)
 
@@ -165,11 +165,11 @@ def main():
         print("   git mv не смог:", r.stderr.strip())
         print("   Ничего не изменено.")
         return 1
-    print("   server/ → anamorf/")
+    print("   anamorf/ → anamorf/")
 
     print("2. Правлю тексты…")
     for path, new, edits in planned:
-        # файлы бывшего server/ уже переехали — берём их по новому пути
+        # файлы бывшего anamorf/ уже переехали — берём их по новому пути
         target = path
         if not target.exists():
             rel = path.relative_to(ROOT)
@@ -192,9 +192,10 @@ def main():
     print("   ошибок синтаксиса:", bad or "нет")
 
     print("4. Ищу забытые упоминания…")
-    left = subprocess.run(
-        ["git", "grep", "-n", r"\(from\|import\) server\b"], cwd=ROOT,
-        capture_output=True, text=True).stdout.strip()
+    left = (subprocess.run(
+        ["git", "grep", "-n", r"\(from\|import\) anamorf\b"], cwd=ROOT,
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace").stdout or "").strip()
     print("   " + (left or "не осталось"))
 
     print("\nГотово. Дальше:")

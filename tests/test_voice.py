@@ -11,7 +11,7 @@ def run():
         import numpy as np
     except Exception as e:
         return [("порог голоса", None, f"нет numpy ({e})")]
-    from server.voiceprint import passport
+    from anamorf.voiceprint import passport
 
     rng = np.random.default_rng(3)
 

@@ -16,8 +16,8 @@
 
 def run():
     rows = []
-    from server.llm import one_local as ol
-    from server.config import CFG
+    from anamorf.llm import one_local as ol
+    from anamorf.config import CFG
 
     real = ol._alive
     was = CFG.get("llm.two_local_ok", False)

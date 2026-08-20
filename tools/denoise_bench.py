@@ -37,8 +37,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from server.config import CFG                       # noqa: E402
-from server import denoise as D                     # noqa: E402
+from anamorf.config import CFG                       # noqa: E402
+from anamorf import denoise as D                     # noqa: E402
 
 SR = 16000
 
@@ -287,7 +287,7 @@ def _stt_check(mix, rows):
     Всё остальное — косвенные признаки; текст либо распознался, либо нет."""
     print("\nПрогон через слух Сайки (это медленно — грузится движок):")
     try:
-        from server.stt.manager import STTManager
+        from anamorf.stt.manager import STTManager
     except Exception as e:
         print(f"  не вышло: {e}")
         return

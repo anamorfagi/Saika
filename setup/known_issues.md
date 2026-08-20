@@ -33,12 +33,12 @@
 - **«Library cublas64_12.dll is not found» у faster-whisper**
   -> CTranslate2 собран под CUDA 12, torch cu130 несёт только 13-е DLL.
   Лечение: `pip install nvidia-cublas-cu12` (шаг cuda_dlls установщика);
-  server/config.py подключает только cublas и nvrtc.
+  anamorf/config.py подключает только cublas и nvrtc.
 
 - **CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH при синтезе TTS**
   -> в поиск DLL попали два разных cuDNN (torch\lib и nvidia-cudnn-cu12).
   Лечение: НЕ добавлять nvidia/cudnn/bin в PATH/add_dll_directory — уже
-  учтено в server/config.py. Не «чинить» установкой nvidia-cudnn-cu12 заново.
+  учтено в anamorf/config.py. Не «чинить» установкой nvidia-cudnn-cu12 заново.
 
 - **CUDA недоступна на новом ПК** -> нет NVIDIA GPU или драйвера. Всё
   работает на CPU, просто медленно. Пакетами не лечится.
@@ -46,7 +46,7 @@
 ## Сеть / HuggingFace
 
 - **getaddrinfo failed / NameResolutionError на huggingface.co**
-  -> DNS/блокировка. Лечение уже в server/config.py: авто-зеркало
+  -> DNS/блокировка. Лечение уже в anamorf/config.py: авто-зеркало
   hf-mirror.com или офлайн-режим. Не крутить ретраи, не переустанавливать
   пакеты. Если модель уже в кэше models/hf — она грузится локально.
 
@@ -71,7 +71,7 @@
 ## Инструменты (HandsPC) на LM Studio
 
 - **Сайка пишет в чат текст вида `<|tool_call|>call:web_search{...}` вместо
-  реального поиска** -> до 2026-07-15 менеджер (server/llm/manager.py)
+  реального поиска** -> до 2026-07-15 менеджер (anamorf/llm/manager.py)
   передавал схемы инструментов модели ТОЛЬКО на бэкенде Ollama; на LM Studio
   список tools всегда был пустым, хотя системный промпт всё равно велел
   модели звать инструменты — модель просто угадывала синтаксис текстом,
@@ -128,7 +128,7 @@
   «уже квантованный» репозиторий — для bitsandbytes таких обычно нет
   (это не GGUF).
 - **DreamPC не отвечает в основном чате** — так и задумано: это отдельная
-  панель (кнопка 🧪), не подключена к server/llm/manager.py. У диффузионных
+  панель (кнопка 🧪), не подключена к anamorf/llm/manager.py. У диффузионных
   моделей нет tool-calling и обычного стриминга токен-за-токеном.
 - **«окружения ещё нет — открыл окно установки»** — нормально при первом
   клике на 🧪, ставится .venv_dreampc (setup/install_dreampc.py). Кликнуть
@@ -145,7 +145,7 @@
   другим пакетом по той же причине — так же добавить его в этот список.
 - **Правка кода не подействовала** — dreampc_worker.py висит отдельным
   процессом (порт 8768), сервер не перезапускает его, пока он отвечает на
-  /health. С 2026-07-15 это чинится само: server/llm/dreampc.kill_stale()
+  /health. С 2026-07-15 это чинится само: anamorf/llm/dreampc.kill_stale()
   убивает висящий воркер на этом порту при каждом старте main.py — обычный
   перезапуск start.bat теперь достаточен, ручной taskkill не нужен.
 - **ОЗУ обваливается в ноль, диск C: 100%, а модель «ничего не делает»**
@@ -174,7 +174,7 @@
   str(exception) не содержит имени класса (ImportError/
   ModuleNotFoundError), только текст сообщения. Ловили на
   "cannot import name 'is_offline_mode' from 'huggingface_hub'" — список
-  ключевых слов (server/llm/dreampc.py, ENV_ERROR_SIGNS) не совпадал,
+  ключевых слов (anamorf/llm/dreampc.py, ENV_ERROR_SIGNS) не совпадал,
   автопочинка молча пропускала реальную проблему окружения. Починено:
   матчим по "cannot import name"/"cannot import" тоже. Если словишь
   НОВУЮ ошибку, которую автопочинка не подхватывает — смотри на
@@ -193,7 +193,7 @@
 ## Git-синк (кнопка ⬆ в углу UI)
 
 - Кнопка делает `git add -A && git commit && git push` в корне проекта
-  (server/git_sync.py) поверх уже настроенных на этой машине учётных данных
+  (anamorf/git_sync.py) поверх уже настроенных на этой машине учётных данных
   git (credential manager/SSH) — сама ничего не авторизует. Если push
   отклонён (например, на GitHub есть коммиты, которых нет локально) —
   кнопка просто покажет ошибку git как есть, авто-pull/rebase не делает.
@@ -218,7 +218,7 @@
 
 - HandsPC — отдельная программа (C:\AI\HandsPC, своё окно), не дочерний
   процесс. С 2026-07-15 main.py сам убивает процесс на порту
-  tools.handspc_url при закрытии окна Сайки (server/proc_utils.py:
+  tools.handspc_url при закрытии окна Сайки (anamorf/proc_utils.py:
   register_console_close_handler — ловит крестик через
   kernel32.SetConsoleCtrlHandler, т.к. обычный atexit/signal этого не
   умеет на Windows) — работает и на Ctrl+C, и на закрытие крестиком.
@@ -246,5 +246,5 @@ Transcribing ...` — и всё, процесс Сайки исчезает бе
 Лечение сейчас: whispercpp убран из stt.fallback_order на этой машине —
 автопуск и фолбэк его не трогают; вручную из списка выбрать всё ещё можно
 (на свой страх). Правильное лечение (когда дойдут руки): вынести pywhispercpp
-в отдельный воркер-процесс по образцу Voxtral (server/stt/external.py) —
+в отдельный воркер-процесс по образцу Voxtral (anamorf/stt/external.py) —
 тогда падение будет стоить одной реплики, а не всего сервера.

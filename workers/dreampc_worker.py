@@ -10,7 +10,7 @@
 + accelerate + bitsandbytes, torch/fastapi/uvicorn — из основного .venv через
 main_env.pth (как у Voxtral).
 
-Запускается сервером по требованию (server/llm/dreampc.py), вручную:
+Запускается сервером по требованию (anamorf/llm/dreampc.py), вручную:
   .venv_dreampc\\Scripts\\python.exe workers\\dreampc_worker.py --port 8768
 
 Протокол: GET /health; POST /generate {"prompt": "...", "steps"?, "gen_length"?,
@@ -52,7 +52,7 @@ sys.modules["torchaudio"] = None
 sys.modules["torchvision"] = None
 
 def _configure_hf_endpoint():
-    """Авто-выбор зеркала/офлайна, как в server/config.py — но перевызывается
+    """Авто-выбор зеркала/офлайна, как в anamorf/config.py — но перевызывается
     перед КАЖДОЙ попыткой загрузки (не один раз при старте процесса), чтобы
     ожившая сеть/включённый VPN подхватывались без перезапуска воркера.
     ВАЖНО: должно отработать до импорта huggingface_hub/transformers."""

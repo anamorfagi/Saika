@@ -5,7 +5,7 @@
 в 4 битах (nf4, ~5.5 ГБ VRAM), стриминг — TextIteratorStreamer.
 
 Протокол — OpenAI-совместимый, ровно тот диалект, который уже умеет
-server/llm/manager.py (_stream_openai): менеджеру всё равно, LM Studio на
+anamorf/llm/manager.py (_stream_openai): менеджеру всё равно, LM Studio на
 том конце или мы.
   GET  /health                  {"ok":true,"model_loaded":bool,"error":str|null}
   GET  /v1/models               {"data":[{"id": "<model>"}]}
@@ -20,7 +20,7 @@ server/llm/manager.py (_stream_openai): менеджеру всё равно, LM
 accelerate + bitsandbytes, torch/fastapi/uvicorn — из основного .venv через
 main_env.pth (паттерн Voxtral/DreamPC).
 
-Запускается сервером по требованию (server/llm/locallm.py), вручную:
+Запускается сервером по требованию (anamorf/llm/locallm.py), вручную:
   .venv_locallm\\Scripts\\python.exe workers\\locallm_worker.py --port 8770
 """
 import argparse

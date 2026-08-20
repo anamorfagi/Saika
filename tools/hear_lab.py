@@ -59,9 +59,9 @@ def load_audio(src: str):
 
 def segment(pcm: np.ndarray, vad_engine: str):
     """Нарезка тем же VadSegmenter, кусками по 100мс, как в бою."""
-    from server.config import CFG
-    from server.stt.manager import VadSegmenter
-    from server.stt import neuro_vad
+    from anamorf.config import CFG
+    from anamorf.stt.manager import VadSegmenter
+    from anamorf.stt import neuro_vad
     CFG.set("stt.vad.engine", vad_engine)
     if vad_engine == "silero":
         neuro_vad.warm()
@@ -103,8 +103,8 @@ def main():
     pcm = load_audio(args.src)
     print(f"Звук: {len(pcm)/16000:.1f}с")
 
-    from server.stt.engines import ALL_ENGINES
-    from server.stt import turns
+    from anamorf.stt.engines import ALL_ENGINES
+    from anamorf.stt import turns
     engines = {}
     for name in args.engines.split(","):
         name = name.strip()

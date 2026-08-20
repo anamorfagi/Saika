@@ -38,14 +38,14 @@ CFG_PATH = ROOT / "config.json"
 
 
 def _load_slots():
-    """server/desk_slots.py — общая с сервером память окна для каждой модели.
+    """anamorf/desk_slots.py — общая с сервером память окна для каждой модели.
 
-    Загружаем ФАЙЛОМ, а не «from server import ...»: пакет server тянет за
+    Загружаем ФАЙЛОМ, а не «from anamorf import ...»: пакет server тянет за
     собой торч, голоса и полминуты запуска, а окну нужны оттуда четыре
     чистых функции. Не нашёлся — работаем как раньше, по общим полям."""
     try:
         spec = importlib.util.spec_from_file_location(
-            "saika_desk_slots", ROOT / "server" / "desk_slots.py")
+            "saika_desk_slots", ROOT / "anamorf" / "desk_slots.py")
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
         return m

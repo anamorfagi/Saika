@@ -23,7 +23,7 @@ Apache 2.0) — лучший русский в классе 8B (Ru Arena Hard 83
                                               воркера)
   python setup/install_locallm.py --remove    удалить окружение целиком
 
-Вызывается и вручную, и автоматически сервером в фоне (server/llm/locallm.py)
+Вызывается и вручную, и автоматически сервером в фоне (anamorf/llm/locallm.py)
 — НИЧЕГО не должно ждать ввода с клавиатуры.
 """
 import os
@@ -217,7 +217,7 @@ def main():
 [OK] Готово, CUDA на месте. Дальше:
   1) в config.json поставь "llm": {{"backend": "locallm", ...}} — или выбери
      бэкенд в UI, когда он появится в списке;
-  2) сервер сам поднимет воркер при первом запросе (server/llm/locallm.py);
+  2) сервер сам поднимет воркер при первом запросе (anamorf/llm/locallm.py);
      первая загрузка скачает веса {_model_from_config()} в models/hf.
   Логи: logs/locallm_worker.log. Удалить окружение:
   python setup/install_locallm.py --remove

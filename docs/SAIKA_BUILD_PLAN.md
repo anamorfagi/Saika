@@ -1,7 +1,7 @@
 # Сайка → приложение: разбор и план
 
 Разбор живого кода в `C:\AI\Saika` на 20 августа 2026. Ветка `dev`, 291 файл в git,
-59 161 строка Python в `server/ tools/ workers/ HandsPC/`, `ui/index.html` — 11 789 строк.
+59 161 строка Python в `anamorf/ tools/ workers/ HandsPC/`, `ui/index.html` — 11 789 строк.
 
 ---
 
@@ -23,7 +23,7 @@
 | Откат | отсутствует. Плохой коммит в `dev` = сломанные клиенты |
 | CI | `.github/workflows` нет. `tests/` (13 файлов) никто не гоняет |
 | Секреты | `config.json` **лежит в git** и содержит `server.token`, `owner.name = "Anamorf"`, `messengers.telegram.token`, `messengers.owner_ids`, `tts.voice_ref_text` (транскрипт голоса автора) |
-| Точка входа | `server/main.py` — 9 603 строки, ~160 HTTP-ручек, `run_dialog` 2 046 строк, `ws_endpoint` 2 212 строк |
+| Точка входа | `anamorf/main.py` — 9 603 строки, ~160 HTTP-ручек, `run_dialog` 2 046 строк, `ws_endpoint` 2 212 строк |
 | Обработка ошибок | 276 мест `except Exception: pass` |
 
 Сильные стороны, которые надо сохранить и на которых можно строить продукт:
@@ -87,7 +87,7 @@ LLaDA-MoE, T-one, Voxtral, Qwen3-TTS, GGUF-и). Это не раздаётся.
 ### Удалить совсем — мёртвый код
 
 - `network.py` (154 строки) — **ни одной ссылки во всём репозитории**. Инструмент
-  `net_devices` нигде не зарегистрирован, а `server/MODULES.md` числит модуль живым.
+  `net_devices` нигде не зарегистрирован, а `anamorf/MODULES.md` числит модуль живым.
 - Мёртвая половина `git_sync.py`: `incoming()`, `smart_pull()`, `conflict_files()`,
   `resolve_conflict()`, `finish_merge()`, `abort_merge()` — ~120 строк, не подключены ни к
   одному эндпоинту и ни к одной кнопке UI. Выглядят как решение проблемы конфликтов, но не работают.
@@ -149,7 +149,7 @@ Saika\
   Saika.exe          ← тонкий лаунчер (~1–2 МБ): проверить обновление,
                        починить пути, запустить сервер, открыть окно pywebview
   runtime\           ← Python 3.12 embeddable + site-packages (нынешний .venv)
-  app\               ← код Сайки: server\ ui\ workers\ setup\  ← ЭТО ОБНОВЛЯЕТСЯ
+  app\               ← код Сайки: anamorf\ ui\ workers\ setup\  ← ЭТО ОБНОВЛЯЕТСЯ
   models\            ← модели (не трогаются обновлением)
   data\              ← память, профили голоса, настройки пользователя
   config.user.json   ← настройки пользователя (не трогаются никогда)
@@ -191,7 +191,7 @@ Saika\
 ты: git tag v0.9.5 && git push --tags
      │
 GitHub Actions:
-     ├ pytest tests/ + smoke-import всех модулей server/
+     ├ pytest tests/ + smoke-import всех модулей anamorf/
      ├ собрать app-0.9.5.zip (только продуктовые файлы, без dev-инструментов)
      ├ посчитать sha256, собрать manifest.json, подписать его
      └ опубликовать GitHub Release с тегом v0.9.5
@@ -343,7 +343,7 @@ GitHub Actions:
 пятнадцати шторок, дорожная карта.
 
 **Этап 6 — тесты и распил.**
-CI на push, затем `server/api/` → `server/dialog/` → `server/ws/` по плану из
+CI на push, затем `anamorf/api/` → `anamorf/dialog/` → `anamorf/ws/` по плану из
 `ARCHITECTURE.md`, замена `except Exception: pass` на логирование.
 
 Этапы 1–4 — это то, без чего клиентского билда не существует. 5 и 6 можно вести

@@ -145,7 +145,7 @@ echo [*] Starting Saika... (Ctrl+C to exit)
 :: uzhe otkrytaya vkladka sama perepodklyuchitsya i obnovitsya (po BOOT_ID),
 :: novuyu ne plodim - inache seriya kreshey zasypaet brauzer vkladkami
 if %RESTARTS%==0 (set "SAIKA_AUTO_OPEN=1") else (set "SAIKA_AUTO_OPEN=0")
-"%VPY%" -m server.main
+"%VPY%" -m anamorf.main
 set CODE=%errorlevel%
 if %CODE%==0 goto end
 set /a RESTARTS+=1
@@ -164,5 +164,5 @@ goto run
 :end
 :: gasim to, chto zapustili sami: Ollama i okno s modelyu na stole
 if defined OLLAMA_OURS taskkill /F /IM ollama.exe >nul 2>&1
-"%VPY%" -c "import sys; sys.path.insert(0,'.'); from server import desk_avatar as d; d.kill_all()" >nul 2>&1
+"%VPY%" -c "import sys; sys.path.insert(0,'.'); from anamorf import desk_avatar as d; d.kill_all()" >nul 2>&1
 endlocal

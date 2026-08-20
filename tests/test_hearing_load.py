@@ -6,14 +6,14 @@
 видеокарту, а мы на каждый стомиллисекундный кусок звали PANNs и ECAPA на
 той же видеокарте.
 
-Проверяем правило из server/hear_load.py, а не горячий цикл: живьём это
+Проверяем правило из anamorf/hear_load.py, а не горячий цикл: живьём это
 воспроизводится только пересборкой перегрузки ГПУ.
 """
 
 
 def run():
     rows = []
-    from server.hear_load import Lag
+    from anamorf.hear_load import Lag
 
     q = {"n": 0}
     warm = {"on": False}

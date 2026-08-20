@@ -1037,12 +1037,12 @@ const STAGES = [
   {id:'s10', col:6, lane:0, st:'plan', n:'10', title:'Распил и тесты', when:'дальше', next:['s12'],
    sum:'main.py на 9600 строк разбирается на подсистемы, каждая проверяется на push.',
    items:[
-     {tag:'распил', text:'ШАГ 1: 156 роутов → server/api/ по подсистемам'},
-     {tag:'распил', text:'ШАГ 2: run_dialog (2046 строк) → server/dialog/'},
-     {tag:'распил', text:'ШАГ 3: ws_endpoint (2212 строк) → server/ws/'},
+     {tag:'распил', text:'ШАГ 1: 156 роутов → anamorf/api/ по подсистемам'},
+     {tag:'распил', text:'ШАГ 2: run_dialog (2046 строк) → anamorf/dialog/'},
+     {tag:'распил', text:'ШАГ 3: ws_endpoint (2212 строк) → anamorf/ws/'},
      {tag:'качество', text:'276 мест except Exception: pass — заменить на логирование'},
      {tag:'качество', text:'Тесты и CI: pytest на чистую логику + прогон на каждый push'},
-     {tag:'качество', text:'Развязать кольцевые импорты: server/runtime.py'}
+     {tag:'качество', text:'Развязать кольцевые импорты: anamorf/runtime.py'}
    ]},
   {id:'s11', col:6, lane:1, st:'plan', n:'11', title:'Владелец по голосу', when:'дальше', next:['s12'],
    sum:'Узнавание владельца с любого микрофона и на тихом голосе.',

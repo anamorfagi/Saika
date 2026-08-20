@@ -80,7 +80,7 @@ World-Partition уровнем и включёнными Lumen/Nanite.
 1. `BP_Augusta` — актор с мешем, `SaikaLink` и `SaikaFaceSync`.
 2. Anim BP: взгляд на игрока (голова, шея, грудь; клампы ±35° / ±18°,
    разворот корпусом за порогом 45°), моргание, стойка.
-3. `server/face/` — генерация визем из edge-TTS (`WordBoundary` даёт
+3. `anamorf/face/` — генерация визем из edge-TTS (`WordBoundary` даёт
    тайминги слов), отправка `face_seq` и `face_t` в существующий `/ws`.
 4. Жестикуляция: клипы из `E:\1_Work\C_UE5\GameAnimationSample 5.5`,
    ретаргет на `SKEL_Augusta`, аддитивно поверх стойки на время речи.

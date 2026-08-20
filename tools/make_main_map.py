@@ -1,6 +1,6 @@
 """КАРТА main.py (2026-08-19).
 
-Повод. `server/main.py` — 9 тысяч строк, и человек, открывший проект
+Повод. `anamorf/main.py` — 9 тысяч строк, и человек, открывший проект
 впервые, первым делом упирается именно в него. Распил на модули записан
 в план (PLAN_BUILD.md, ARCHITECTURE.md), но он рискованный и небыстрый, а
 читать надо уже сегодня. Дешёвая замена распилу — навигация: где какой
@@ -93,7 +93,7 @@ def main():
     big = sorted(funcs, key=lambda n: n.end_lineno - n.lineno, reverse=True)[:5]
 
     p = []
-    p.append("# Карта `server/main.py`")
+    p.append("# Карта `anamorf/main.py`")
     p.append("")
     p.append("> Собрано механически: `python tools/make_main_map.py`. "
              "Правь код, а не эту страницу.")

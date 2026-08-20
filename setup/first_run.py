@@ -248,7 +248,7 @@ def s_ollama():
 def s_cuda_dlls():
     """CTranslate2 (faster-whisper) собран под CUDA 12, а torch cu130 несёт
     только DLL 13-й версии — без этих пакетов будет
-    «cublas64_12.dll is not found». server/config.py подключает их bin к PATH."""
+    «cublas64_12.dll is not found». anamorf/config.py подключает их bin к PATH."""
     if os.name != "nt":
         return True
     return pip("install", "nvidia-cublas-cu12", "nvidia-cudnn-cu12")
@@ -265,7 +265,7 @@ def s_voice():
     """mp3 -> wav (24k mono) + автотранскрипт референса для клона голоса.
     Конвертация через ffmpeg — не тянем librosa/numba в критический путь."""
     sys.path.insert(0, str(ROOT))
-    from server.config import CFG, resolve
+    from anamorf.config import CFG, resolve
 
     src = resolve(CFG.get("tts.voice_ref"))
     dst = resolve(CFG.get("tts.voice_ref_wav"))

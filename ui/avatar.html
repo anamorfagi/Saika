@@ -8,7 +8,7 @@ VRM-файла, three-vrm симулирует их сама (vrm.update).
 
 Управление — напрямую от Сайки, никакого MIDI/хоткеев/фильтров ввода:
 - жесты/эмоции: websocket /ws, событие {"type":"avatar_gesture","gesture":x}
-  (шлёт server/avatar.py при КАЖДОМ жесте — tool-call, маркер, тон, фиджет);
+  (шлёт anamorf/avatar.py при КАЖДОМ жесте — tool-call, маркер, тон, фиджет);
 - липсинк + покачивание головы: /api/audio_level (реальный RMS озвучки TTS).
 
 Прозрачность: фон страницы прозрачный (alpha). В OBS добавь Browser-источник

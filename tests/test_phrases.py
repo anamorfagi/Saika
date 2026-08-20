@@ -7,8 +7,8 @@
 
 def run():
     rows = []
-    from server import pc_control as pc
-    from server import ui_hands as uh
+    from anamorf import pc_control as pc
+    from anamorf import ui_hands as uh
 
     # ── номер экрана из фразы (живой провал: «на втором экране включи
     #    Пинтерест» уходило в окно на первом) ─────────────────────────
@@ -80,7 +80,7 @@ def run():
                  f"мимо: {bad}" if bad else f"{len(checks)} имён"))
 
     # ── «включи музыку на ютубе» должен ловить рефлекс, а не модель ──
-    from server import reflex
+    from anamorf import reflex
     # «включи музыку на YouTube» с 20.08 уходит в service_open — площадку
     # разберёт носитель, и откроется тот же YouTube (tests/test_services).
     cases = [("Сайка, включи музыку на YouTube", "service_open"),
@@ -104,8 +104,8 @@ def run():
 def run_windows_and_browser():
     """ЖИВОЙ РАЗНОС 20.08.2026 — три промаха подряд в одном разговоре."""
     rows = []
-    from server import reflex
-    from server.ui_hands import guess_from_phrase
+    from anamorf import reflex
+    from anamorf.ui_hands import guess_from_phrase
 
     # 1. «Перенеси» — это переезд, а не перепланировка. Было: «размещено
     #    по центру экрана 1, занимает 80% ширины и высоты».

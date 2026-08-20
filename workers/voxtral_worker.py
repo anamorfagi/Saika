@@ -1,6 +1,6 @@
 """Воркер Voxtral Mini 4B Realtime (Mistral). Живёт в .venv_voxtral.
 
-Запускается сервером автоматически (server/stt/external.py), вручную:
+Запускается сервером автоматически (anamorf/stt/external.py), вручную:
   .venv_voxtral\\Scripts\\python.exe workers\\voxtral_worker.py --port 8766
 
 Требует в своём окружении transformers>=5.2 и mistral-common[audio]

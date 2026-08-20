@@ -16,8 +16,8 @@ import time
 
 def run():
     rows = []
-    from server import send_gate as sg
-    from server.config import CFG
+    from anamorf import send_gate as sg
+    from anamorf.config import CFG
 
     real = sg._target
     was = CFG.get("hands.confirm_send", True)
