@@ -44,6 +44,7 @@ from server.tts.manager import TTSManager, split_sentences
 from server import hearing
 from server import voiceprint
 from server.denoise import DENOISE, SEGMENT as SEGMENT_DENOISE
+from server import hear_load          # предохранитель реального времени
 from server import hear_bench          # стенд «волна ↔ текст» (2026-08-15)
 from server import misheard            # ремонт написания и метка «шатко»
 from server.draft import DRAFT
@@ -2081,6 +2082,13 @@ def _panic_body():
     # состояние «ничего не выбрано»: иначе первая же фраза/озвучка лениво
     # подгружает модели обратно, и разгрузка выглядит неработающей
     try:
+        # ЗАПИСКА ДЛЯ ДОКТОРА (2026-08-20): что именно мы сейчас глушим.
+        # Без неё после перезапуска слух не возвращался — ступени разгрузки
+        # живут внутри процесса и умирают вместе с ним, а доктор видел
+        # только «движок off» и не знал, был ли это выбор человека.
+        _was = str(CFG.get("stt.engine", "") or "")
+        if _was and _was not in ("", "none", "off"):
+            CFG.set("stt.engine_was", _was)
         stt.set_engine("none")
         # ГЛУШИМ НА СЕАНС, А НЕ В КОНФИГ (2026-07-29). Было
         # CFG.set("tts.enabled", False) — запись на диск, переживающая
@@ -6479,6 +6487,36 @@ async def ws_endpoint(ws: WebSocket):
         стоит миллисекунды: этот поток обязан успевать за реальным временем
         любой ценой, иначе звук придётся ронять. Распознавание живёт в
         соседнем потоке и на этот цикл больше не влияет."""
+        # ЕСЛИ НЕ УСПЕВАЕМ — ЖЕРТВУЕМ АНАЛИЗОМ, А НЕ СЛУХОМ. Правило
+        # целиком, с поводом и разбором живого лога 20.08, живёт в
+        # server/hear_load.py (и проверяется tests/test_hearing_load.py).
+        # Здесь только проводка: чем мерить глубину, чем спрашивать про
+        # прогрев голоса и куда говорить человеку.
+        def _voice_warming() -> bool:
+            try:
+                from server import tts as _t
+                for _e in (getattr(_t, "engines", {}) or {}).values():
+                    fn = getattr(_e, "is_warming", None)
+                    if fn and fn():
+                        return True
+            except Exception:
+                pass
+            return False
+
+        _lag_rule = hear_load.Lag(
+            hear_q.qsize, _voice_warming,
+            limit=int(CFG.get("stt.q_starve", 25)),
+            tell=lambda t: broadcast_event(
+                {"type": "baymax", "mood": "meh", "text": "🩺 " + t}),
+            log=lambda t: log.info("%s", t))
+
+        class _Skip(Exception):
+            """«Этот кусок разбирать не будем» — не ошибка, а решение.
+            Отдельный тип, чтобы не путать с настоящей поломкой в логе."""
+
+        def _behind() -> bool:
+            return _lag_rule.behind()
+
         while not stop_event_all.is_set():
             try:
                 p = hear_q.get(timeout=0.4)
@@ -6505,9 +6543,10 @@ async def ws_endpoint(ws: WebSocket):
                     # комнату. А главное — без ушей некому сказать «сейчас
                     # играет музыка», а это решающая подсказка: под музыку
                     # разводить голоса по высоте тона нельзя (см. ниже).
-                    hearing.feed(p)
-                    if hearing.speech_ok():
-                        voiceprint.feed(p)
+                    if not _behind():
+                        hearing.feed(p)
+                        if hearing.speech_ok():
+                            voiceprint.feed(p)
                     # панель показывает уровень ЖИВОГО канала, а не только
                     # микрофонного: иначе при прослушке системы она врала
                     # «уровень 0, даже на пике тише порога» поверх текста,
@@ -6589,12 +6628,15 @@ async def ws_endpoint(ws: WebSocket):
                         pass
                     continue
                 t0 = time.monotonic()
+                # спрашиваем ОДИН раз на кусок: ниже по ветке этот же
+                # ответ решает судьбу ушей, отпечатка и битбокса
+                _lag = _behind()
                 # ПРЕДОХРАНИТЕЛЬ РЕАЛЬНОГО ВРЕМЕНИ (2026-08-15, панель
                 # владельца: шумодав 46мс + нарезка 41мс на 100мс куска,
                 # очередь слуха 23). Когда конвейер не успевает за звуком,
                 # первым за борт идёт самое дорогое и наименее нужное —
                 # шумодав: лучше слышать сырым, чем слышать вчерашнее.
-                if hear_q.qsize() > 4:
+                if _lag or hear_q.qsize() > 4:
                     HEAR_STAT["den_skip"] = HEAR_STAT.get("den_skip", 0) + 1
                     if HEAR_STAT["den_skip"] % 50 == 1:
                         log.warning("Слух отстаёт (очередь %d) — пропускаю "
@@ -6608,12 +6650,13 @@ async def ws_endpoint(ws: WebSocket):
                 # «чей голос». Без этого порядка клацанье клавиатуры честно
                 # получало эмбеддинг и заводило себе профиль в карте
                 # («Голос 4», 153 срабатывания, 103-400 Гц — живой случай).
-                hearing.feed(p)
-                try:
-                    from server import mic_passport
-                    mic_passport.feed(p)   # паспорт первого сенсора
-                except Exception:
-                    pass
+                if not _lag:
+                    hearing.feed(p)
+                    try:
+                        from server import mic_passport
+                        mic_passport.feed(p)   # паспорт первого сенсора
+                    except Exception:
+                        pass
                 # ═══ «БУДЬ ЗДОРОВ» (2026-08-15, просьба владельца) ═══
                 # Чих — единственное событие, на которое живой сосед по
                 # комнате отзывается сам. Кулдаун минута: серия чихов — один
@@ -6643,6 +6686,8 @@ async def ws_endpoint(ws: WebSocket):
                 # перкуссии по спектру и дрожи огибающей (server/beatbox.py,
                 # стенд сошёлся 8/8). Копейки: numpy на огибающей.
                 try:
+                    if _lag:                       # не успеваем — не до ритма
+                        raise _Skip
                     from server import beatbox as _bb
                     _seq = _bb.feed(p)
                     # КЛАВИАТУРА — НЕ БИТБОКС (2026-08-15, живой скрин:
@@ -6683,6 +6728,8 @@ async def ws_endpoint(ws: WebSocket):
                                 cortex.feel("beat", "ритм: " + _seq[-60:])
                             except Exception:
                                 pass
+                except _Skip:
+                    pass
                 except Exception as e:
                     log.debug("битбокс пропущен: %s", e)
                 # живая лента звуков: заметный НЕ-речевой звук — строкой в
@@ -6706,7 +6753,7 @@ async def ws_endpoint(ws: WebSocket):
                 # клавиатуру, но опаздывает на границах. Нейро-VAD отвечает
                 # «речь ли ЭТОТ кусок» с точностью до 32мс — он и решает.
                 # Нет нейронки — работает старое правило одних ушей.
-                _vp_ok = hearing.speech_ok()
+                _vp_ok = (not _lag) and hearing.speech_ok()
                 if _vp_ok:
                     _np = getattr(stt.vad, "speech_prob", None)
                     if _np is not None:
@@ -8577,9 +8624,16 @@ async def ws_endpoint(ws: WebSocket):
                     except Exception:
                         pass
                     if HEAR_DROP["n"] % 50 == 1:
+                        # ЧТО ИМЕННО НЕ УСПЕВАЕТ — В ТОЙ ЖЕ СТРОКЕ
+                        # (2026-08-20). Раньше здесь было «движок медленнее
+                        # реального времени», и по логу нельзя было понять,
+                        # виноват движок слуха, разбор звуков или чужая
+                        # нагрузка на видеокарту. Теперь видно очередь: она
+                        # полная — значит, тормозит разбор, а не приём.
                         log.warning("Слух не успевает: уронила %d чанков "
-                                    "(движок медленнее реального времени)",
-                                    HEAR_DROP["n"])
+                                    "(очередь %d/%d — разбор медленнее "
+                                    "реального времени)", HEAR_DROP["n"],
+                                    hear_q.qsize(), hear_q.maxsize)
             elif msg.get("text"):
                 data = json.loads(msg["text"])
                 mtype = data.get("type")

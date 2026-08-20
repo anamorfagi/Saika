@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-19T12:59:33",
+  "updated": "2026-08-20T08:45:45",
   "items": [
     {
       "id": "s01",
@@ -819,16 +819,6 @@
     }
   ],
   "log": [
-    {
-      "ts": "2026-08-15T15:22:41",
-      "text": "⚠ llm: переключилась на cloud/mistral-medium-3-5",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:22:48",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
     {
       "ts": "2026-08-15T15:24:06",
       "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
@@ -1818,6 +1808,16 @@
       "ts": "2026-08-19T12:59:33",
       "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-08-20T08:45:45",
+      "text": "⚠ tts.qwen3: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-20T08:45:45",
+      "text": "⚠ tts: автопуск пробует следующий по списку",
+      "kind": "problem"
     }
   ],
   "bugs": {
@@ -1829,9 +1829,9 @@
     },
     "tts.qwen3": {
       "text": "«qwen3» упал с незнакомой мне ошибкой.",
-      "count": 114,
+      "count": 115,
       "resolved": false,
-      "last": "2026-08-19T12:09"
+      "last": "2026-08-20T08:45"
     },
     "tts.edge": {
       "text": "Похоже, что-то с сетью, брат: «edge» не работает — сервис Microsoft (speech.platform.bing.com) недоступен — он неофициальный и режется провайдерами чаще всего. Проверь интернет или VPN.",
@@ -1901,9 +1901,9 @@
     },
     "tts": {
       "text": "qwen3: cannot import name 'AutoConfig' from 'transformers' (C:\\AI\\Saika\\.venv\\Lib\\site-packages\\transformers\\__init__.py)",
-      "count": 68,
+      "count": 69,
       "resolved": false,
-      "last": "2026-08-19T12:09"
+      "last": "2026-08-20T08:45"
     },
     "stt.faster_whisper": {
       "text": "«faster_whisper» упал с незнакомой мне ошибкой.",

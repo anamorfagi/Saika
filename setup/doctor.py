@@ -232,12 +232,35 @@ def _stt_engine_valid():
         except Exception:
             return False
 
-    current = CFG.get("stt.engine")
+    current = str(CFG.get("stt.engine") or "")
+    # «OFF» — ЭТО ВЫБОР, А НЕ ПОЛОМКА (2026-08-20). Раньше доктор пробовал
+    # импортировать модуль с именем «off», не находил его и объявлял в
+    # отчёте «"off" неисправен -> переключил на "faster_whisper"». Две
+    # неправды в одной строке: ничего не сломано, и переключать было не
+    # его дело — слух выключает либо человек, либо аварийная разгрузка.
+    if current in ("", "none", "off"):
+        # Разгрузка, уходя, оставляет записку stt.engine_was: «слух был
+        # такой». Восстановить его ПОСЛЕ перезапуска больше некому —
+        # лестница ступеней живёт только внутри процесса, — и это как раз
+        # работа доктора. Записки нет (выключено давно или руками) —
+        # поднимаем первый рабочий движок, но говорим об этом честно:
+        # человек, увидев в отчёте «вернула слух», поймёт, что произошло,
+        # а «"off" неисправен» не объясняло ничего.
+        was = str(CFG.get("stt.engine_was", "") or "")
+        if was and was not in ("", "none", "off") and usable(was):
+            CFG.set("stt.engine", was)
+            CFG.set("stt.engine_was", "")
+            return True, f"слух был выключен разгрузкой — вернула «{was}»"
+        for name in order:
+            if usable(name):
+                CFG.set("stt.engine", name)
+                return True, f"слух был выключен — включила «{name}»"
+        return False, "слух выключен, а включить нечего: движки не ставятся"
     for name in [current] + [n for n in order if n != current]:
         if usable(name):
             if name != current:
                 CFG.set("stt.engine", name)
-                return True, f"«{current}» неисправен -> переключил на «{name}»"
+                return True, f"«{current}» не запускается -> взяла «{name}»"
             return True, f"активен: {name}"
     return False, "ни один STT-движок не импортируется"
 

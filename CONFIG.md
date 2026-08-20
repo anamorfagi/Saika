@@ -3,7 +3,7 @@
 > Файл СГЕНЕРИРОВАН: `python -m tools.config_map`. Руками не править —
 > перезапишется. Правится код или `config.json`.
 
-Всего ключей: **633**. Из них в коде читается 466, в конфигах лежит 343.
+Всего ключей: **634**. Из них в коде читается 467, в конфигах лежит 343.
 
 Как это работает: `config.local.json` накладывается поверх `config.json` при загрузке, поэтому личные настройки машины переживают `git pull`. Ключа нет нигде — берётся значение по умолчанию прямо из кода, колонка «по умолчанию».
 
@@ -91,7 +91,7 @@
 - `heal.enabled`
 - `heal.interval_sec`
 - `hearing.clap.enabled`
-- …и ещё 210
+- …и ещё 211
 
 ## ⚠ Лежит в конфиге, но код его не читает
 
@@ -502,10 +502,10 @@
 | ключ | сейчас | по умолчанию | где читается |
 |---|---|---|---|
 | `guard.auto_free_engine` | — | `True` | `server/main.py` |
-| `guard.calm_s` | 45 | `45` | `server/triage.py` |
+| `guard.calm_s` | 45 | `45` | `server/triage.py`, `tests/test_triage.py` |
 | `guard.period_s` | — | `5` | `server/guard.py` |
 | `guard.protect` | — | `True` | `server/guard.py` |
-| `guard.step_s` | 12 | `12` | `server/triage.py` |
+| `guard.step_s` | 12 | `12` | `server/triage.py`, `tests/test_triage.py` |
 | `guard.temp_calm` | — | `70` | `server/triage.py` |
 | `guard.temp_crit` | — | `90 / 85 ⚠` | `server/guard.py`, `server/triage.py` |
 | `guard.temp_warn` | — | `83 / 78 ⚠` | `server/guard.py`, `server/triage.py` |
@@ -985,8 +985,8 @@
 | `stt.draft` | true | `True` | `server/draft.py` |
 | `stt.echo_guard` | — | `True` | `server/main.py` |
 | `stt.echo_tail_s` | — | `0.9` | `server/main.py` |
-| `stt.engine` | "off" | `'off' / '' / 'gigaam' ⚠` | `server/main.py`, `server/self_control.py`, `server/stt/manager.py` +2 |
-| `stt.engine_was` | "gigaam" | `''` | `server/triage.py` |
+| `stt.engine` | "gigaam" | `'' / 'off' / 'gigaam' ⚠` | `server/main.py`, `server/self_control.py`, `server/stt/manager.py` +2 |
+| `stt.engine_was` | "gigaam" | `''` | `server/triage.py`, `setup/doctor.py` |
 | `stt.engines.faster_whisper` | — | `{}` | `server/stt/engines.py` |
 | `stt.engines.faster_whisper.compute_type` | "auto" | `—` | — |
 | `stt.engines.faster_whisper.device` | "auto" | `—` | — |
@@ -1021,6 +1021,7 @@
 | `stt.phantom_mech_min` | 0.35 | `0.3` | `server/main.py` |
 | `stt.polish_every_s` | 0.5 | `0.55` | `server/main.py` |
 | `stt.polish_grow_s` | — | `0.2` | `server/main.py` |
+| `stt.q_starve` | — | `25` | `server/main.py` |
 | `stt.repair` | — | `True` | `server/misheard.py` |
 | `stt.repair_fuzzy` | — | `False` | `server/misheard.py` |
 | `stt.rescore.enabled` | true | `True` | `server/stt/rescore.py` |

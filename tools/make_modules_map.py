@@ -22,7 +22,8 @@ OUT = os.path.join(SRC, "MODULES.md")
 
 GROUPS = [
     ("Слух", ["hearing", "stt", "clap_ears", "denoise", "earlog", "draft",
-              "misheard", "hear_bench", "transcript", "unmix", "beatbox",
+              "misheard", "hear_bench", "hear_load", "transcript",
+              "unmix", "beatbox",
               "clap", "mic_passport", "voiceprint", "gender", "turns"]),
     ("Голос", ["tts", "voice", "speak"]),
     ("Зрение", ["vision", "ocr", "screen"]),

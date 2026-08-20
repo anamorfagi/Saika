@@ -151,7 +151,7 @@
     ]
   },
   "stt": {
-    "engine": "off",
+    "engine": "gigaam",
     "language": "ru",
     "sample_rate": 16000,
     "vad": {
