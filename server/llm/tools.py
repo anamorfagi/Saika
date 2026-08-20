@@ -464,6 +464,21 @@ _UIH_SCHEMAS = [
                       "description": "что искать, необязательно"}},
             "required": ["site"]}}},
     {"type": "function", "function": {
+        "name": "service_open",
+        "description": ("«Включи музыку» БЕЗ названия площадки. У каждого "
+                        "человека своё: у одного Яндекс.Музыка в Яндекс."
+                        "Браузере с его аккаунтом, у другого Спотифай "
+                        "программой. Первый раз я спрошу, где это у него, и "
+                        "запомню за ним лично; дальше открываю молча. НЕ "
+                        "угадывай сама и НЕ зови web_open: открыть чужой "
+                        "сервис вместо его собственного — хуже, чем "
+                        "спросить. Площадку назвали («включи музыку на "
+                        "ютубе») — это web_open, а не сюда."),
+        "parameters": {"type": "object", "properties": {
+            "kind": {"type": "string",
+                     "description": "музыка | видео | почта | заметки"}},
+            "required": ["kind"]}}},
+    {"type": "function", "function": {
         "name": "screen_read",
         "description": ("Прочитать АКТИВНОЕ окно: список его кнопок, ссылок "
                         "и полей по именам. Зови ПЕРЕД screen_click — имена "
@@ -2218,6 +2233,26 @@ def _call(name: str, arguments) -> str:
             _json.loads(arguments) if arguments else {})
         a = a or {}
         try:
+            if name == "service_open":
+                from server import services as _srv
+                _kind = (str(a.get("kind", "")).strip().lower()
+                         or _srv.kind_of(LAST_USER.get("text", "")))
+                if not _kind:
+                    return "не поняла, что включить — музыку, почту, заметки?"
+                # ЗА КЕМ ЗАПОМИНАТЬ. У друга за тем же компьютером
+                # «включи музыку» должно открыть ЕГО Спотифай, а не чужую
+                # Яндекс.Музыку, — поэтому привычка живёт при голосе.
+                # Голос не узнан (30-40% времени это норма) — запись общая.
+                _who = ""
+                try:
+                    from server import voiceprint as _vp
+                    _who = str((_vp.who_now() or ("", 0))[0] or "")
+                except Exception:
+                    pass
+                # фразу человека передаём целиком: место могло быть
+                # названо прямо в ней («включи музыку из папки Музыка»)
+                return _srv.open_it(_kind, _who,
+                                    phrase=LAST_USER.get("text", ""))
             if name == "web_open":
                 _site = str(a.get("site", "")).strip()
                 _q = str(a.get("query", "")).strip()

@@ -530,8 +530,14 @@ def site_url(site: str, query: str = "") -> str:
             urllib.parse.quote_plus((q + " " + s).strip()))
 
 
-def web_open(site: str, query: str = "") -> str:
+def web_open(site: str, query: str = "", browser: str = "") -> str:
     """Открыть сайт, сразу с поиском, если есть запрос.
+
+    browser (2026-08-20) — имя процесса браузера, если человек назвал
+    КОНКРЕТНЫЙ: «яндекс музыка в браузере яндекса с моим аккаунтом». Это не
+    придирка к вкусу: аккаунт и подписка живут в том браузере, и тот же
+    адрес в Chrome — чужая пустая страница. Пусто — как раньше, в тот
+    браузер, который у человека уже открыт.
 
     «включи на ютубе музыкальный канал» — это web_open("ютуб",
     "музыкальный канал"): один шаг, страница результатов уже на экране,
@@ -576,7 +582,25 @@ def web_open(site: str, query: str = "") -> str:
     # адрес просто печатается в его окне.
     try:
         from server import pc_control as _pcw
-        if _pcw.browser_windows():
+        _wins = _pcw.browser_windows()
+        if browser and _wins:
+            # назван конкретный браузер — работаем только в нём
+            _mine = [w for w in _wins
+                     if browser in str(w.get("proc", "")).lower()]
+            if _mine:
+                _pcw.note_work(_mine[0])
+                _pcw.window_focus_on(0, browser)
+            else:
+                log.info("web_open: «%s» не открыт — открою в нём заново",
+                         browser)
+                try:
+                    import subprocess
+                    subprocess.Popen([browser + ".exe", url])
+                    return (f"Открыла {url} в «{browser}» — это тот браузер, "
+                            "который ты просил.")
+                except Exception as _be:
+                    log.debug("не подняла %s: %s", browser, _be)
+        if _wins:
             # НОВАЯ ИЛИ ТЕКУЩАЯ — ПО СЛОВАМ ЧЕЛОВЕКА (2026-08-19).
             # По умолчанию новая: затирать страницу, которую он читает,
             # никто не просил. Но если он сказал «в текущей», «в этой
