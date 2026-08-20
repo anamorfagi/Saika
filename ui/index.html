@@ -12557,5 +12557,1282 @@ eqFrame();
   else go();
 })();
 </script>
+
+<style id="zones-graphite">
+/* ═══════════════════════════════════════════════════════════════════════
+   ГЛАВНЫЙ ЭКРАН: ОБЛАСТИ (2026-08-20)
+
+   Рельса режимов уходит. Вместо неё экран целиком разобран на шесть
+   органов — глаза, мозги, голос, руки, слух, образ, — и нажатие в ЛЮБОЙ
+   точке сектора раскрывает набор этого органа.
+
+   Зачем. Рельса решала задачу «где вход в подсистему», но платила за это
+   постоянной колонкой и требованием прицелиться в кнопку 52×48. Сектор —
+   мишень, у которой один край упирается в границу экрана: по Фиттсу
+   промахнуться нельзя в принципе. Прицеливание, самый дорогой налог
+   любого интерфейса, исчезает целиком.
+
+   Слой ничего не переписывает. Все существующие панели, попапы и списки
+   на местах и работают как работали: веер либо КЛИКАЕТ по настоящей
+   кнопке, либо показывает настоящий список барабаном и пересылает клик в
+   настоящую строку. Поэтому здесь нет ни одного своего запроса к API,
+   кроме /api/system для кольца, — и нет второго источника правды.
+
+   Сломается — достаточно вырезать этот <style> и следующий <script>.
+   ═════════════════════════════════════════════════════════════════════ */
+
+html[data-skin="graphite"] #rail{display:none !important}
+/* Полоска эквалайзера внизу больше не нужна: спектр теперь рисует само
+   кольцо, а «замолчать», которое на ней висело, переехало в орган
+   «Голос» — туда, где его и стали бы искать. */
+html[data-skin="graphite"] #eq{display:none !important}
+html[data-skin="graphite"] body.zhome #main{display:none !important}
+/* Нижняя плашка на главном экране лишняя: всё, что на ней было, теперь
+   лежит в своём органе, а поле ввода — это уже разговор, то есть другой
+   экран. Убираем её отсюда, но не из интерфейса: начни печатать — и она
+   вернётся вместе с чатом. */
+/* На главном экране шапка раздевается: всё, что на ней было, лежит в
+   центральном селекторе, а два ряда одних и тех же кнопок — это не выбор,
+   это шум. На остальных экранах она возвращается целиком. */
+html[data-skin="graphite"] body.zhome header button:not(#btn-home),
+html[data-skin="graphite"] body.zhome #problems,
+html[data-skin="graphite"] body.zhome #bar,
+html[data-skin="graphite"] body.zhome #img-preview,
+html[data-skin="graphite"] body.zhome #pdf-preview{display:none !important}
+html[data-skin="graphite"] body.zhome #zstage{display:block}
+
+#zstage{display:none;position:relative;flex:1;min-height:0;overflow:hidden;
+  border-radius:var(--r-tile);background:rgba(255,255,255,.018);
+  border:1px solid var(--tile-bd);box-shadow:var(--tile-sh);
+  perspective:1400px;perspective-origin:50% 46%;
+  --zease:cubic-bezier(.2,.85,.25,1);
+  --zspring:cubic-bezier(.34,1.4,.5,1)}
+
+/* ── СЕКТОРЫ ── */
+#zsvg{position:absolute;inset:0;z-index:1}
+#zsvg .z{fill:rgba(255,255,255,.001);cursor:pointer;transition:fill .35s var(--zease)}
+#zsvg .z:hover{fill:rgba(255,255,255,.020)}
+#zsvg .z.active{fill:rgba(255,255,255,.042)}
+body.zopen #zsvg .z:not(.active){fill:rgba(0,0,0,.30)}
+#zsvg .cut{stroke:rgba(255,255,255,.055);stroke-width:1;fill:none;pointer-events:none;
+  transition:stroke .35s}
+body.zopen #zsvg .cut{stroke:rgba(255,255,255,.03)}
+
+#zglow{position:absolute;width:520px;height:520px;border-radius:50%;z-index:1;
+  transform:translate(-50%,-50%) scale(.6);opacity:0;pointer-events:none;
+  background:radial-gradient(circle,rgba(255,255,255,.075),transparent 66%);
+  transition:opacity .5s var(--zease),transform .6s var(--zease),
+             left .5s var(--zease),top .5s var(--zease)}
+body.zopen #zglow{opacity:1;transform:translate(-50%,-50%) scale(1)}
+
+/* Колодец: провалившемуся ядру нужна яма, в которую оно ушло. Без ямы
+   уменьшившийся предмет читается как «сжался», а не «отодвинулся». */
+#zwell{position:absolute;left:50%;top:50%;width:min(96vh,880px);aspect-ratio:1;
+  transform:translate(-50%,-50%) scale(.7);border-radius:50%;z-index:2;
+  pointer-events:none;opacity:0;
+  background:radial-gradient(circle,rgba(0,0,0,.72) 26%,rgba(0,0,0,.38) 52%,transparent 72%);
+  transition:opacity .55s var(--zease),transform .6s var(--zease)}
+body.zopen #zwell{opacity:1;transform:translate(-50%,-50%) scale(1)}
+
+.zlab{position:absolute;transform:translate(-50%,-50%);z-index:2;pointer-events:none;
+  text-align:center;white-space:nowrap;transition:opacity .35s var(--zease)}
+.zlab .zn{display:block;font:200 12px/1 inherit;letter-spacing:.34em;
+  text-indent:.34em;text-transform:uppercase;color:rgba(236,238,241,.34)}
+.zlab .zs{display:block;margin-top:5px;font:300 9.5px/1 inherit;
+  letter-spacing:.06em;color:rgba(236,238,241,.17)}
+.zlab.hot .zn{color:rgba(236,238,241,.72)}
+.zlab.hot .zs{color:rgba(236,238,241,.34)}
+body.zopen .zlab{opacity:.18}
+body.zopen .zlab.on{opacity:0}
+
+/* ── СЦЕНА ── */
+#zscene{position:absolute;inset:0;z-index:3;pointer-events:none;
+  transform-style:preserve-3d;transition:transform .5s var(--zease)}
+#zfield{position:absolute;inset:0;display:grid;place-items:center;
+  transform-style:preserve-3d;
+  transition:transform .62s var(--zspring),filter .5s var(--zease)}
+body.zopen #zfield{filter:brightness(.42) saturate(.9)}
+#zorb{position:relative;width:min(70vh,640px);aspect-ratio:1;display:grid;
+  place-items:center;transform-style:preserve-3d}
+#zring{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;
+  transform:translateZ(-80px);
+  transition:transform .55s var(--zease),filter .55s var(--zease),opacity .55s var(--zease)}
+body.zopen #zring{transform:translateZ(-170px);filter:blur(1.6px);opacity:.5}
+
+#zcore{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:35%;aspect-ratio:1;border-radius:50%;display:grid;place-items:center;
+  text-align:center;cursor:pointer;z-index:5;pointer-events:auto;
+  background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.97),
+             rgba(224,227,233,.86) 62%,rgba(202,206,214,.72));
+  box-shadow:0 26px 60px -26px rgba(0,0,0,.85), inset 0 2px 3px rgba(255,255,255,1),
+             inset 0 -12px 24px -12px rgba(20,24,32,.28);
+  transform-style:preserve-3d;
+  transition:transform .45s var(--zspring), box-shadow .35s var(--zease)}
+#zcore:hover{transform:translate(-50%,-50%) translateZ(10px) scale(1.02)}
+body.zopen #zcore{transform:translate(-50%,-50%) translateZ(-40px) scale(.74);
+  box-shadow:0 8px 18px -10px rgba(0,0,0,.95), inset 0 2px 3px rgba(255,255,255,.7),
+             inset 0 -16px 30px -12px rgba(20,24,32,.5)}
+#zcore-name{font:200 clamp(13px,2vh,21px)/1 inherit;letter-spacing:.26em;
+  text-indent:.26em;color:#0b0b0d;transition:opacity .3s}
+#zcore-sub{margin-top:7px;font:500 7.5px/1 inherit;letter-spacing:.28em;
+  white-space:nowrap;
+  color:rgba(11,11,13,.42);transition:opacity .3s}
+body.zopen #zcore-sub{opacity:0}
+body.zopen #zcore-name{opacity:.3}
+
+#zlayer{position:absolute;inset:0;z-index:6;pointer-events:none;
+  transform-style:preserve-3d}
+
+/* ── КАПЛЯ-ЯКОРЬ ── */
+.zdrop{position:absolute;width:58px;height:58px;pointer-events:auto;
+  transform:translate(-50%,-50%) translateZ(40px);transform-style:preserve-3d;
+  display:grid;place-items:center;cursor:pointer;border:0;background:none;padding:0;
+  transition:transform .4s var(--zspring),opacity .3s}
+.zdrop .zb{width:16px;height:16px;border-radius:50%;
+  background:rgba(255,255,255,.085);border:1px solid rgba(255,255,255,.15);
+  box-shadow:0 6px 12px -5px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.1);
+  display:grid;place-items:center;font-size:8px;color:var(--dim);
+  transition:all .28s var(--zease)}
+.zdrop:hover .zb,.zdrop.hot .zb{width:26px;height:26px;background:rgba(255,255,255,.13);
+  border-color:rgba(255,255,255,.35);color:var(--text);font-size:11px}
+body.zopen .zdrop{opacity:.16;pointer-events:none;
+  transform:translate(-50%,-50%) translateZ(10px)}
+body.zopen .zdrop.active{opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) translateZ(70px)}
+body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,.13);
+  border-color:rgba(255,255,255,.4);color:var(--text)}
+
+/* ── ИНСТРУМЕНТ ── */
+.ztool{position:absolute;transform:translate(-50%,-50%) translateZ(20px) scale(.4);
+  opacity:0;pointer-events:none;z-index:6;transform-style:preserve-3d;
+  width:132px;padding:11px 10px;border-radius:16px;text-align:center;
+  background:linear-gradient(168deg,rgba(40,40,46,.97),rgba(24,24,28,.97));
+  border:1px solid rgba(255,255,255,.15);cursor:pointer;
+  box-shadow:0 3px 6px rgba(0,0,0,.5), 0 44px 80px -30px rgba(0,0,0,1),
+             inset 0 1px 0 rgba(255,255,255,.16);
+  transition:opacity .3s var(--zease), transform .42s var(--zspring),
+             background .2s, border-color .2s}
+.ztool.show{opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) translateZ(130px) scale(1)}
+.ztool:hover{background:linear-gradient(168deg,rgba(54,54,61,.98),rgba(32,32,37,.98));
+  border-color:rgba(255,255,255,.3)}
+.ztool .zti{font-size:16px;line-height:1;margin-bottom:6px;display:block}
+.ztool .ztn{display:block;font:400 11.5px/1.25 inherit}
+.ztool .ztv{display:block;margin-top:4px;font:400 9.5px/1.2 inherit;
+  color:rgba(236,238,241,.30);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ztool.on{border-color:rgba(255,255,255,.45)}
+.ztool.on .ztv{color:var(--text)}
+/* Блик развёрнут к лампе вычисленным углом. Тени без бликов дают силуэты
+   из бумаги, а не предметы. */
+.ztool::before{content:'';position:absolute;inset:0;border-radius:inherit;
+  pointer-events:none;
+  background:linear-gradient(var(--la,160deg),rgba(255,255,255,.085),
+             rgba(255,255,255,.012) 54%,transparent 72%)}
+/* Теневая плита стоит на другой глубине и падает на нижний слой
+   по-настоящему. box-shadow так не умеет: он всегда прилип к своей коробке. */
+.ztool::after{content:'';position:absolute;inset:4px;border-radius:inherit;
+  background:rgba(0,0,0,.66);filter:blur(20px);pointer-events:none;
+  transform:translate3d(var(--sx,12px),var(--sy,18px),-120px) scale(1.05);
+  opacity:0;transition:opacity .38s var(--zease),transform .44s var(--zspring),
+             filter .3s var(--zease)}
+.ztool.show::after{opacity:1}
+.ztool.aim{border-color:rgba(255,255,255,.55);
+  background:linear-gradient(168deg,rgba(64,64,72,.98),rgba(38,38,44,.98));
+  transform:translate(-50%,-50%) translateZ(180px) scale(1.07)}
+.ztool.aim::after{filter:blur(30px);background:rgba(0,0,0,.74);
+  transform:translate3d(calc(var(--sx,12px)*1.55),calc(var(--sy,18px)*1.55),-172px) scale(1.13)}
+
+/* ── БАРАБАН ──
+   Плотный список крутится внутри веера, не отнимая у него места. Коробки
+   у барабана нет: плашка со списком внутри — один объект, и рука тянется
+   к нему целиком. Отдельные капсулы снимают вопрос — сколько капсул,
+   столько мишеней. Каждая капсула это ЗЕРКАЛО настоящей строки в
+   настоящем списке: клик уходит туда, состояние читается оттуда. */
+.ztool.zdrum{width:236px;padding:0;background:none;border-color:transparent;
+  box-shadow:none}
+.ztool.zdrum:hover,.ztool.zdrum.aim{background:none;border-color:transparent;
+  box-shadow:none;transform:translate(-50%,-50%) translateZ(180px) scale(1.02)}
+.ztool.zdrum::before,.ztool.zdrum::after{display:none}
+.zdcap{display:inline-flex;align-items:center;gap:7px;position:relative;z-index:2;
+  padding:5px 12px;border-radius:999px;background:rgba(30,30,35,.9);
+  border:1px solid var(--border);
+  box-shadow:0 12px 20px -8px rgba(0,0,0,.9), 0 2px 3px rgba(0,0,0,.5);
+  font:400 10px/1 inherit;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.ztool.zdrum.aim .zdcap{color:var(--text);border-color:rgba(255,255,255,.15)}
+.zdnum{opacity:.55;letter-spacing:.1em;font-style:normal}
+.zdstage{position:relative;height:118px;margin-top:9px;perspective:600px;
+  transition:height .3s var(--zease)}
+.ztool.zdrum:hover .zdstage,.ztool.zdrum.aim .zdstage{height:140px}
+.zdbar{position:absolute;inset:0;transform-style:preserve-3d}
+.zdi{position:absolute;left:-14px;right:-14px;top:50%;height:32px;margin-top:-16px;
+  display:flex;align-items:center;justify-content:center;backface-visibility:hidden}
+.zpill{display:inline-flex;align-items:center;gap:8px;max-width:100%;height:32px;
+  padding:0 15px;border-radius:999px;white-space:nowrap;overflow:hidden;
+  background:linear-gradient(168deg,rgba(46,46,53,.98),rgba(27,27,32,.98));
+  border:1px solid rgba(255,255,255,.15);cursor:pointer;
+  box-shadow:0 9px 16px -6px rgba(0,0,0,.8), 0 2px 4px rgba(0,0,0,.5),
+             inset 0 1px 0 rgba(255,255,255,.06);
+  font:400 11px/1 inherit;color:var(--dim);
+  transform:scale(.68);opacity:0;
+  transition:transform .34s var(--zspring),opacity .26s var(--zease),
+             background .2s,border-color .2s,color .2s}
+.zdi.in .zpill{transform:scale(1);opacity:1}
+.zpill small{font-size:8.5px;color:rgba(236,238,241,.30);
+  overflow:hidden;text-overflow:ellipsis}
+.zdi.cur .zpill{transform:scale(calc(1.11 + var(--pop,0)));color:var(--text);
+  transition:transform .09s linear,background .2s,border-color .2s,color .2s,box-shadow .25s;
+  background:linear-gradient(168deg,rgba(84,84,94,.99),rgba(46,46,54,.99));
+  border-color:rgba(255,255,255,.44);
+  box-shadow:0 26px 44px -10px rgba(0,0,0,.98), 0 9px 14px -3px rgba(0,0,0,.9),
+             0 3px 5px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.22)}
+.zdi.cur .zpill small{color:var(--dim)}
+.zdi:not(.cur) .zpill:hover{transform:scale(1.05);color:var(--text)}
+.zdi.cur .zpill:hover{transform:scale(1.14)}
+.zdi.zsel .zpill{border-color:rgba(255,255,255,.55)}
+.zdi.zsel .zpill::before{content:'●';font-size:7px;color:var(--text);margin-right:2px}
+
+#zthreads{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;
+  transform:translateZ(60px)}
+#zthreads line{stroke:rgba(255,255,255,.14);stroke-width:1;stroke-dasharray:3 5;
+  opacity:0;transition:opacity .35s}
+#zthreads line.show{opacity:1}
+
+/* ── КАПСУЛА РАЗГОВОРА ──
+   Всей плашки на главном не нужно, а вот куда бросить файл — нужно
+   всегда. Капсула делает ровно две вещи: принимает перетащенное и
+   пускает в разговор. Больше на главном экране разговору делать нечего:
+   читать переписку в углу неудобно, а место она съедает всё. */
+#zchat{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);z-index:7;
+  display:inline-flex;align-items:center;gap:10px;height:42px;padding:0 20px;
+  border-radius:999px;cursor:text;white-space:nowrap;
+  background:linear-gradient(168deg,rgba(40,40,46,.92),rgba(24,24,28,.92));
+  border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(18px);
+  box-shadow:0 14px 30px -12px rgba(0,0,0,.9), 0 2px 4px rgba(0,0,0,.5),
+             inset 0 1px 0 rgba(255,255,255,.09);
+  font:300 12.5px/1 inherit;color:rgba(236,238,241,.44);
+  transition:all .28s var(--zease)}
+#zchat:hover{transform:translateX(-50%) translateY(-2px);color:var(--text);
+  border-color:rgba(255,255,255,.24)}
+#zchat i{font-style:normal;font-size:14px;opacity:.6}
+#zchat.drag{height:64px;padding:0 40px;color:var(--text);font-size:13.5px;
+  border-color:rgba(255,255,255,.55);border-style:dashed;
+  background:linear-gradient(168deg,rgba(70,70,80,.96),rgba(34,34,40,.96));
+  transform:translateX(-50%) translateY(-6px) scale(1.04);
+  box-shadow:0 26px 50px -14px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.2)}
+body.zopen #zchat{opacity:.2;pointer-events:none}
+
+/* Подсказка вынесена ИЗ сцены отдельной плашкой под ней. Внутри сцены она
+   спорила с подписью нижнего сектора и лезла в веер: строка, которая
+   меняется на каждое действие, обязана иметь своё постоянное место, иначе
+   глаз ищет её заново каждый раз. */
+#zhint{display:none;flex:none;height:34px;align-items:center;justify-content:center;
+  border-radius:var(--r-tile);background:var(--tile);border:1px solid var(--tile-bd);
+  box-shadow:var(--tile-sh-lo);backdrop-filter:blur(var(--gb)) saturate(115%);
+  font:300 11.5px/1 inherit;color:rgba(236,238,241,.34);
+  letter-spacing:.02em;text-align:center;padding:0 16px;user-select:none}
+html[data-skin="graphite"] #zhint{display:flex}
+html:not([data-skin="graphite"]) #zhint{display:none}
+body:not(.zhome) #zhint{cursor:pointer;color:rgba(236,238,241,.5)}
+body:not(.zhome) #zhint:hover{color:var(--text);border-color:var(--g-hi)}
+#zhint b{font-weight:400;letter-spacing:.2em;color:var(--text);margin-right:10px}
+
+/* «Домой» — не иконка среди иконок. Это единственный выход с любого
+   экрана, и он обязан читаться раньше всего остального: слово, а не
+   значок, и первым в строке, до имени. Значок ⌂ в ряду из десяти таких же
+   значков человек ищет глазами каждый раз заново — то есть не находит. */
+html[data-skin="graphite"] #btn-home{
+  width:auto;height:30px;padding:0 12px;font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;border-radius:var(--r-ctl);order:-1;
+  border:1px solid var(--border);background:var(--panel);color:var(--dim);
+  display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+html[data-skin="graphite"] #btn-home:hover{color:var(--text);background:var(--panel2);
+  border-color:var(--g-hi)}
+html[data-skin="graphite"] body.zhome #btn-home{display:none}
+html[data-skin="graphite"] header .name{cursor:pointer}
+@media (prefers-reduced-motion:reduce){#zstage *{animation:none!important;transition:none!important}}
+</style>
+
+<script>
+/* ─────────────────────────────────────────────────────────────────────
+   ОБЛАСТИ ЭКРАНА (2026-08-20)
+
+   Разметочные меню (Kurtenbach) работают двумя режимами ОДНИМ жестом:
+     новичок — нажал и держит, через 260 мс раскрывается веер;
+     знающий — нажал и сразу дёрнул, веер не показывается вовсе.
+   У опытного это в семь раз быстрее. Люди возвращаются к видимому меню
+   после перерыва, поэтому показ нельзя убирать — можно только не навязывать.
+
+   Три правила соблюдаются буквально:
+     1. Не больше восьми лучей — дальше растёт ошибка. Длинное уходит
+        барабаном: списку нужен список.
+     2. Углы закреплены навсегда. Память тут мышечная, а не зрительная.
+     3. Центр закрывает. Центр и край — бесконечные мишени.
+   ───────────────────────────────────────────────────────────────────── */
+(function(){
+'use strict';
+const NS = 'http://www.w3.org/2000/svg';
+const $  = s => document.querySelector(s);
+const HOLD = 260, FLICK = 34, SPAN = 60;
+
+function hit(sel){ const e = $(sel); if (e) e.click(); return !!e; }
+function txt(sel){ const e = $(sel); return e ? (e.textContent||'').trim() : ''; }
+function isOn(sel){ const e = $(sel); return !!(e && (e.classList.contains('on') ||
+                     e.classList.contains('sel') || e.classList.contains('active'))); }
+
+/* Углы закреплены и объяснимы телом: глаза смотрят вверх, руки работают
+   внизу, слух слева, мозги справа. Объяснимое запоминается, произвольное — нет. */
+const ZONES = [
+  {id:'eyes', a:-90, ic:'◎', name:'Глаза', sub:'экран и камера', tools:[
+    {ic:'👁', n:'Глаза',      hit:'#eyes-toggle', live:'#eyes-label'},
+    {ic:'▣', n:'Дисплей',    drum:'#eyes-monitors', open:'#btn-eyes'},
+    {ic:'◉', n:'Камера',     drum:'#eyes-cameras',  open:'#btn-eyes'},
+    {ic:'✦', n:'Наблюдение', hit:'#eyes-watch', live:'#eyes-watch-label'},
+  ]},
+  {id:'brain', a:-30, ic:'◆', name:'Мозги', sub:'модели и мышление', tools:[
+    {ic:'☰', n:'Модели',   drum:'#model-list', open:'#btn-model', live:'#model-label'},
+    {ic:'🎚', n:'Сэмплинг', open:'#btn-model', focus:'#samp-details'},
+    {ic:'☁', n:'Облако',   open:'#btn-model', focus:'#cloud-details'},
+    {ic:'🎓', n:'Обучение', hit:'#btn-train'},
+  ]},
+  {id:'hands', a:30, ic:'✥', name:'Руки', sub:'система и файлы', tools:[
+    {ic:'✈', n:'Управление ПК', hit:'#btn-control'},
+    {ic:'▤', n:'Система',       screen:'sys'},
+    {ic:'🗺', n:'Карта',         hit:'#btn-board', leave:true},
+    {ic:'🧪', n:'DreamPC',       hit:'#btn-dreampc'},
+  ]},
+  {id:'voice', a:90, ic:'♪', name:'Голос', sub:'как звучит', tools:[
+    {ic:'☰', n:'Движки',     drum:'#tts-engines', open:'#btn-tts'},
+    {ic:'◑', n:'Громкость',  open:'#btn-tts', focus:'#tts-vol'},
+    {ic:'⊙', n:'Устройство', drum:'#tts-outputs', open:'#btn-tts'},
+    {ic:'✋', n:'Замолчать',  call:() => { if (typeof bargeIn === 'function') bargeIn(); }},
+    {ic:'▤', n:'Панель',     screen:'voice'},
+  ]},
+  {id:'ears', a:150, ic:'◉', name:'Слух', sub:'что слышит', live:true, tools:[
+    {ic:'🎧', n:'Слушать',  hit:'#btn-listen', flag:'#btn-listen'},
+    {ic:'☰', n:'Движки',   drum:'#stt-engines',  open:'#btn-mic'},
+    {ic:'◐', n:'Микрофон', drum:'#mic-devices',  open:'#btn-mic'},
+    {ic:'≈', n:'Шумодав',  hit:'#btn-mic-ns', live:'#mic-ns-label'},
+  ]},
+  {id:'face', a:-150, ic:'☺', name:'Образ', sub:'лицо и жесты', tools:[
+    {ic:'🎭', n:'Аватар',   screen:'face'},
+    {ic:'✦', n:'Чат',      screen:'chat'},
+    {ic:'🧹', n:'Забыть',   hit:'#btn-clear'},
+    {ic:'⬆', n:'Git',      hit:'#btn-git'},
+  ]},
+];
+
+/* Центр — это МЕСТА, секторы — органы. Разделение честное: орган это то,
+   чем она делает, место это то, куда смотришь ты. Смешивать их в одном
+   списке значило бы требовать от человека держать в голове, что «чат» и
+   «микрофон» — вещи одного порядка. Они не одного. */
+const PLACES = [
+  {ic:'✦', n:'Чат',      screen:'chat'},
+  {ic:'▤', n:'Система',  screen:'sys'},
+  {ic:'🎭', n:'Аватар',   screen:'face'},
+  {ic:'🗺', n:'Карта',    hit:'#btn-board', leave:true},
+  {ic:'🎓', n:'Обучение', hit:'#btn-train'},
+  /* Всё, что жило в шапке, теперь ещё и здесь — барабаном. Список не
+     перечислен руками, а СНЯТ с самой шапки: появится там новая кнопка —
+     она появится и тут, без правки этого файла. Перечислять руками
+     значило бы завести второй список, который разойдётся с первым на
+     следующей же неделе и будет врать молча. */
+  {ic:'⚙', n:'Утилиты',  drum:headerRows, leave:true},
+];
+
+function headerRows(){
+  const head = document.querySelector('header');
+  if (!head) return [];
+  return [...head.querySelectorAll('button.iconbtn, button.chip')]
+    .filter(b => b.id !== 'btn-home' && !b.closest('.pop'))
+    .map(b => ({
+      el: b,
+      name: (b.title || b.textContent || '').split(/[:(—·]/)[0].trim().slice(0,26)
+            || b.id.replace('btn-',''),
+      sub:  (b.title || '').split(/[:(—·]/).slice(1).join(' ').trim().slice(0,22),
+      sel:  b.classList.contains('on'),
+    }));
+}
+
+// ─────────────────────────── сборка ───────────────────────────
+let S, svg, glow, well, scene, field, orb, ring, core, layer, threads, hintEl;
+const N = {};
+let open = null, press = null, aimed = null, lastMove = 0;
+
+/* ─────────────── «НАЗАД» ───────────────
+   Шаг назад обязан быть один и тот же везде: и с клавиши, и с боковой
+   кнопки мыши, и с Alt+←, и с плашки внизу. Поэтому все они ведут в одно
+   место — в историю браузера, а разбор шага живёт ровно в одном
+   обработчике popstate. Развилка «эта кнопка делает так, а клавиша
+   немножко иначе» — самый быстрый способ получить интерфейс, которому
+   перестают доверять.
+
+   Боковую кнопку мыши и Alt+← движок окна обрабатывает сам и сам шлёт
+   popstate — поэтому их мы не ловим руками. Поймали бы — получили бы
+   двойной шаг назад, и это выглядело бы как «проскакивает». */
+let depth = 0, suppress = 0;
+
+function markForward(){
+  depth++;
+  try { history.pushState({anamorf: depth}, ''); } catch(e){}
+}
+function goBack(){
+  if (depth > 0) { try { history.back(); } catch(e){} }
+}
+addEventListener('popstate', () => {
+  if (suppress > 0){ suppress--; return; }
+  if (depth > 0) depth--;
+  if (open) hide();
+  else if (!document.body.classList.contains('zhome')) applyHome();
+});
+
+function build(){
+  const shell = document.getElementById('shell');
+  const main  = document.getElementById('main');
+  if (!shell || !main || document.getElementById('zstage')) return;
+
+  S = document.createElement('div');
+  S.id = 'zstage';
+  S.innerHTML =
+    '<svg id="zsvg"></svg><div id="zglow"></div><div id="zwell"></div>' +
+    '<div id="zscene"><div id="zfield"><div id="zorb">' +
+      '<canvas id="zring"></canvas>' +
+      '<div id="zcore"><div><div id="zcore-name">ANAMORF</div>' +
+      '<div id="zcore-sub">САЙКА</div></div></div>' +
+    '</div></div><div id="zlayer"><svg id="zthreads"></svg></div></div>' +
+    '<div id="zchat"><i>✦</i><span>Скажи, напиши или брось сюда файл</span></div>';
+  shell.insertBefore(S, main);
+  const hb = document.createElement('div');
+  hb.id = 'zhint';
+  hb.addEventListener('click', () => {
+    if (!document.body.classList.contains('zhome')) goBack();
+  });
+  shell.parentNode.insertBefore(hb, shell.nextSibling);
+
+  svg=$('#zsvg'); glow=$('#zglow'); well=$('#zwell'); scene=$('#zscene');
+  field=$('#zfield'); orb=$('#zorb'); ring=$('#zring'); core=$('#zcore');
+  layer=$('#zlayer'); threads=$('#zthreads'); hintEl=$('#zhint');
+
+  ZONES.forEach(z => {
+    const path = document.createElementNS(NS,'path');
+    path.setAttribute('class','z'); path.dataset.id = z.id; svg.appendChild(path);
+    const cut = document.createElementNS(NS,'line');
+    cut.setAttribute('class','cut'); svg.appendChild(cut);
+
+    const lab = document.createElement('div');
+    lab.className = 'zlab';
+    lab.innerHTML = '<span class="zn">'+z.name+'</span><span class="zs">'+z.sub+'</span>';
+    S.appendChild(lab);
+
+    const b = document.createElement('button');
+    b.className = 'zdrop'; b.dataset.id = z.id;
+    b.innerHTML = '<span class="zb">'+z.ic+'</span>';
+    layer.appendChild(b);
+
+    N[z.id] = {z, path, cut, lab, bead:b, tools:[], lines:[]};
+    z.tools.forEach(() => {
+      const t = document.createElement('div');
+      t.className = 'ztool'; layer.appendChild(t); N[z.id].tools.push(t);
+      const ln = document.createElementNS(NS,'line');
+      threads.appendChild(ln); N[z.id].lines.push(ln);
+    });
+  });
+
+  // центр как седьмой «сектор»: те же инструменты, тот же веер
+  N.__core = {z:{id:'__core', a:-90, name:'Места', tools:PLACES},
+              path:null, cut:null, lab:null, bead:core, tools:[], lines:[]};
+  PLACES.forEach(() => {
+    const t = document.createElement('div');
+    t.className = 'ztool'; layer.appendChild(t); N.__core.tools.push(t);
+    const ln = document.createElementNS(NS,'line');
+    threads.appendChild(ln); N.__core.lines.push(ln);
+  });
+
+  wire();
+  geometry();
+  new ResizeObserver(geometry).observe(S);
+  document.body.classList.add('zhome');
+  say();
+  ringLoop();
+  poll();
+}
+
+// ─────────────────────────── геометрия ───────────────────────────
+let W=0,H=0,CX=0,CY=0,HOLE=0;
+const rad = d => d*Math.PI/180;
+
+function edge(deg){
+  const c=Math.cos(rad(deg)), s=Math.sin(rad(deg));
+  let t=1e9;
+  if (c>1e-6) t=Math.min(t,(W-CX)/c); else if (c<-1e-6) t=Math.min(t,(0-CX)/c);
+  if (s>1e-6) t=Math.min(t,(H-CY)/s); else if (s<-1e-6) t=Math.min(t,(0-CY)/s);
+  return [CX+c*t, CY+s*t];
+}
+const inner = (deg,r) => [CX+Math.cos(rad(deg))*r, CY+Math.sin(rad(deg))*r];
+
+function geometry(){
+  const r = S.getBoundingClientRect();
+  W=r.width; H=r.height; if(!W) return;
+  CX=W/2; CY=H*0.5;
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  threads.setAttribute('viewBox','0 0 '+W+' '+H);
+  const ow = orb.clientWidth || Math.min(H*0.7,640);
+  HOLE = ow*0.365;
+
+  const corners = [[W,0],[W,H],[0,H],[0,0]].map(p =>
+    ({x:p[0], y:p[1], a:Math.atan2(p[1]-CY,p[0]-CX)*180/Math.PI}));
+
+  ZONES.forEach(z => {
+    const a0=z.a-SPAN/2, a1=z.a+SPAN/2;
+    const [ix0,iy0]=inner(a0,HOLE), [ix1,iy1]=inner(a1,HOLE);
+    const [ex0,ey0]=edge(a0),       [ex1,ey1]=edge(a1);
+    const mid = corners.map(c => ({...c, d:((c.a-a0)%360+360)%360}))
+                       .filter(c => c.d > .5 && c.d < SPAN-.5)
+                       .sort((p,q) => p.d-q.d);
+    let d = 'M '+ix0+' '+iy0+' L '+ex0+' '+ey0+' ';
+    mid.forEach(c => d += 'L '+c.x+' '+c.y+' ');
+    d += 'L '+ex1+' '+ey1+' L '+ix1+' '+iy1+
+         ' A '+HOLE+' '+HOLE+' 0 0 0 '+ix0+' '+iy0+' Z';
+    N[z.id].path.setAttribute('d', d);
+
+    const [sx,sy] = inner(a0, HOLE+6);
+    const c0 = N[z.id].cut;
+    c0.setAttribute('x1',sx); c0.setAttribute('y1',sy);
+    c0.setAttribute('x2',ex0); c0.setAttribute('y2',ey0);
+
+    const ax = CX + Math.cos(rad(z.a))*W*0.225;
+    const ay = CY + Math.sin(rad(z.a))*H*0.265;
+    N[z.id].ax = ax; N[z.id].ay = ay;
+    N[z.id].bead.style.left = ax+'px';
+    N[z.id].bead.style.top  = ay+'px';
+
+    // Подпись по тому же лучу, что и капля, только дальше. У края экрана
+    // было бы «правильнее» геометрически, но на широком мониторе луч
+    // уходит в потолок и подпись оказывается в другом конце от своей
+    // капли. Связь важнее геометрии.
+    const M = 76;
+    N[z.id].lab.style.left = Math.max(M, Math.min(W-M, CX+(ax-CX)*1.62))+'px';
+    N[z.id].lab.style.top  = Math.max(34, Math.min(H-104, CY+(ay-CY)*1.62))+'px';
+  });
+  N.__core.ax = CX; N.__core.ay = CY;
+  if (open) place(N[open].z);
+}
+
+function spread(z){
+  const n = z.tools.length;
+  if (z.id === '__core'){            // места раскрываются кольцом вокруг центра
+    const step = 360/n;
+    return z.tools.map((t,i) => ({...t, ang: -90 + i*step}));
+  }
+  const step = 34, base = z.a - (n-1)*step/2;
+  return z.tools.map((t,i) => ({...t, ang: base + i*step}));
+}
+
+/* Сначала честный веер по закреплённым углам — это то, что запоминает
+   рука. Потом разгон столкновений: карточки разного размера расталкиваются
+   по кратчайшей оси. Углы почти не меняются, а именно их помнит рука. */
+function place(z){
+  const nd = N[z.id];
+  const R = z.id === '__core'
+    ? Math.max(190, Math.min(W,H)*0.30)
+    : Math.max(132, Math.min(W,H)*0.20);
+  const it = spread(z).map((t,i) => {
+    const el = nd.tools[i];
+    const big = el.classList.contains('zdrum');
+    const r = R * (big ? 1.12 : 1);
+    return {el,
+      w:(el.offsetWidth  || (big?236:132)) + (big?34:24),
+      h:(el.offsetHeight || (big?180:74))  + (big?112:18),
+      x: nd.ax + Math.cos(rad(t.ang))*r,
+      y: nd.ay + Math.sin(rad(t.ang))*r};
+  });
+  for (let pass=0; pass<70; pass++){
+    for (let i=0;i<it.length;i++) for (let j=i+1;j<it.length;j++){
+      const a=it[i], b=it[j];
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const ox=(a.w+b.w)/2-Math.abs(dx), oy=(a.h+b.h)/2-Math.abs(dy);
+      if (ox<=0 || oy<=0) continue;
+      if (ox < oy){ const s=(dx<0?-1:1)*ox/2; a.x-=s; b.x+=s; }
+      else        { const s=(dy<0?-1:1)*oy/2; a.y-=s; b.y+=s; }
+    }
+    it.forEach(o => {
+      o.x = Math.max(o.w/2-10, Math.min(W-o.w/2+10, o.x));
+      o.y = Math.max(o.h/2+ 4, Math.min(H-o.h/2- 4, o.y));
+    });
+  }
+  /* Одна лампа на сцену, слева сверху и за кадром. Тень каждой карточки
+     смотрит ОТ лампы: у предметов в разных концах кадра тени обязаны
+     смотреть в разные стороны, иначе ламп становится столько же, сколько
+     предметов, и объём рассыпается. */
+  const LX = W*0.24, LY = -H*0.34;
+  it.forEach((o,i) => {
+    o.el.style.left = o.x+'px'; o.el.style.top = o.y+'px';
+    const vx=o.x-LX, vy=o.y-LY, d=Math.hypot(vx,vy)||1;
+    o.el.style.setProperty('--sx', (vx/d*26).toFixed(1)+'px');
+    o.el.style.setProperty('--sy', (vy/d*26).toFixed(1)+'px');
+    o.el.style.setProperty('--la', (Math.atan2(-vx, vy)*180/Math.PI).toFixed(1)+'deg');
+    const ln = nd.lines[i];
+    ln.setAttribute('x1',nd.ax); ln.setAttribute('y1',nd.ay);
+    ln.setAttribute('x2',o.x);   ln.setAttribute('y2',o.y);
+  });
+}
+
+// ─────────────────────────── барабан ───────────────────────────
+/* Капсула — зеркало настоящей строки настоящего списка. Свой список тут
+   был бы вторым источником правды: он разошёлся бы с настоящим на первой
+   же перерисовке, а разошедшись, врал бы молча. */
+const STEP = 24, RAD = 56;
+const liveD = new Set();
+let loop = 0;
+
+function rows(sel){
+  if (typeof sel === 'function'){ try { return sel(); } catch(e){ return []; } }
+  const box = $(sel); if (!box) return [];
+  return [...box.querySelectorAll('.item')].map(el => ({
+    el,
+    name: (el.querySelector('.mname') || el).textContent.trim().split('\n')[0].slice(0,28),
+    sub:  (el.querySelector('.st') ? el.querySelector('.st').textContent.trim() : '').slice(0,20),
+    sel:  el.classList.contains('sel'),
+  })).filter(r => r.name);
+}
+
+function buildDrum(el, z, t){
+  const rs = rows(t.drum);
+  if (!rs.length){                       // список ещё не наполнен — не врём
+    el.classList.remove('zdrum'); el._drum = null;
+    el.innerHTML = '<span class="zti">'+t.ic+'</span><span class="ztn">'+t.n+
+                   '</span><span class="ztv">открыть список</span>';
+    return false;
+  }
+  el.classList.add('zdrum');
+  el.innerHTML = '<span class="zdcap">'+t.n+' <i class="zdnum"></i></span>'+
+                 '<div class="zdstage"><div class="zdbar"></div></div>';
+  const bar = el.querySelector('.zdbar');
+  let start = rs.findIndex(r => r.sel); if (start < 0) start = 0;
+  rs.forEach((r,i) => {
+    const d = document.createElement('div');
+    d.className = 'zdi' + (r.sel ? ' zsel' : '');
+    d.innerHTML = '<span class="zpill"><span>'+r.name+'</span>'+
+                  (r.sub ? '<small>'+r.sub+'</small>' : '')+'</span>';
+    d.style.transform = 'rotateX('+(i*STEP)+'deg) translateZ('+RAD+'px)';
+    const go = ev => { ev.stopPropagation(); el._drum.i = i; spin(el._drum,0); commit(el); };
+    d.addEventListener('pointerup', go);
+    d.addEventListener('click', go);
+    d.addEventListener('pointerenter', () => {
+      const D = el._drum; if (!D || D.i === i) return;
+      const now = performance.now();
+      if (now - lastMove > 90) return;            // капсула сама подъехала
+      if (now - (D.lastWheel||0) < 260) return;   // колесо ещё договаривает
+      D.i = i; spin(D, 0);
+    });
+    // Капсулы проявляются по одной: список собирается на глазах, а не
+    // выпрыгивает готовым куском.
+    setTimeout(() => d.classList.add('in'), 60 + Math.abs(i-start)*45);
+    bar.appendChild(d);
+  });
+  el._drum = {rows:rs, i:start, pos:start, vel:0, bar, el, z, t};
+  liveD.add(el._drum);
+  spin(el._drum, 0);
+  return true;
+}
+
+function paint(D){
+  D.bar.style.transform = 'rotateX('+(-D.pos*STEP).toFixed(3)+'deg)';
+  const smear = Math.min(1.7, Math.abs(D.vel)*6.5);
+  const kids = D.bar.children;
+  for (let k=0;k<kids.length;k++){
+    const dd = Math.abs(k - D.pos);
+    kids[k].style.opacity = Math.max(0, 1 - dd*.30);
+    kids[k].style.filter = 'blur('+(dd*0.55 + smear).toFixed(2)+'px)';
+    kids[k].style.pointerEvents = dd > 2 ? 'none' : 'auto';
+    kids[k].classList.toggle('cur', k === D.i);
+  }
+  D.el.style.setProperty('--pop', Math.min(.075, Math.abs(D.vel)*.5).toFixed(4));
+  const num = D.el.querySelector('.zdnum');
+  if (num) num.textContent = (D.i+1)+'/'+D.rows.length;
+}
+
+/* Пружина, а не css-переход. Переход умеет только «доехать за N мс»: он
+   не знает, что у предмета есть масса, и не умеет проскочить цель и
+   вернуться. Жёсткость .26 и затухание .63 дают перелёт на 17% шага и
+   покой за 300 мс — один заметный качок. Мягче — кисель, жёстче — щелчок
+   без веса, то есть то же самое, что и без пружины. */
+function tick(){
+  loop = 0; let busy = false;
+  liveD.forEach(D => {
+    if (!D.el.isConnected){ liveD.delete(D); return; }
+    D.vel += (D.i - D.pos) * .26;
+    D.vel *= .63;
+    D.pos += D.vel;
+    if (Math.abs(D.i-D.pos) > .0006 || Math.abs(D.vel) > .0006) busy = true;
+    else { D.pos = D.i; D.vel = 0; }
+    paint(D);
+  });
+  if (busy) loop = requestAnimationFrame(tick);
+}
+function spin(D, d){
+  const was = D.i;
+  D.i = Math.max(0, Math.min(D.rows.length-1, D.i + d));
+  if (D.i !== was){ D.vel += Math.sign(D.i-was)*.06; SFX.step(); }
+  if (!loop) loop = requestAnimationFrame(tick);
+  paint(D);
+}
+function commit(el){
+  const D = el._drum; if (!D) return;
+  SFX.pick();
+  // Кнопки шапки на главном спрятаны, а их попапы висят на них. Открыть
+  // попап спрятанной кнопки значит показать пустоту — уходим с главного.
+  if (D.t.leave){ const hadFan = !!open; hide(); goScreen(null, hadFan); }
+  try { D.rows[D.i].el.click(); } catch(e){}
+  [...D.bar.children].forEach((c,k) => c.classList.toggle('zsel', k === D.i));
+  say(D.z.name+' → '+D.t.n+': '+D.rows[D.i].name);
+  setTimeout(() => { if (open === D.z.id) refreshTools(D.z); }, 400);
+}
+
+// ─────────────────────────── веер ───────────────────────────
+function value(t){
+  if (t.flag)  return isOn(t.flag) ? 'включено' : 'выключено';
+  if (t.live)  return txt(t.live).slice(0,22) || '';
+  if (t.screen) return 'экран';
+  if (t.drum)  { const n = rows(t.drum).length; return n ? n+' шт' : 'открыть'; }
+  return '';
+}
+
+function refreshTools(z){
+  spread(z).forEach((t,i) => {
+    const el = N[z.id].tools[i];
+    if (el.classList.contains('zdrum')) return;
+    const v = el.querySelector('.ztv');
+    if (v) v.textContent = value(t);
+  });
+}
+
+function show(z){
+  if (!open) markForward();     // веер это шаг вперёд, но только первый:
+  open = z.id;                  // переезд между секторами шагом не считается
+  document.body.classList.add('zopen');
+  SFX.open();
+  Object.keys(N).forEach(k => {
+    const n = N[k], on = k === z.id;
+    if (n.path) n.path.classList.toggle('active', on);
+    if (n.lab)  n.lab.classList.toggle('on', on);
+    if (n.bead && n.bead !== core) n.bead.classList.toggle('active', on);
+  });
+  field.style.transform = 'translate3d(0,0,-260px)';
+  glow.style.left = N[z.id].ax+'px';
+  glow.style.top  = N[z.id].ay+'px';
+
+  const items = spread(z);
+  items.forEach((t,i) => {
+    const el = N[z.id].tools[i];
+    let drummed = false;
+    if (t.drum) drummed = buildDrum(el, z, t);
+    if (!drummed){
+      el.classList.remove('zdrum'); el._drum = null;
+      el.innerHTML = '<span class="zti">'+t.ic+'</span><span class="ztn">'+t.n+
+                     '</span><span class="ztv">'+value(t)+'</span>';
+    }
+    el.onclick = ev => { ev.stopPropagation(); if (!el._drum) pick(z,t,i); };
+  });
+  place(z);
+  requestAnimationFrame(() => {
+    place(z);
+    items.forEach((t,i) => {
+      setTimeout(() => N[z.id].tools[i].classList.add('show'), i*40);
+      setTimeout(() => N[z.id].lines[i].classList.add('show'), i*40);
+    });
+  });
+  say('<b>'+z.name.toUpperCase()+'</b> &nbsp; ' + (z.id === '__core'
+      ? 'отпусти над нужным · центр — закрыть'
+      : 'не отпуская кнопку — веди к нужному · колесо крутит барабан'));
+}
+
+function hide(){
+  if (!open) return;
+  SFX.close();
+  Object.keys(N).forEach(k => {
+    const n = N[k];
+    n.tools.forEach(t => { t.classList.remove('show','aim'); });
+    n.lines.forEach(l => l.classList.remove('show'));
+    if (n.path) n.path.classList.remove('active');
+    if (n.lab)  n.lab.classList.remove('on');
+    if (n.bead && n.bead !== core) n.bead.classList.remove('active');
+  });
+  aimed = null;
+  document.body.classList.remove('zopen');
+  field.style.transform = 'translate3d(0,0,0)';
+  open = null;
+  say();
+}
+
+function pick(z, t, i){
+  SFX.pick();
+  if (t.call){ try { t.call(); } catch(e){} say(z.name+' → '+t.n); return; }
+  if (t.screen){ const hadFan = !!open; hide(); goScreen(t.screen, hadFan); return; }
+  if (t.hit){
+    // Дев-доска живёт внутри #main, а на главном экране #main спрятан.
+    // Открыть её, не уйдя с главного, значит показать пустоту.
+    if (t.leave){ const hadFan = !!open; hide(); goScreen(null, hadFan); }
+    hit(t.hit);
+    setTimeout(() => refreshTools(z), 250);
+    say(z.name+' → '+t.n+': '+value(t));
+    return;
+  }
+  if (t.open){
+    // Настоящий попап висит на кнопке нижней плашки, а на главном экране
+    // плашки нет. Значит, уходим с главного — иначе откроем невидимое.
+    const hadFan = !!open; hide(); goScreen(null, hadFan);
+    hit(t.open);
+    if (t.focus){ const f = $(t.focus);
+      if (f){ if (f.tagName === 'DETAILS') f.open = true;
+              setTimeout(() => f.scrollIntoView({block:'center'}), 60); } }
+    return; }
+}
+
+function goScreen(m, replace){
+  /* Экран, открытый ИЗ веера, заменяет веер в истории, а не ложится
+     сверху: «назад» с экрана должно вернуть на главный, а не на веер,
+     который человек уже закрыл своим же выбором. */
+  if (replace){ try { history.replaceState({anamorf: depth}, ''); } catch(e){} }
+  else markForward();
+  document.body.classList.remove('zhome');
+  say();
+  if (!m) return;               // просто сойти с главного, режим не трогаем
+  ['chat','voice','face','sys'].forEach(x =>
+    document.body.classList.toggle('mode-'+x, x === m));
+  try { localStorage.saika_mode = m; } catch(e){}
+  if (m === 'voice') hit('#vp-tab');
+  if (m === 'face')  hit('#av-tab');
+  window.dispatchEvent(new Event('resize'));
+}
+function applyHome(){
+  document.body.classList.add('zhome');
+  say();
+  window.dispatchEvent(new Event('resize'));
+  geometry();
+}
+/* Явный уход домой сматывает историю целиком, а не по одному шагу: иначе
+   после кнопки «главный» боковая кнопка мыши повела бы обратно в те
+   экраны, из которых человек только что демонстративно вышел. */
+function goHome(){
+  if (open) hide();
+  if (depth > 0){
+    const d = depth; depth = 0; suppress = 1;
+    try { history.go(-d); } catch(e){}
+  }
+  applyHome();
+}
+
+function say(html){
+  if (!hintEl) return;
+  if (!document.body.classList.contains('zhome')){
+    hintEl.innerHTML = '◄ <b>ГЛАВНЫЙ ЭКРАН</b> — клик сюда или Esc';
+    return;
+  }
+  hintEl.innerHTML = html || 'нажми в любую область экрана — она и есть орган · центр — места';
+}
+
+// ─────────────────────────── жест ───────────────────────────
+function zoneAt(cx, cy){
+  const r = S.getBoundingClientRect();
+  const x = cx-r.left-CX, y = cy-r.top-CY;
+  if (Math.hypot(x,y) < HOLE) return null;
+  const a = Math.atan2(y,x)*180/Math.PI;
+  return ZONES.find(z => Math.abs(((z.a-a+540)%360)-180) <= SPAN/2) || null;
+}
+function setAim(el){
+  if (aimed === el) return;
+  if (aimed) aimed.classList.remove('aim');
+  aimed = el;
+  if (aimed) aimed.classList.add('aim');
+}
+function begin(z, ev){
+  ev.preventDefault();
+  if (open && open !== z.id) hide();
+  press = {z, x:ev.clientX, y:ev.clientY, shown:false, done:false};
+  if (N[z.id].bead !== core) N[z.id].bead.classList.add('hot');
+  press.timer = setTimeout(() => {
+    if (press && !press.done){ press.shown = true; show(z); }
+  }, HOLD);
+}
+
+function wire(){
+  Object.values(N).forEach(n => {
+    if (n.path){
+      n.path.addEventListener('pointerdown', ev => begin(n.z, ev));
+      n.path.addEventListener('pointerenter', () => {
+        if (!open){ n.lab.classList.add('hot'); n.bead.classList.add('hot'); SFX.hover(); }
+      });
+      n.path.addEventListener('pointerleave', () => {
+        n.lab.classList.remove('hot'); n.bead.classList.remove('hot');
+      });
+    }
+    if (n.bead && n.bead !== core)
+      n.bead.addEventListener('pointerdown', ev => { ev.stopPropagation(); begin(n.z, ev); });
+  });
+
+  // Центр: держишь — места, короткий клик — закрыть.
+  core.addEventListener('pointerdown', ev => {
+    ev.stopPropagation();
+    if (open){ goBack(); return; }
+    begin(N.__core.z, ev);
+  });
+
+  addEventListener('pointermove', ev => {
+    lastMove = performance.now();
+    if (!press) return;
+    if (!press.done && !press.shown){
+      const dx=ev.clientX-press.x, dy=ev.clientY-press.y;
+      if (Math.hypot(dx,dy) < FLICK) return;
+      const nz = zoneAt(ev.clientX, ev.clientY);
+      if (nz && nz.id !== press.z.id){
+        clearTimeout(press.timer);
+        if (N[press.z.id].bead !== core) N[press.z.id].bead.classList.remove('hot');
+        press.z = nz; press.shown = true;
+        N[nz.id].bead.classList.add('hot');
+        show(nz); return;
+      }
+      // Дёрнули раньше веера — выбираем по направлению, вслепую.
+      clearTimeout(press.timer);
+      const ang = Math.atan2(dy,dx)*180/Math.PI;
+      const opts = spread(press.z);
+      let best = opts[0], bd = 1e9, bi = 0;
+      opts.forEach((o,i) => {
+        const diff = Math.abs(((o.ang-ang+540)%360)-180);
+        if (diff < bd){ bd=diff; best=o; bi=i; }
+      });
+      press.done = true;
+      const z = press.z;
+      say('жест: '+z.name+' → '+best.n);
+      if (best.drum || best.open){ show(z); }
+      else pick(z, best, bi);
+      return;
+    }
+    if (!press.shown) return;
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const tool = el && el.closest ? el.closest('.ztool') : null;
+    if (tool){ setAim(tool); return; }
+    setAim(null);
+    const nz = zoneAt(ev.clientX, ev.clientY);
+    if (nz && nz.id !== press.z.id && !press.lock && press.z.id !== '__core'){
+      press.lock = true;
+      setTimeout(() => { if (press) press.lock = false; }, 180);
+      if (N[press.z.id].bead !== core) N[press.z.id].bead.classList.remove('hot');
+      press.z = nz;
+      N[nz.id].bead.classList.add('hot');
+      show(nz);
+    }
+  }, {passive:true});
+
+  addEventListener('pointerup', () => {
+    if (!press) return;
+    clearTimeout(press.timer);
+    if (N[press.z.id] && N[press.z.id].bead !== core)
+      N[press.z.id].bead.classList.remove('hot');
+    if (aimed){
+      const el = aimed, z = press.z;
+      if (el._drum) commit(el);
+      else {
+        const i = N[z.id].tools.indexOf(el);
+        if (i >= 0) pick(z, spread(z)[i], i);
+      }
+      setAim(null);
+    }
+    press = null;
+  });
+
+  layer.addEventListener('wheel', ev => {
+    const el = ev.target.closest && ev.target.closest('.ztool');
+    if (!el || !el._drum) return;
+    ev.preventDefault();
+    const D = el._drum;
+    D.lastWheel = performance.now();
+    D.acc = (D.acc||0) + ev.deltaY;
+    while (Math.abs(D.acc) >= 55){ const st = Math.sign(D.acc); D.acc -= st*55; spin(D, st); }
+  }, {passive:false});
+
+  // Параллакс. Четыре градуса читаются как объём, восемь — как качающийся
+  // стол. И возвращаемся в ноль: интерфейс не должен оставаться перекошенным.
+  let raf = 0;
+  S.addEventListener('pointermove', ev => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const r = S.getBoundingClientRect();
+      const dx = (ev.clientX-r.left)/r.width - .5;
+      const dy = (ev.clientY-r.top)/r.height - .5;
+      scene.style.transform = 'rotateY('+(dx*7)+'deg) rotateX('+(-dy*5)+'deg)';
+    });
+  });
+  S.addEventListener('pointerleave', () => {
+    scene.style.transform = 'rotateY(0deg) rotateX(0deg)';
+  });
+
+  const onEsc = ev => {
+    // Esc и Backspace — одно и то же действие. Backspace не отбираем у
+    // полей ввода: там он стирает букву, и отнять это было бы вредительством.
+    const t = ev.target;
+    const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+                         || t.isContentEditable);
+    if (ev.key === 'Escape'){ goBack(); return; }
+    if (ev.key === 'Backspace' && !typing){ ev.preventDefault(); goBack(); }
+  };
+  addEventListener('keydown', onEsc);
+  /* Аватар живёт в iframe и забирает клавиатуру себе — Esc до нас оттуда
+     не долетает вообще. Подписываемся и на его документ, когда он
+     загрузится; чужой источник этого не позволит, поэтому молча пропускаем. */
+  const fr = document.getElementById('av-frame');
+  if (fr) fr.addEventListener('load', () => {
+    try { fr.contentDocument.addEventListener('keydown', onEsc); } catch(e){}
+  });
+
+  /* Капсула разговора. Файл ловит не она, а старый глобальный обработчик
+     на window — он был здесь задолго до нас и работает в любом месте
+     окна. Наше дело только показать, куда целиться, и увести в чат, где
+     видно превью прикреплённого: на главном экране превью спрятано
+     вместе с плашкой, и без перехода человек решил бы, что файл пропал. */
+  const cap = document.getElementById('zchat');
+  if (cap){
+    cap.addEventListener('click', () => {
+      goScreen('chat');
+      const i = document.getElementById('input'); if (i) i.focus();
+    });
+    let dragDepth = 0;
+    const hasFiles = ev => {
+      const t = ev.dataTransfer;
+      return !!t && [...(t.types||[])].includes('Files');
+    };
+    S.addEventListener('dragenter', ev => {
+      if (!hasFiles(ev)) return;
+      dragDepth++; cap.classList.add('drag');
+      cap.querySelector('span').textContent = 'отпусти — прикреплю к разговору';
+    });
+    S.addEventListener('dragleave', () => {
+      // dragleave прилетает и при переходе на дочерний элемент, поэтому
+      // считаем глубину, а не ловим каждое событие.
+      if (--dragDepth > 0) return;
+      dragDepth = 0; cap.classList.remove('drag');
+      cap.querySelector('span').textContent = 'Скажи, напиши или брось сюда файл';
+    });
+    S.addEventListener('drop', () => {
+      dragDepth = 0; cap.classList.remove('drag');
+      cap.querySelector('span').textContent = 'Скажи, напиши или брось сюда файл';
+      // Не мешаем чужому обработчику: он уже висит на window и сработает
+      // после нас. Уходим в чат следующим тактом, когда файл уже принят.
+      setTimeout(() => goScreen('chat'), 0);
+    });
+  }
+
+  // Кнопка «домой» в шапке — единственный способ вернуться с экрана,
+  // и он обязан быть в одном и том же месте всегда.
+  const head = document.querySelector('header');
+  if (head && !document.getElementById('btn-home')){
+    const b = document.createElement('button');
+    b.className = 'iconbtn'; b.id = 'btn-home';
+    b.title = 'Главный экран — области (Esc)';
+    b.innerHTML = '◄ <span>главный</span>';
+    b.onclick = goHome;
+    head.insertBefore(b, head.firstChild);
+    // Имя тоже ведёт домой: в вебе логотип возвращает на главную тридцать
+    // лет подряд, и рука тянется туда сама, даже если её не просили.
+    const nm = head.querySelector('.name');
+    if (nm){ nm.title = 'На главный экран'; nm.onclick = goHome; }
+  }
+  /* Начал печатать — значит, речь про разговор. Плашки ввода на главном
+     экране нет, поэтому ловим первую же букву на всём документе и
+     переносим её в поле вместе с человеком. Искать, куда писать, не
+     нужно: пиши, а интерфейс догонит. */
+  addEventListener('keydown', ev => {
+    if (!document.body.classList.contains('zhome')) return;
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    const t = ev.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (ev.key.length !== 1 && ev.key !== 'Enter') return;
+    goScreen('chat');
+    const inp = document.getElementById('input');
+    if (!inp) return;
+    inp.focus();
+    if (ev.key.length === 1){ inp.value += ev.key; ev.preventDefault(); }
+  });
+}
+
+// ─────────────────────────── кольцо ───────────────────────────
+/* Кольцо отвечает на вопрос «всё ли в порядке» с одного взгляда: форма
+   ровная — спокойно, один сектор выел половину — вот он и виноват.
+   Числа для этого читать не нужно, а колонка «Системы» никуда не делась. */
+/* Голосовой сектор кольца стоит ровно под сектором «Голос» на экране:
+   спектр показывает вниз, туда же, куда ведёт орган. Совпадение это не
+   украшение — оно единственное, что связывает картинку с местом, куда
+   идти её настраивать. */
+const SECT = [
+  {k:'voice',a0:62,  a1:118, voice:true},   // низ — под органом «Голос»
+  {k:'gpu',  a0:126, a1:190},
+  {k:'cpu',  a0:198, a1:262},
+  {k:'ram',  a0:270, a1:334},
+  {k:'vram', a0:342, a1:406},
+];
+const load = {cpu:.1, ram:.3, vram:.2, gpu:.1};
+let RW=0, RH=0, t0=0, rctx=null;
+
+async function poll(){
+  try{
+    if (document.body.classList.contains('zhome')){
+      const r = await fetch('/api/system').then(x => x.json());
+      const cpu = (r.cpu && r.cpu.percent || 0)/100;
+      const ram = r.ram && r.ram.total ? r.ram.used/r.ram.total : 0;
+      let vram = 0, gpu = 0;
+      if (r.gpu){
+        vram = r.gpu.vram_total ? r.gpu.vram_used/r.gpu.vram_total : 0;
+        gpu  = (r.gpu.util || 0)/100;
+      }
+      Object.assign(load, {cpu, ram, vram, gpu});
+    }
+  }catch(e){}
+  setTimeout(poll, 1000);
+}
+
+function sizeRing(){
+  const dpr = Math.min(devicePixelRatio||1,2), r = ring.getBoundingClientRect();
+  RW=r.width; RH=r.height; if(!RW) return;
+  ring.width=RW*dpr; ring.height=RH*dpr;
+  rctx = ring.getContext('2d');
+  rctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+let fData = null;
+function spectrum(){
+  try{
+    if (typeof saikaSpeaking === 'function' && saikaSpeaking() &&
+        typeof ttsAnalyser !== 'undefined' && ttsAnalyser){
+      if (!fData || fData.length !== ttsAnalyser.frequencyBinCount)
+        fData = new Uint8Array(ttsAnalyser.frequencyBinCount);
+      ttsAnalyser.getByteFrequencyData(fData);
+      return fData;
+    }
+  }catch(e){}
+  return null;
+}
+
+function ringLoop(){
+  new ResizeObserver(sizeRing).observe(ring); sizeRing();
+  (function draw(){
+    requestAnimationFrame(draw);
+    if (!RW || !rctx || !document.body.classList.contains('zhome')) return;
+    t0 += .016;
+    const ctx=rctx, cx=RW/2, cy=RH/2;
+    const R=Math.min(RW,RH)*.20, L=Math.min(RW,RH)*.115;
+    ctx.clearRect(0,0,RW,RH);
+    ctx.lineWidth=1; ctx.strokeStyle='rgba(255,255,255,.07)';
+    ctx.beginPath(); ctx.arc(cx,cy,R-7,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.04)';
+    ctx.beginPath(); ctx.arc(cx,cy,R+L+16,0,Math.PI*2); ctx.stroke();
+    for (const A of [{r:R-13,w:2.2,f:t0*.5,s:2.1,a:.28},
+                     {r:R-18,w:1.4,f:-t0*.32+2.4,s:1.2,a:.16}]){
+      ctx.lineWidth=A.w; ctx.lineCap='round';
+      ctx.strokeStyle='rgba(255,255,255,'+A.a+')';
+      ctx.beginPath(); ctx.arc(cx,cy,A.r,A.f,A.f+A.s); ctx.stroke();
+    }
+    /* Спектр берём у того же анализатора, что кормил старую полоску, —
+       второй анализатор на тот же звук был бы вторым мнением о факте.
+       Молчит и слушает — пляшем от уровня микрофона, как плясала она. */
+    const fd = spectrum();
+    const mic = (typeof micOn !== 'undefined' && micOn && typeof micLevel !== 'undefined')
+                ? Math.min(1, micLevel*3.5) : 0;
+    const NB=210; ctx.lineCap='round';
+    const dim = document.body.classList.contains('zopen') ? .45 : 1;
+    for (let i=0;i<NB;i++){
+      const a=((i/NB)*360-90+360)%360; let v=0;
+      for (const s of SECT){
+        const A0=(s.a0+360)%360, A1=(s.a1+360)%360;
+        const inside = A0<A1 ? (a>=A0&&a<=A1) : (a>=A0||a<=A1);
+        if (!inside) continue;
+        const p = A0<A1 ? (a-A0)/(A1-A0) : ((a-A0+360)%360)/((A1-A0+360)%360);
+        const ed = Math.sin(p*Math.PI);
+        if (s.voice){
+          // Полоса сектора = частотный бин. Сглаживание уже сделано самим
+          // анализатором (smoothingTimeConstant .6), добавлять своё значит
+          // сглаживать дважды и получить желе вместо голоса.
+          v = fd ? (fd[Math.min(fd.length-1, Math.floor(p*fd.length))]/255)*ed
+                 : mic*ed*(.35+.65*Math.abs(Math.sin(i*2.3+t0*9)));
+        } else {
+          v = (p < (load[s.k]||0) ? 1 : .12)*ed*(.72+.28*Math.abs(Math.sin(i*1.7+t0*1.4)));
+        }
+        break;
+      }
+      if (v<.02) continue;
+      const ang=((i/NB)*360-90)*Math.PI/180, len=3+v*L;
+      const x0=cx+Math.cos(ang)*R, y0=cy+Math.sin(ang)*R;
+      const x1=cx+Math.cos(ang)*(R+len), y1=cy+Math.sin(ang)*(R+len);
+      const g=ctx.createLinearGradient(x0,y0,x1,y1);
+      g.addColorStop(0,'rgba(255,255,255,'+((.14+v*.28)*dim)+')');
+      g.addColorStop(1,'rgba(255,255,255,'+((.5+v*.4)*dim)+')');
+      ctx.strokeStyle=g; ctx.lineWidth=Math.max(1.1,Math.min(RW,RH)*.0042);
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+    }
+  })();
+}
+
+// ─────────────────────────── звук ───────────────────────────
+/* Синтез, а не файлы: файлы пришлось бы искать, лицензировать и тащить в
+   каждое обновление, а звучали бы они чужими. Правила те же, что у звука
+   в кино: тише, чем кажется нужным; короче 160 мс; падающая высота на
+   закрытии, растущая на подтверждении. */
+const SFX = (() => {
+  let ac=null, bus=null, on=true, lastHover=0;
+  function ready(){
+    try{
+      if (!ac){
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        ac = new AC();
+        bus = ac.createGain(); bus.gain.value = .38; bus.connect(ac.destination);
+      }
+      if (ac.state === 'suspended') ac.resume();
+      return ac;
+    }catch(e){ on = false; return null; }
+  }
+  function tone(f0,f1,dur,gain,type,cut){
+    const c = ready(); if (!c || !on) return;
+    const t = c.currentTime;
+    const o=c.createOscillator(), g=c.createGain(), lp=c.createBiquadFilter();
+    o.type = type||'sine';
+    o.frequency.setValueAtTime(f0,t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20,f1), t+dur);
+    lp.type='lowpass'; lp.frequency.value=cut||2400; lp.Q.value=.7;
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(gain,t+.003);
+    g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    o.connect(lp); lp.connect(g); g.connect(bus);
+    o.start(t); o.stop(t+dur+.02);
+  }
+  function tick(dur,gain,cut){
+    const c = ready(); if (!c || !on) return;
+    const t=c.currentTime, n=Math.floor(c.sampleRate*dur);
+    const buf=c.createBuffer(1,n,c.sampleRate), d=buf.getChannelData(0);
+    for (let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+    const src=c.createBufferSource(); src.buffer=buf;
+    const g=c.createGain(); g.gain.value=gain;
+    const bp=c.createBiquadFilter(); bp.type='bandpass';
+    bp.frequency.value=cut; bp.Q.value=1.4;
+    src.connect(bp); bp.connect(g); g.connect(bus); src.start(t);
+  }
+  return {
+    open(){ tone(340,118,.17,.17,'sine',900); tick(.012,.05,1800); },
+    close(){ tone(210,74,.15,.12,'sine',700); },
+    step(){ tone(820,620,.045,.06,'triangle',3000); tick(.008,.035,2600); },
+    pick(){ tone(430,690,.13,.14,'sine',3200); tone(150,130,.16,.07,'sine',500); },
+    hover(){ const n=performance.now(); if (n-lastHover<260) return;
+             lastHover=n; tone(1250,1150,.022,.022,'sine',4000); },
+  };
+})();
+
+// Ждём, пока смонтируются остальные слои: рельс строит #shell на +400 мс,
+// а нам нужен уже готовый контейнер.
+const start = () => setTimeout(() => { try{ build(); }catch(e){ console.error('zones:', e); } }, 700);
+if (document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', start);
+else start();
+})();
+</script>
+
 </body>
 </html>

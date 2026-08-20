@@ -231,11 +231,85 @@ def check(feats: dict, on: set[str]) -> int:
     return problems
 
 
+def busy(out: Path) -> list[str]:
+    """Кто держит файлы билда.
+
+    Запущенный билд держит открытыми свои DLL, и копирование поверх падает
+    на середине — часть кода уже новая, часть ещё старая. Хуже того,
+    падает оно не на первом файле, а на сто первом, когда полсборки уже
+    перезаписано.
+
+    Проверка простая: загруженную на исполнение DLL Windows не отдаёт на
+    запись. Пробуем открыть — получили отказ, значит билд работает. Ни
+    списка процессов, ни прав администратора для этого не нужно.
+    """
+    locked = []
+    for pat in ("ANAMORF.exe", "_launcher/*.dll",
+                "app/third_party/**/*.dll", "app/third_party/**/*.exe"):
+        for f in out.glob(pat):
+            try:
+                with open(f, "r+b"):
+                    pass
+            except PermissionError:
+                locked.append(str(f.relative_to(out)))
+            except OSError:
+                pass
+    return locked
+
+
+def who(out: Path) -> list[tuple]:
+    """Процессы, запущенные из папки билда. Без psutil молча возвращаем
+    пусто: подсказка приятная, но не настолько, чтобы делать её условием
+    сборки."""
+    try:
+        import psutil
+    except Exception:
+        return []
+    root = str(out).lower()
+    found = []
+    for pr in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            exe = (pr.info.get("exe") or "").lower()
+            if exe.startswith(root):
+                found.append((pr.info["pid"], pr.info["name"], pr.info["exe"]))
+        except Exception:
+            pass
+    return found
+
+
 def assemble(feats: dict, on: set[str], version: str) -> Path:
     owner = module_owner(feats)
     out = OUT_ROOT / f"ANAMORF-{version}"
-    shutil.rmtree(out, ignore_errors=True)
     app = out / "app"
+
+    if out.exists():
+        lk = busy(out)
+        if lk:
+            print("\nБИЛД ЗАПУЩЕН — собирать поверх нельзя.")
+            print("   Держит: " + ", ".join(lk[:4]) +
+                  (f" и ещё {len(lk) - 4}" if len(lk) > 4 else ""))
+            # Назвать процесс важнее, чем перечислить файлы. Закрыть окно —
+            # не то же самое, что остановить приложение: сервер живёт
+            # отдельным python.exe, а llama-server и вовсе своим exe, и оба
+            # переживают закрытие окна. Человеку нужно имя и PID, иначе он
+            # будет уверен, что всё выключил, и окажется прав по-своему.
+            names = who(out)
+            if names:
+                print("   Живы процессы:")
+                for pid, nm, path in names:
+                    print(f"      {nm}  pid {pid}   {path}")
+                print("   Снять всё разом:")
+                print("      Get-Process | Where-Object { $_.Path -like "
+                      f"'{out}\\*' " + "} | Stop-Process -Force")
+            else:
+                print("   Закрой ANAMORF.exe и повтори команду.")
+            raise SystemExit(2)
+        # Сносим ТОЛЬКО app\. data\, models\ и config.json переживают
+        # пересборку — ровно по тому же правилу, по которому их не трогает
+        # обновление. Раньше здесь сносилась вся папка, и каждая сборка
+        # молча стирала настройки и профили голоса вместе с кодом.
+        shutil.rmtree(app, ignore_errors=True)
+
     (app / "anamorf").mkdir(parents=True, exist_ok=True)
 
     n = 0
@@ -295,10 +369,24 @@ def assemble(feats: dict, on: set[str], version: str) -> Path:
     if rt.is_dir():
         shutil.copytree(rt, out / "runtime", dirs_exist_ok=True)
         print("   runtime\\ скопирован")
-    exe = OUT_ROOT / "ANAMORF.exe"
+    # Лаунчер собран onedir: рядом с ANAMORF.exe лежит _launcher\\ с его
+    # библиотеками. Копировать надо оба, иначе exe не стартует. Старая
+    # onefile-раскладка (просто build\\ANAMORF.exe) тоже поддержана — чтобы
+    # уже собранный билд не сломался от смены спеки.
+    ldir = OUT_ROOT / "_launcher_build"
+    if not (ldir / "ANAMORF.exe").exists():
+        ldir = OUT_ROOT / "ANAMORF"          # раскладка прошлой сборки
+    exe = ldir / "ANAMORF.exe"
+    if not exe.exists():
+        exe = OUT_ROOT / "ANAMORF.exe"
+        ldir = None
     if exe.exists():
         shutil.copy2(exe, out / "ANAMORF.exe")
-        print("   ANAMORF.exe скопирован")
+        if ldir and (ldir / "_launcher").is_dir():
+            shutil.copytree(ldir / "_launcher", out / "_launcher", dirs_exist_ok=True)
+            print("   ANAMORF.exe + _launcher\\ скопированы")
+        else:
+            print("   ANAMORF.exe скопирован")
 
     for d in ("models", "data"):
         (out / d).mkdir(exist_ok=True)
