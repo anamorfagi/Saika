@@ -12630,14 +12630,13 @@ const ZONES = [
     {ic:'☰', n:'Движки',     drum:'#tts-engines', open:'#btn-tts'},
     {ic:'◑', n:'Громкость',  open:'#btn-tts', focus:'#tts-vol'},
     {ic:'⊙', n:'Устройство', drum:'#tts-outputs', open:'#btn-tts'},
-    {ic:'✋', n:'Замолчать',  call:() => { if (typeof bargeIn === 'function') bargeIn(); }},
     {ic:'▤', n:'Панель',     screen:'voice'},
   ]},
+  /* Слух: два раздела — движки и микрофоны системы. «Слушать» живёт на
+     ядре (короткое нажатие), шумодав — на внешнем звуковом кольце. */
   {id:'ears', a:150, ic:'◉', name:'Слух', sub:'что слышит', live:true, tools:[
-    {ic:'🎧', n:'Слушать',  hit:'#btn-listen', flag:'#btn-listen'},
     {ic:'☰', n:'Движки',   drum:'#stt-engines',  open:'#btn-mic'},
     {ic:'◐', n:'Микрофон', drum:'#mic-devices',  open:'#btn-mic'},
-    {ic:'≈', n:'Шумодав',  hit:'#btn-mic-ns', live:'#mic-ns-label'},
   ]},
   /* Образ — это КАК ОНА ВЫГЛЯДИТ И ЗВУЧИТ, и больше ничего. «Забыть»
      отсюда убрано: очистка диалога это про разговор, а разговор живёт
@@ -13160,6 +13159,19 @@ const ktop = () => dstack[dstack.length - 1];
 /* Сторона: вправо от точки, пока справа есть место, иначе влево. */
 function kside(x, w){ return (x + KGAP + w + 24 < W) ? 1 : -1; }
 
+/* У края экрана список соскальзывает вниз/вверх, чтобы все видимые
+   строки помещались; точка нажатия остаётся ровно где нажали. */
+function kclampY(lvl){
+  const e = Math.min(KSPAN, Math.max(0, lvl.items.length - 1));
+  const half = KROW*0.5 + 12;
+  let dy = 0;
+  const top = lvl.y - e*KROW - half;
+  const bot = lvl.y + e*KROW + half;
+  if (top < 0) dy = -top;
+  if (bot + dy > H) dy = H - bot;
+  lvl.dy = Math.round(dy);
+}
+
 function koffOf(i, lvl){
   const n = lvl.items.length;
   let off = i - lvl.cur;
@@ -13174,7 +13186,7 @@ function kplace(el, off, lvl, grow){
   const k = Math.abs(off), sg = lvl.side || 1;
   const z  = grow ? -260 : -k*KDEEP_Z;
   const rx = grow ? -26  : off*-KDEEP_ROT;
-  const y = lvl.y + off*KROW;
+  const y = lvl.y + (lvl.dy||0) + off*KROW;
   const x = lvl.x + sg*KGAP;
   el.style.transform =
     'translate('+x+'px,'+y+'px) translateY(-50%) ' +
@@ -13200,7 +13212,12 @@ const BRAIN_CATS = [
 ];
 function levelOneOf(z){
   if (z.id === 'brain') return BRAIN_CATS.map(c => ({...c}));
-  return z.tools.map(t => ({ic:t.ic, n:t.n, s:() => value(t), kind:'tool', t}));
+  return z.tools
+    /* Селектор с единственным вариантом — не выбор, а шум (владелец:
+       «какой-то бесполезный пункт»). Прячем, пока вариантов не станет
+       больше одного; пустой список оставляем — он ещё не наполнился. */
+    .filter(t => !t.drum || rows(t.drum).length !== 1)
+    .map(t => ({ic:t.ic, n:t.n, s:() => value(t), kind:'tool', t}));
 }
 
 /* ── ДАННЫЕ КАТЕГОРИЙ МОЗГОВ ──
@@ -13329,7 +13346,8 @@ function krender(grow){
   if (lvl.side === undefined) lvl.side = 1;
   /* Точка схода переезжает вместе с уровнем — иначе дальние строки
      разъезжаются к чужой точке (главная найденная ошибка). */
-  klayer.style.perspectiveOrigin = lvl.x+'px '+lvl.y+'px';
+  kclampY(lvl);
+  klayer.style.perspectiveOrigin = lvl.x+'px '+(lvl.y+(lvl.dy||0))+'px';
   if (kanchorEl){
     kanchorEl.style.left = dstack[0].x+'px';
     kanchorEl.style.top  = dstack[0].y+'px';
@@ -13412,7 +13430,7 @@ function paintKDots(){
     const el = document.createElement('div');
     el.className = 'zkdot' + (age === 0 ? ' fresh' : '');
     el.style.left = (lvl.x - sg*age*6) + 'px';
-    el.style.top  = (lvl.y - age*10) + 'px';
+    el.style.top  = (lvl.y + (lvl.dy||0) - age*10) + 'px';
     el.title = dstack[j].title
              + (dstack[j+1] ? ' → ' + dstack[j+1].title : '');
     let t = 0;
@@ -13429,7 +13447,7 @@ function paintKDots(){
   ktag.className = 'zktag';
   ktag.textContent = ktop().title;
   ktag.style.left = lvl.x + 'px';
-  ktag.style.top  = (lvl.y + 16) + 'px';
+  ktag.style.top  = (lvl.y + (lvl.dy||0) + 16) + 'px';
   klayer.appendChild(ktag);
 }
 
@@ -13440,8 +13458,8 @@ function kdashDraw(){
   if (!dstack.length){ kline.classList.remove('show'); return; }
   const o = dstack[0], lvl = ktop();
   let tx, ty;
-  if (dstack.length === 1){ tx = o.x + (o.side||1)*KGAP; ty = o.y; }
-  else { tx = lvl.x; ty = lvl.y; }
+  if (dstack.length === 1){ tx = o.x + (o.side||1)*KGAP; ty = o.y + (o.dy||0); }
+  else { tx = lvl.x; ty = lvl.y + (lvl.dy||0); }
   const dx = tx - o.x, dy = ty - o.y, d = Math.hypot(dx, dy);
   const a = 9, b = Math.min(d - 8, a + 34);
   if (d < 10 || b <= a + 2){ kline.classList.remove('show'); return; }
@@ -13557,7 +13575,18 @@ function value(t){
   if (t.flag)  return isOn(t.flag) ? 'включено' : 'выключено';
   if (t.live)  return txt(t.live).slice(0,22) || '';
   if (t.screen) return 'экран';
-  if (t.drum)  { const n = rows(t.drum).length; return n ? n+' шт' : 'открыть'; }
+  if (t.drum){
+    const rs = rows(t.drum);
+    if (!rs.length) return 'открыть';
+    const sel = rs.find(e => e.classList.contains('sel'))
+             || rs.find(e => e.querySelector('.st.ok'));
+    if (sel){
+      const mn = sel.querySelector('.mname');
+      const nm = (mn ? mn.textContent : sel.textContent).trim();
+      if (nm) return nm.slice(0, 22);
+    }
+    return rs.length + ' шт';
+  }
   return '';
 }
 
@@ -13747,8 +13776,12 @@ function goScreen(m, replace){
   say();
   if (!m) return;               // просто сойти с главного, режим не трогаем
   setMode(m);
-  if (m === 'voice') hit('#vp-tab');
-  if (m === 'face')  hit('#av-tab');
+  /* Вкладки панелей слушают mousedown, а не click — hit() по ним
+     молчал, и экран оставался чёрным. Открываем через настоящий API. */
+  const P = window.saikaPanes;
+  if (m === 'voice'){ if (P) P.open('vp'); else hit('#vp-tab'); }
+  if (m === 'face'){  if (P) P.open('av'); else hit('#av-tab'); }
+  if (m === 'chat'){  if (P) P.open('chat'); }
   window.dispatchEvent(new Event('resize'));
 }
 function applyHome(){
@@ -14067,6 +14100,46 @@ function wire(){
      нажатие в пустоту веер не трогало: человек честно «щёлкал, чтобы
      закрыть», и ничего не происходило. Свои же мишени — карточки,
      секторы, капли, ядро — пропускаем: их обработчики решают сами. */
+  /* ЭКВАЛАЙЗЕР НАЖИМНОЙ. Кнопка «Замолчать» из барабана убрана: кольцо
+     спектра вокруг ядра — и есть её голос, нажатие по нему обрывает
+     озвучку. Мишень — вся мёртвая зона между ядром и секторами. */
+  S.addEventListener('pointerdown', ev => {
+    if (open || dstack.length) return;
+    if (document.body.classList.contains('zarrange')) return;
+    const t = ev.target;
+    if (t && t.closest && (t.closest('#zcore') || t.closest('.zkcap')
+        || t.closest('.ztool') || t.closest('.zkdot'))) return;
+    const r = S.getBoundingClientRect();
+    const d = Math.hypot(ev.clientX-r.left-CX, ev.clientY-r.top-CY);
+    if (d >= HOLE*.80) return;               // это уже сектора, не кольцо
+    /* Две звуковые зоны: от ядра до середины круга — ГОЛОС (эквалайзер,
+       нажатие обрывает озвучку), от середины до края — СЛУХ (нажатие
+       переключает шумодав). Граница — радиус R спектра. */
+    const cr = ring.getBoundingClientRect();
+    const dm = Math.hypot(ev.clientX-(cr.left+cr.width/2),
+                          ev.clientY-(cr.top+cr.height/2));
+    const Rmid = Math.min(cr.width, cr.height)*.205;
+    if (dm < Rmid){
+      let speaking = false;
+      try { speaking = typeof saikaSpeaking === 'function' && saikaSpeaking(); }
+      catch(e){}
+      if (!speaking) return;                 // молчит — нажатие ничего не значит
+      try { if (typeof bargeIn === 'function') bargeIn(); } catch(e){}
+      hushAt = performance.now();
+      SFX.close();
+      say('<b>замолчала</b>');
+      setTimeout(() => { if (!open) say(); }, 1600);
+    } else {
+      if (!hit('#btn-mic-ns')) return;
+      nsAt = performance.now();
+      SFX.pick();
+      setTimeout(() => {
+        say('<b>'+esc(txt('#mic-ns-label'))+'</b>');
+        setTimeout(() => { if (!open) say(); }, 1800);
+      }, 150);
+    }
+  });
+
   addEventListener('pointerdown', ev => {
     if (!open || document.body.classList.contains('zarrange')) return;
     const t = ev.target;
@@ -14448,6 +14521,7 @@ function hearData(){
    Это не приукрашивание: наклон постоянный, одинаковый для всех частот
    и не зависит от сигнала — он выравнивает шкалу, а не подкручивает
    показания. */
+let hushAt = 0, nsAt = 0;
 function toBands(a, out){
   if (!a){ out.fill(0); return out; }
   const nb = a.length, lo = 2, hi = Math.floor(nb*0.62), n = out.length;
@@ -14625,6 +14699,36 @@ function ringLoop(){
         ctx.strokeStyle=g; ctx.lineWidth=lw;
         ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
       }
+    }
+
+    // кольцо шумодава по внешнему периметру слуха: видно — включён,
+    // дышит уровнем того, что осталось после чистки (честный сигнал)
+    const nsEl = document.getElementById('mic-ns-label');
+    if (nsEl && nsEl.textContent.indexOf('вкл') !== -1){
+      let lvl = 0;
+      try { lvl = (typeof micLevel !== 'undefined') ? micLevel : 0; } catch(e){}
+      ctx.strokeStyle = 'rgba(255,255,255,'
+        + ((.09 + Math.min(.26, lvl*.9))*dim) + ')';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath(); ctx.arc(cx, cy, R+L+10, 0, Math.PI*2); ctx.stroke();
+    }
+    if (nsAt){
+      const p = (performance.now() - nsAt)/460;
+      if (p < 1){
+        ctx.strokeStyle = 'rgba(255,255,255,'+(((1-p)*.45)*dim)+')';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.arc(cx, cy, R+L+10+p*12, 0, Math.PI*2); ctx.stroke();
+      } else nsAt = 0;
+    }
+
+    // короткая волна-подтверждение: нажали на кольцо — она замолчала
+    if (hushAt){
+      const p = (performance.now() - hushAt)/460;
+      if (p < 1){
+        ctx.strokeStyle = 'rgba(255,255,255,'+(((1-p)*.5)*dim)+')';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx,cy,R+2+p*L*1.4,0,Math.PI*2); ctx.stroke();
+      } else hushAt = 0;
     }
 
     // шесть дуг готовности по внешнему краю, каждая напротив своего органа
