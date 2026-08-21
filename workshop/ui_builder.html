@@ -486,7 +486,13 @@ function draw(){
         d.className='trace'+(q===0?' pick':'');
         d.style.left=(edge.x+sg*(10+Math.abs(q)*6))+'px';
         d.style.top =(edge.y+q*12)+'px';
-        d.onclick=()=>dive(lvl,it);
+        /* В ПРАВКЕ НИЧЕГО НЕ СРАБАТЫВАЕТ. Владелец нажимал на точку,
+           чтобы её подвинуть, а она уводила на другой уровень и исчезала
+           вместе с соседями. Правка — это про расположение предметов;
+           запускать по ней переходы всё равно что двигать мебель и
+           каждый раз проваливаться в подвал. */
+        d.onclick=()=>{ if(mode==='sim') dive(lvl,it);
+                        else { sel=it.id; tree(); fields(); } };
         scene.appendChild(d); traces.push(d);
       });
     } else {
@@ -500,7 +506,8 @@ function draw(){
         d.style.left=(ex+(it.dx||0))+'px';
         d.style.top=(lvl.y+off*S.row+(it.dy||0))+'px';
         if(off===0) d.innerHTML='<b>'+it.n+'</b>';
-        d.onclick=()=>{ stack.length=li+1; lvl.cur=i; draw(); };
+        d.onclick=()=>{ if(mode==='sim'){ stack.length=li+1; lvl.cur=i; draw(); }
+                        else { sel=it.id; tree(); fields(); draw(); } };
         scene.appendChild(d); traces.push(d);
       });
       const nx=stack[li+1];
@@ -597,30 +604,53 @@ function drag(el,it){
   el.onpointerdown=ev=>{
     if(mode!=='edit') return;
     ev.preventDefault(); ev.stopPropagation();
-    sel=it.id; tree(); fields(); 
-    const r=scene.getBoundingClientRect();
-    const x0=ev.clientX-r.left, y0=ev.clientY-r.top;
+    sel=it.id; tree(); fields();
     snap();
+    /* ДВИГАЕМ ТОЛЬКО ЭТОТ ЭЛЕМЕНТ, БЕЗ ПЕРЕРИСОВКИ СЦЕНЫ.
+       Вот из-за чего предмет «смещался по пикселю»: на каждое движение
+       мыши я перерисовывал всё, а перерисовка сносит и создаёт заново
+       ТОТ САМЫЙ элемент, который сейчас в руке. Вместе с ним пропадал
+       захват указателя — и жест обрывался на первом же пикселе.
+
+       Пока рука держит, элемент едет своими left/top. Сцена
+       пересчитывается один раз, когда руку отпустили. */
+    const x0=ev.clientX, y0=ev.clientY;
     const dx0=it.dx||0, dy0=it.dy||0;
-    el.setPointerCapture(ev.pointerId);
-    const mv=e=>{ it.dx=Math.round(dx0+(e.clientX-r.left-x0));
-                  it.dy=Math.round(dy0+(e.clientY-r.top-y0)); fields(); draw(); };
-    const up=()=>{ el.removeEventListener('pointermove',mv);
-                   el.removeEventListener('pointerup',up); save(); };
-    el.addEventListener('pointermove',mv); el.addEventListener('pointerup',up);
+    const L0=parseFloat(el.style.left)||0, T0=parseFloat(el.style.top)||0;
+    try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+    el.style.cursor='grabbing';
+    const mv=e=>{
+      const ddx=e.clientX-x0, ddy=e.clientY-y0;
+      it.dx=Math.round(dx0+ddx); it.dy=Math.round(dy0+ddy);
+      el.style.left=(L0+ddx)+'px'; el.style.top=(T0+ddy)+'px';
+      const sx=$('#s-dx'), sy=$('#s-dy');
+      if(sx){ sx.value=it.dx; $('#v-dx').textContent=it.dx+' px'; }
+      if(sy){ sy.value=it.dy; $('#v-dy').textContent=it.dy+' px'; }
+    };
+    const up=()=>{
+      el.removeEventListener('pointermove',mv);
+      el.removeEventListener('pointerup',up);
+      el.removeEventListener('pointercancel',up);
+      el.style.cursor='';
+      persist(); draw();          // пересчёт ровно один раз, в конце жеста
+    };
+    el.addEventListener('pointermove',mv);
+    el.addEventListener('pointerup',up);
+    el.addEventListener('pointercancel',up);
   };
 }
 let dragA=false;
 anchor.addEventListener('pointerdown',ev=>{ if(mode!=='edit') return;
-  dragA=true; anchor.setPointerCapture(ev.pointerId); });
+  snap(); dragA=true; try{ anchor.setPointerCapture(ev.pointerId); }catch(e){} });
 addEventListener('pointermove',ev=>{
   if(!dragA) return;
   const r=scene.getBoundingClientRect();
   D.anchor.x=Math.max(.03,Math.min(.97,(ev.clientX-r.left)/W()));
   D.anchor.y=Math.max(.08,Math.min(.92,(ev.clientY-r.top)/H()));
-  build();
+  // саму точку двигаем сразу, остальное — по отпусканию
+  anchor.style.left=ax()+'px'; anchor.style.top=ay()+'px';
 });
-addEventListener('pointerup',()=>{ if(dragA){ dragA=false; save(); } });
+addEventListener('pointerup',()=>{ if(dragA){ dragA=false; persist(); draw(); } });
 
 scene.addEventListener('wheel',ev=>{
   if(!stack.length) return;
