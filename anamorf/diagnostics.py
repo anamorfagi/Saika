@@ -7,7 +7,7 @@
 
 Возвращаемая структура (dict):
   category : str   — loading / vram / noref / network / space / corrupt /
-                     cuda / internal / offline / unknown
+                     cuda / internal / offline / nomodel / absent / unknown
   human    : str   — что случилось, человеческим языком
   action   : str   — что Сайка делает автоматически прямо сейчас
   fix      : str|None — код авто-починки для менеджера:
@@ -16,6 +16,8 @@
                        "switch"      просто уйти на запасной движок
                        "cpu"         откатиться на CPU
                        "wait"        ничего не чинить — процесс идёт сам
+                       "download"    движок есть, весов нет — качать модель
+                       "absent"      движка нет в этой сборке — чинить нечего
 """
 
 import re
@@ -67,6 +69,25 @@ _INTERNAL = ("audio_chunk", "shape of", "must be (", "expected shape",
 
 _OFFLINE = ("offline mode", "local_files_only", "hf_hub_offline",
             "can't load", "couldn't find", "is not a local folder")
+
+# 2026-08-21. Третий случай, который тоже нельзя звать поломкой: модуль
+# на месте, а ВЕСОВ нет. Билд едет без моделей — их качают при первом
+# запуске, — и движок без своего файла не поднимется никогда, сколько его
+# ни переключай. Сообщение в логе было уже человеческим («Модель Vosk не
+# найдена: …. Запусти setup/first_run.py»), но classify его не знал, и до
+# глаз доходило «упал с незнакомой мне ошибкой» — та же беда, что описана
+# выше про 2026-08-13: причина есть, а человек её не видит.
+_NO_WEIGHTS = ("model not found", "first_run", "не скачана",
+               "нет файла модели", "model path does not exist",
+               "checkpoint not found", "weights not found")
+
+def _looks_like_no_weights(t: str) -> bool:
+    if _has(t, _NO_WEIGHTS):
+        return True
+    # «модель … не найдена» — два слова врозь, одним списком не поймать:
+    # «не найдена» само по себе слишком общее и хватало бы чужое.
+    return ("модел" in t) and ("не найден" in t)
+
 
 # 2026-08-21. Клиентский билд собирается ПРОФИЛЕМ, и всё, что в профиль не
 # вошло, физически отсутствует — импорт честно падает ModuleNotFoundError.
@@ -191,6 +212,24 @@ def classify(component: str, error: str) -> dict:
                       "её нужно один раз скачать при интернете."),
             "action": "пока беру уже установленный движок",
             "fix": "switch"}
+
+    if _looks_like_no_weights(t):
+        m = re.search(r"[:\s]([A-Za-z]:\\[^\s,;]+|/[^\s,;]+)", error or "")
+        where = m.group(1) if m else ""
+        try:
+            from anamorf import features as _f
+            built = _f.is_build()
+        except Exception:
+            built = False
+        return {
+            "category": "nomodel",
+            "human": (f"У «{name}» нет файла модели"
+                      + (f" — жду его тут: {where}" if where else "")
+                      + ". Сам движок на месте, а весов рядом нет."),
+            "action": ("беру движок, у которого файл есть; скачать этот — "
+                       + ("билд едет без моделей, их надо один раз докачать"
+                          if built else "python setup/first_run.py")),
+            "fix": "download"}
 
     if _has(t, _NO_MODULE):
         m = re.search(r"no module named ['\"]?([\w.]+)", t)
