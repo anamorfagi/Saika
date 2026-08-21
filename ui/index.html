@@ -12068,7 +12068,35 @@ fillGitPop();
     const anchor = document.getElementById('btn-settings')
                 || document.getElementById('btn-board');
     anchor ? anchor.parentNode.insertBefore(b, anchor) : host.appendChild(b);
-    apply(localStorage[KEY] || 'graphite');
+
+    /* ГДЕ ОТКРЫТО — ТАКОЙ И ИНТЕРФЕЙС.
+
+       Рабочая копия держит ПРЕЖНИЙ интерфейс, собранное приложение —
+       новый. Смысл в том, чтобы запустить их рядом (8765 и 8799) и
+       сравнивать вживую: пока новый рисуется, старый обязан оставаться
+       рабочим местом, а не музеем, в который страшно заходить.
+
+       Выбор человека сильнее умолчания: нажал ◐ — значит нажал, и мы
+       больше не спорим. Поэтому умолчание применяется, только если в
+       памяти браузера выбора ещё нет.
+
+       Пока сервер не ответил, ставим прежний интерфейс: он работает
+       всегда и везде, а новый на пол-секунды мигнуть и уехать — хуже,
+       чем появиться на полсекунды позже. */
+    /* «Выбирал ли человек» нельзя спрашивать у localStorage ПОСЛЕ того,
+       как мы сами туда написали: apply() запоминает тему, и наше же
+       временное умолчание тут же выглядело как осознанный выбор. Первый
+       заход в билд из-за этого оставался на прежнем интерфейсе навсегда.
+       Поэтому спрашиваем ДО, и отдельной переменной. */
+    let picked = !!localStorage[KEY];
+    b.onclick = () => { picked = true;
+      apply(localStorage[KEY] === 'graphite' ? 'nocturne' : 'graphite'); };
+
+    if (picked){ apply(localStorage[KEY]); return; }
+    apply('nocturne');
+    fetch('/api/system').then(r => r.json()).then(d => {
+      if (!picked && d && d.build) apply('graphite');
+    }).catch(() => {});
   }
 
   if(document.readyState === 'loading')
@@ -12410,6 +12438,13 @@ html[data-skin="graphite"] #btn-home{
 html[data-skin="graphite"] #btn-home:hover{color:var(--text);background:var(--panel2);
   border-color:var(--g-hi)}
 html[data-skin="graphite"] body.zhome #btn-home{display:none}
+/* И наоборот: кнопки НОВОГО интерфейса не лезут в прежний. «◄ Главный» и
+   «✥ Редактор» принадлежат экрану областей; в прежней раскладке главного
+   экрана нет вовсе, и обе кнопки там обещали бы то, чего не существует.
+   Разделение работает в обе стороны, иначе это не два интерфейса, а один
+   с протечками. */
+html:not([data-skin="graphite"]) #btn-home,
+html:not([data-skin="graphite"]) #btn-arrange{display:none !important}
 html[data-skin="graphite"] header .name{cursor:pointer}
 @media (prefers-reduced-motion:reduce){#zstage *{animation:none!important;transition:none!important}}
 </style>

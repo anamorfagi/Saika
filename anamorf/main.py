@@ -1142,6 +1142,16 @@ def _gpu_procs_windows():
 def system_info():
     """Загрузка системы для панели слева: ЦП, ОЗУ, GPU/VRAM."""
     info = {"cpu": {}, "ram": {}, "gpu": None}
+    # 2026-08-21. Интерфейсу нужно знать, где он открыт: рабочая копия
+    # держит ПРЕЖНИЙ интерфейс, собранное приложение — новый. Так их можно
+    # запустить рядом и сравнивать вживую, а не по памяти. Флаг сюда, а не
+    # в отдельную ручку: /api/system и так спрашивают каждую секунду, а
+    # вторая ручка ради одного булева — это ещё один запрос на ровном месте.
+    try:
+        from anamorf import features as _feat
+        info["build"] = bool(_feat.is_build())
+    except Exception:
+        info["build"] = False
     try:
         import psutil
         vm = psutil.virtual_memory()
