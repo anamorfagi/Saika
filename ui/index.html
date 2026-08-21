@@ -12187,6 +12187,15 @@ body.zopen #zring{transform:translateZ(-170px);filter:blur(1.6px);opacity:.5}
   transform-style:preserve-3d;
   transition:transform .45s var(--zspring), box-shadow .35s var(--zease)}
 #zcore:hover{transform:translate(-50%,-50%) translateZ(10px) scale(1.02)}
+/* Отсчёт до жёсткого выключения виден на самом ядре: оно поджимается и
+   обводится за то же время, что идёт удержание. Полоски прогресса тут
+   нет намеренно — предмет, который уменьшается под пальцем, читается как
+   «идёт нажатие» без единой подписи. */
+#zcore.zhold{transform:translate(-50%,-50%) translateZ(-10px) scale(.90);
+  box-shadow:0 0 0 3px rgba(255,255,255,.55),
+             0 10px 22px -12px rgba(0,0,0,.95),
+             inset 0 2px 3px rgba(255,255,255,.8);
+  transition:transform .9s linear, box-shadow .9s linear}
 body.zopen #zcore{transform:translate(-50%,-50%) translateZ(-40px) scale(.74);
   box-shadow:0 8px 18px -10px rgba(0,0,0,.95), inset 0 2px 3px rgba(255,255,255,.7),
              inset 0 -16px 30px -12px rgba(20,24,32,.5)}
@@ -13194,54 +13203,82 @@ function wire(){
     }
   });
 
-  /* ЦЕНТР ДЕЛАЕТ ДВА ДЕЛА, и они разведены длительностью нажатия.
+  /* ══ ЦЕНТР: ДВА ДЕЙСТВИЯ, И БОЛЬШЕ НИЧЕГО ══
 
-     Короткий клик — выгрузить всё из памяти. Это самое частое действие
-     владельца между заходами, и до сих пор оно лежало кнопкой на дне
-     панели «Система», куда надо было доехать. Теперь это самая большая
-     мишень на экране.
+     Короткое нажатие — микрофон вкл/выкл. Самое частое действие за день,
+     и оно получает самую большую мишень на экране. Веер «Места», живший
+     тут раньше, убран: у центра теперь ровно два дела, и оба разведены
+     длительностью нажатия, а не соседством с третьим.
 
-     Держишь — веер «Места». Секторы раскрываются мгновенно, а центр нет,
-     и это не непоследовательность: у сектора одно дело, у центра два, и
-     цена ошибки разная. Промахнуться мимо сектора значит увидеть не тот
-     веер; промахнуться здесь значит выгрузить модели, которые грелись
-     десять минут.
+     Долгое зажатие — ЖЁСТКОЕ ВЫКЛЮЧЕНИЕ. Не «выгрузить, когда освободится»,
+     а вырубить всё прямо сейчас: оборвать озвучку, остановить длительные
+     работы (стенограмма, журнал слуха, обучение), выгрузить все движки
+     слуха, голоса и локальные LLM — внешним воркерам terminate. Сама
+     Сайка остаётся жива, нужное поднимется заново.
 
-     Подтверждение — вторым нажатием, а не окном confirm(). Окно тут уже
-     ломали шимом один раз, и сломались тогда ВСЕ подтверждения разом;
-     кроме того, вторая кнопка на той же мишени быстрее, чем диалог. */
-  let armed = 0, holdT = 0;
-  async function panic(){
-    const busy = st.brain==='ready' || st.voice==='ready' || st.ears==='ready';
-    if (!busy){
-      say('в памяти пусто — модели поднимутся сами, когда понадобятся');
-      setTimeout(() => { if (!open) say(); }, 2600);
-      return;
-    }
-    if (performance.now() - armed > 3000){
-      armed = performance.now();
-      say('<b>ВЫГРУЗИТЬ ВСЁ ИЗ ПАМЯТИ</b> — нажми в центр ещё раз');
-      setTimeout(() => { if (!open && performance.now()-armed > 2900) say(); }, 3000);
-      return;
-    }
-    armed = 0;
-    say('выгружаю…');
-    try{
+     Подтверждения вторым нажатием больше нет — им было само удержание.
+     Секунда с пальцем на кнопке это уже намерение, и его видно: ядро
+     поджимается и обводится, пока идёт отсчёт. Отпустил раньше — ничего
+     не случилось, а короткое нажатие сработало как микрофон. */
+  const HARD_MS = 900;
+  let holdT = 0, held = false;
+
+  async function hardOff(){
+    SFX.close();
+    say('<b>ВЫРУБАЮ ВСЁ</b> — обрываю работы и выгружаю память…');
+    // 1. Звук глушим сами и мгновенно: ждать сервер тут нечего.
+    try { if (typeof bargeIn === 'function') bargeIn(); } catch(e){}
+    // 2. Длительные работы — каждой своя ручка. Которых нет в этой сборке,
+    //    ответят 404, и это нормально: гасим то, что есть.
+    const stops = ['/api/transcript/stop', '/api/earlog/stop',
+                   '/api/training/stop', '/api/training/dataset/expand_stop'];
+    await Promise.all(stops.map(u => fetch(u, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'}).catch(() => {})));
+    // 3. И только теперь память: выгрузка внешних воркеров это terminate,
+    //    и делать её раньше остановки работ значило бы рвать их на полуслове
+    //    без единого шанса закрыть свои файлы.
+    try {
       await fetch('/api/panic_unload', {method:'POST',
         headers:{'Content-Type':'application/json'}, body:'{}'});
-      say('память освобождена');
-    }catch(e){ say('выгрузить не вышло — сервер не ответил'); }
-    setTimeout(() => { if (!open) say(); }, 2600);
+      say('всё выгружено — поднимется заново, когда понадобится');
+    } catch(e){ say('сервер не ответил — выгрузить не вышло'); }
+    setTimeout(() => { if (!open) say(); }, 3000);
   }
+
+  function mic(){
+    SFX.pick();
+    if (!hit('#btn-listen')){ say('микрофон не найден'); return; }
+    // Состояние читаем У КНОПКИ, а не помним своё: своё разошлось бы с
+    // настоящим на первом же переключении из другого места.
+    setTimeout(() => {
+      say(isOn('#btn-listen') ? 'микрофон <b>включён</b>' : 'микрофон <b>выключен</b>');
+      setTimeout(() => { if (!open) say(); }, 2000);
+    }, 120);
+  }
+
   core.addEventListener('pointerdown', ev => {
     ev.stopPropagation();
-    if (open){ goBack(); return; }
-    core._short = true;
-    holdT = setTimeout(() => { core._short = false; begin(N.__core.z, ev); }, 210);
+    if (open){ hide(); return; }        // веер раскрыт — центр закрывает
+    held = false;
+    core.classList.add('zhold');
+    say('держи, чтобы вырубить всё · отпусти — микрофон');
+    holdT = setTimeout(() => {
+      held = true;
+      core.classList.remove('zhold');
+      hardOff();
+    }, HARD_MS);
   });
-  core.addEventListener('pointerup', ev => {
+  const release = () => {
     clearTimeout(holdT);
-    if (core._short){ core._short = false; SFX.pick(); panic(); }
+    core.classList.remove('zhold');
+    if (!held) mic();
+    held = false;
+  };
+  core.addEventListener('pointerup', release);
+  core.addEventListener('pointerleave', () => {
+    clearTimeout(holdT); core.classList.remove('zhold');
+    if (!held && !open) say();
+    held = false;
   });
 
   addEventListener('pointermove', ev => {
@@ -13318,7 +13355,7 @@ function wire(){
   function arrange(on){
     document.body.classList.toggle('zarrange', on);
     if (on){
-      if (!open) show(N.__core.z);
+      if (!open) show(N.eyes.z);        // веера центра больше нет
       say('<b>РАССТАНОВКА</b> — тяни плашки куда удобно · двойной клик вернёт на место · Esc выйти');
     } else { hide(); say(); }
   }
