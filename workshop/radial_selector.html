@@ -42,8 +42,9 @@ body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
   transform:scale(.2);transition:opacity .3s var(--ease),transform .45s var(--spring)}
 body.open #anchor{opacity:1;transform:scale(1)}
 #trail{position:absolute;inset:0;pointer-events:none}
-#trail circle{fill:#fff;opacity:0;transition:opacity .3s var(--ease)}
-body.open #trail circle{opacity:.5}
+#trail circle{fill:#fff}
+#trail{opacity:0;transition:opacity .3s var(--ease)}
+body.open #trail{opacity:1}
 
 /* ── КАПСУЛА ── */
 .cap{position:absolute;left:0;top:0;height:46px;padding:0 22px 0 18px;
@@ -203,8 +204,7 @@ function open(x, y){
   document.body.classList.add('open');
   stage.style.setProperty('--px', x+'px');
   stage.style.setProperty('--py', y+'px');
-  anchor.style.left = x+'px'; anchor.style.top = y+'px';
-  drawTrail();
+  anchor.style.left = A.x+'px'; anchor.style.top = A.y+'px';
   stack = [{items:L1, cur:1, title:'МОЗГИ'}];
   render(true);
 }
@@ -214,18 +214,38 @@ function close(){
   stack = []; crumb(); hint('нажми в любом месте — веер вырастет оттуда');
 }
 
+/* ПУНКТИР ИДЁТ ОТ ТОЧКИ К КАРТАМ, а не от ядра к точке.
+   Сначала я протянул его от ANAMORF к якорю — и получилась связь не та:
+   выходило, будто веер принадлежит ядру, а точка просто по дороге. На
+   деле наоборот. Точка это место, куда легла рука, и всё, что раскрылось,
+   растёт из неё; ядро тут ни при чём и связывать его ниточкой незачем.
+   Нить показывает, ОТКУДА взялась карта, — а взялась она из точки. */
 function drawTrail(){
   trail.setAttribute('viewBox', '0 0 '+W()+' '+H());
   trail.innerHTML = '';
-  const cx = W()/2, cy = H()/2;
-  for (let i=1;i<=7;i++){
-    const t = i/8;
-    const c = document.createElementNS(NS,'circle');
-    c.setAttribute('cx', cx + (A.x-cx)*t);
-    c.setAttribute('cy', cy + (A.y-cy)*t);
-    c.setAttribute('r', 1.6 + t*1.1);
-    trail.appendChild(c);
-  }
+  const lvl = stack[stack.length-1];
+  if (!lvl) return;
+  const n = lvl.items.length;
+  els.forEach(el => {
+    let off = +el.dataset.i - lvl.cur;
+    if (off >  n/2) off -= n;
+    if (off < -n/2) off += n;
+    const k = Math.abs(off);
+    if (k > SPAN) return;
+    const a = rad(A.dir + off*STEP);
+    const cs = Math.cos(a), sn = Math.sin(a);
+    // четыре точки на пути от якоря до начала карты — чем дальше от
+    // выбранной карты, тем тише нить
+    for (let i=1;i<=4;i++){
+      const t = 0.24 + i*0.17;
+      const c = document.createElementNS(NS,'circle');
+      c.setAttribute('cx', A.x + cs*RAD*t);
+      c.setAttribute('cy', A.y + sn*RAD*t);
+      c.setAttribute('r', k === 0 ? 2.0 : 1.5);
+      c.setAttribute('opacity', (k === 0 ? .62 : .26) * (1.15 - i*0.11));
+      trail.appendChild(c);
+    }
+  });
 }
 
 /* ═══════════════ ОТРИСОВКА УРОВНЯ ═══════════════
@@ -286,7 +306,7 @@ function render(grow){
     }
     el.addEventListener('click', ev => { ev.stopPropagation(); pick(i); });
   });
-  crumb(); say();
+  drawTrail(); crumb(); say();
 }
 
 function repos(){
@@ -297,7 +317,7 @@ function repos(){
     if (off < -n/2) off += n;
     place(el, off, n);
   });
-  say();
+  drawTrail(); say();
 }
 
 /* ═══════════════ ПЕРЕХОД ВГЛУБЬ ═══════════════
