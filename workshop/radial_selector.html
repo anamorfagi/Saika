@@ -16,8 +16,16 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
 /* Сцена смотрит через перспективу: барабан обязан УХОДИТЬ, а не просто
    мельчать. Без точки схода дальние капсулы читаются как «другие
    кнопки», с ней — как та же лента, повёрнутая от тебя. */
-#stage{position:absolute;inset:0;overflow:hidden;perspective:1100px;
-  perspective-origin:50% 50%}
+/* ТОЧКА СХОДА — В ТОЧКЕ НАЖАТИЯ, а не в середине экрана.
+   Вот из-за чего строки «смещались относительно центра»: перспектива
+   тянет всё отодвинутое назад к своей точке схода, а она стояла посреди
+   окна. Список справа от центра — и каждая дальняя строка уползала
+   влево, к середине; получалась лесенка, которую я честно не закладывал.
+
+   Точка схода в якоре чинит это ОДНИМ значением и заодно даёт ровно ту
+   картинку, которую владелец нарисовал: строки сходятся к точке, из
+   которой выросли, и левый край перестаёт плясать. */
+#stage{position:absolute;inset:0;overflow:hidden;perspective:900px}
 
 /* сектор — просто подсветка области, в которую нажали */
 #sect{position:absolute;inset:0;pointer-events:none;opacity:0;
@@ -82,6 +90,18 @@ body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
 .cap.cur .tx{color:#fff}
 .cap.cur .rt{color:rgba(255,255,255,.75)}
 
+/* ── ТОЧКА НАЖАТИЯ ──
+   Она была и потерялась при переходе на список. А она главная: это
+   единственное место на экране, которое человек выбрал сам, и из неё
+   растёт всё остальное. Заодно в ней стоит точка схода перспективы —
+   поэтому строки к ней и сходятся. */
+#anchor{position:absolute;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+  border-radius:50%;background:#fff;pointer-events:none;opacity:0;
+  box-shadow:0 0 0 5px rgba(255,255,255,.09), 0 0 24px 6px rgba(255,255,255,.30);
+  transform:scale(.2);z-index:200;
+  transition:opacity .25s var(--ease), transform .4s var(--spring)}
+body.open #anchor{opacity:1;transform:scale(1)}
+
 /* ── ТОЧКИ ПРОЙДЕННОГО УРОВНЯ ──
    Ушёл вглубь — ВЕСЬ уровень сворачивается в точки, каждая капсула в свою,
    на своём месте. Получается след из точек: сколько развилок прошёл, столько
@@ -125,6 +145,7 @@ body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
 
 <div id="stage">
   <div id="sect"></div>
+  <div id="anchor"></div>
   <div id="ring"><div><b>ANAMORF</b><i>МОЗГИ</i></div></div>
 </div>
 <div id="crumb"></div>
@@ -133,7 +154,7 @@ body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
-const stage = $('#stage');
+const stage = $('#stage'), anchor = $('#anchor');
 const NS = 'http://www.w3.org/2000/svg';
 
 /* ═══════════════ ДАННЫЕ (понарошку, но по форме настоящие) ═══════════════ */
@@ -229,8 +250,11 @@ function side(x, y, w){
 /* ═══════════════ ОТКРЫТЬ / ЗАКРЫТЬ ═══════════════ */
 function open(x, y){
   document.body.classList.add('open');
+  anchor.style.left = x+'px'; anchor.style.top = y+'px';
   stage.style.setProperty('--px', x+'px');
   stage.style.setProperty('--py', y+'px');
+  // вся сцена смотрит из точки, куда легла рука
+  stage.style.perspectiveOrigin = x+'px '+y+'px';
   stack = [{items:L1, cur:1, title:'МОЗГИ', ic:'◆', x, y, side:1}];
   render(true);
 }
@@ -277,14 +301,24 @@ function place(el, off, lvl, grow){
 /* Точка капсулы — её ближний край. Свёрнутый уровень оставляет столбик
    таких точек: форма списка сохраняется, и видно, на какой строке ты
    сворачивал. */
+/* Точка строки стоит ВПЛОТНУЮ к её краю — той стороной, которой строка
+   смотрит на свою точку уровня. Раньше точки жили на полпути к списку и
+   между ними зияло, как выразился владелец, огромное расстояние: они
+   повторяли шаг строк, но не стояли рядом ни с чем. */
 function capPoint(lvl, off){
-  return {x: lvl.x + (lvl.side || 1)*GAP*0.5, y: lvl.y + off*ROW};
+  return {x: lvl.x + (lvl.side || 1)*(GAP*0.42), y: lvl.y + off*ROW};
 }
 
 function render(grow){
   els.forEach(e => e.remove()); els = [];
   const lvl = top_();
   if (lvl.side === undefined) lvl.side = 1;
+  /* Точка схода переезжает вместе с уровнем. Оставь её на первой — и
+     второй уровень, стоящий правее, снова начнёт разъезжаться левым
+     краем: перспектива тянет его к чужой точке. Смотреть надо всегда из
+     той точки, из которой этот уровень вырос. */
+  stage.style.perspectiveOrigin = lvl.x+'px '+lvl.y+'px';
+  anchor.style.left = lvl.x+'px'; anchor.style.top = lvl.y+'px';
   lvl.items.forEach((it, i) => {
     const off = offOf(i, lvl);
     if (Math.abs(off) > SPAN + 1) return;
