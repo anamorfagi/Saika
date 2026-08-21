@@ -12815,15 +12815,18 @@ function build(){
   });
 
   wire();
+  /* Ширма zboot снимается ДО промера: под ней сцена бывает без размера,
+     и геометрия молча не строилась — экран оставался пустым каркасом. */
+  document.documentElement.classList.remove('zboot');
   geometry();
   new ResizeObserver(geometry).observe(S);
+  addEventListener('resize', geometry);
   /* Экран ПОД главным выбирается заранее. Без класса mode-* ни одно
      правило «покажи только эту панель» не срабатывает, и стоит сойти с
      главного — в рабочей области оказываются все панели разом. Заодно
      это чистит `hub`, оставшийся в памяти от вырезанного пульта. */
   setMode(remembered());
   document.body.classList.add('zhome');
-  document.documentElement.classList.remove('zboot');   // области собрались — ширму долой
   say();
   ringLoop();
   poll();
@@ -12844,7 +12847,8 @@ const inner = (deg,r) => [CX+Math.cos(rad(deg))*r, CY+Math.sin(rad(deg))*r];
 
 function geometry(){
   const r = S.getBoundingClientRect();
-  W=r.width; H=r.height; if(!W) return;
+  W=r.width; H=r.height;
+  if(!W){ setTimeout(geometry, 180); return; }   // сцена ещё без размера — повторим
   CX=W/2; CY=H*0.5;
   svg.setAttribute('viewBox','0 0 '+W+' '+H);
   threads.setAttribute('viewBox','0 0 '+W+' '+H);
