@@ -12202,23 +12202,13 @@ body.zopen #zcore-name{opacity:.3}
   transform-style:preserve-3d}
 
 /* ── КАПЛЯ-ЯКОРЬ ── */
-.zdrop{position:absolute;width:58px;height:58px;pointer-events:auto;
-  transform:translate(-50%,-50%) translateZ(40px);transform-style:preserve-3d;
-  display:grid;place-items:center;cursor:pointer;border:0;background:none;padding:0;
-  transition:transform .4s var(--zspring),opacity .3s}
-.zdrop .zb{width:16px;height:16px;border-radius:50%;
-  background:rgba(255,255,255,.085);border:1px solid rgba(255,255,255,.15);
-  box-shadow:0 6px 12px -5px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.1);
-  display:grid;place-items:center;font-size:8px;color:var(--dim);
-  transition:all .28s var(--zease)}
-.zdrop:hover .zb,.zdrop.hot .zb{width:26px;height:26px;background:rgba(255,255,255,.13);
-  border-color:rgba(255,255,255,.35);color:var(--text);font-size:11px}
-body.zopen .zdrop{opacity:.16;pointer-events:none;
-  transform:translate(-50%,-50%) translateZ(10px)}
-body.zopen .zdrop.active{opacity:1;pointer-events:auto;
-  transform:translate(-50%,-50%) translateZ(70px)}
-body.zopen .zdrop.active .zb{width:30px;height:30px;background:rgba(255,255,255,.13);
-  border-color:rgba(255,255,255,.4);color:var(--text)}
+/* ── КАПЕЛЬ-ЯКОРЕЙ НЕТ (2026-08-21) ──
+   Были шесть точек на лучах, по одной на орган. Они противоречили
+   главному обещанию экрана: сектор — мишень, у которой край упирается в
+   границу, промахнуться нельзя в принципе. Точка возвращала прицеливание
+   ровно туда, откуда его выгнали, и врала глазу, будто нажимать надо
+   именно в неё. Нажимать надо КУДА УГОДНО в области — так и есть, и
+   теперь ничто не утверждает обратного. */
 
 /* ── ИНСТРУМЕНТ ── */
 .ztool{position:absolute;transform:translate(-50%,-50%) translateZ(20px) scale(.4);
@@ -12618,12 +12608,7 @@ function build(){
     lab.innerHTML = '<span class="zn">'+z.name+'</span><span class="zs">'+z.sub+'</span>';
     S.appendChild(lab);
 
-    const b = document.createElement('button');
-    b.className = 'zdrop'; b.dataset.id = z.id;
-    b.innerHTML = '<span class="zb">'+z.ic+'</span>';
-    layer.appendChild(b);
-
-    N[z.id] = {z, path, cut, lab, bead:b, tools:[], lines:[]};
+    N[z.id] = {z, path, cut, lab, bead:null, tools:[], lines:[]};
     z.tools.forEach(() => {
       const t = document.createElement('div');
       t.className = 'ztool'; layer.appendChild(t); N[z.id].tools.push(t);
@@ -12702,9 +12687,11 @@ function geometry(){
 
     const ax = CX + Math.cos(rad(z.a))*W*0.225;
     const ay = CY + Math.sin(rad(z.a))*H*0.265;
-    N[z.id].ax = ax; N[z.id].ay = ay;
-    N[z.id].bead.style.left = ax+'px';
-    N[z.id].bead.style.top  = ay+'px';
+    /* Точка по умолчанию — на закреплённом луче. Нужна, только если веер
+       открыт без нажатия. Нажали рукой — начало отсчёта переезжает под
+       палец, и веер вырастает оттуда. */
+    N[z.id].hx = ax; N[z.id].hy = ay;
+    if (open !== z.id){ N[z.id].ax = ax; N[z.id].ay = ay; }
 
     // Подпись по тому же лучу, что и капля, только дальше. У края экрана
     // было бы «правильнее» геометрически, но на широком мониторе луч
@@ -12982,7 +12969,6 @@ function show(z){
     const n = N[k], on = k === z.id;
     if (n.path) n.path.classList.toggle('active', on);
     if (n.lab)  n.lab.classList.toggle('on', on);
-    if (n.bead && n.bead !== core) n.bead.classList.toggle('active', on);
   });
   field.style.transform = 'translate3d(0,0,-260px)';
   glow.style.left = N[z.id].ax+'px';
@@ -13032,7 +13018,6 @@ function hide(){
     n.lines.forEach(l => l.classList.remove('show'));
     if (n.path) n.path.classList.remove('active');
     if (n.lab)  n.lab.classList.remove('on');
-    if (n.bead && n.bead !== core) n.bead.classList.remove('active');
   });
   aimed = null;
   document.body.classList.remove('zopen','zaim');
@@ -13174,10 +13159,28 @@ function begin(z, ev){
 
      Ведение рукой не задето: там кнопка НЕ отпускается, и переезд между
      секторами разбирается в pointermove, а не здесь. */
-  if (open && open !== z.id){ hide(); return; }
+  if (open){ hide(); return; }
   press = {z, x:ev.clientX, y:ev.clientY, shown:true, done:false};
-  if (N[z.id].bead !== core) N[z.id].bead.classList.add('hot');
+  anchor(z, ev.clientX, ev.clientY);
   show(z);
+}
+
+/* НАЧАЛО ОТСЧЁТА ВЕЕРА — ТАМ, ГДЕ ЛЕГЛА РУКА.
+   Углы лучей при этом не поехали: форма веера постоянна и по-прежнему
+   запоминается рукой, двигается только точка, из которой он растёт.
+   Держим её в пределах сектора — не ближе дыры под ядром и не вплотную к
+   краю: иначе половина лучей ушла бы за кадр, и вытаскивать их пришлось
+   бы расталкиванием, а расталкивание ломает ровно те углы, которые рука
+   и помнит. */
+function anchor(z, cx, cy){
+  const nd = N[z.id]; if (!nd) return;
+  if (z.id === '__core'){ nd.ax = CX; nd.ay = CY; return; }
+  const r = S.getBoundingClientRect();
+  const dx = (cx - r.left) - CX, dy = (cy - r.top) - CY;
+  const d = Math.hypot(dx, dy) || 1;
+  const lo = HOLE + 46, hi = Math.min(W, H) * .44;
+  const k = Math.max(lo, Math.min(hi, d)) / d;
+  nd.ax = CX + dx*k; nd.ay = CY + dy*k;
 }
 
 function wire(){
@@ -13185,14 +13188,10 @@ function wire(){
     if (n.path){
       n.path.addEventListener('pointerdown', ev => begin(n.z, ev));
       n.path.addEventListener('pointerenter', () => {
-        if (!open){ n.lab.classList.add('hot'); n.bead.classList.add('hot'); SFX.hover(); }
+        if (!open){ n.lab.classList.add('hot'); SFX.hover(); }
       });
-      n.path.addEventListener('pointerleave', () => {
-        n.lab.classList.remove('hot'); n.bead.classList.remove('hot');
-      });
+      n.path.addEventListener('pointerleave', () => n.lab.classList.remove('hot'));
     }
-    if (n.bead && n.bead !== core)
-      n.bead.addEventListener('pointerdown', ev => { ev.stopPropagation(); begin(n.z, ev); });
   });
 
   /* ЦЕНТР ДЕЛАЕТ ДВА ДЕЛА, и они разведены длительностью нажатия.
@@ -13263,9 +13262,8 @@ function wire(){
     if (press.lock) return;
     press.lock = true;
     setTimeout(() => { if (press) press.lock = false; }, 180);
-    if (N[press.z.id].bead !== core) N[press.z.id].bead.classList.remove('hot');
     press.z = nz;
-    N[nz.id].bead.classList.add('hot');
+    anchor(nz, ev.clientX, ev.clientY);
     show(nz);
   }, {passive:true});
 
@@ -13298,8 +13296,6 @@ function wire(){
 
   addEventListener('pointerup', () => {
     if (!press) return;
-    if (N[press.z.id] && N[press.z.id].bead !== core)
-      N[press.z.id].bead.classList.remove('hot');
     if (aimed){
       const el = aimed, z = press.z;
       if (el._drum) commit(el);
@@ -13383,7 +13379,7 @@ function wire(){
   addEventListener('pointerdown', ev => {
     if (!open || document.body.classList.contains('zarrange')) return;
     const t = ev.target;
-    if (t && t.closest && (t.closest('.ztool') || t.closest('.zdrop')
+    if (t && t.closest && (t.closest('.ztool')
         || t.closest('#zcore') || t.closest('#zsvg'))) return;
     hide();
   });
