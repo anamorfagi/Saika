@@ -13,7 +13,11 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
   font:400 14px/1.4 "Inter","Segoe UI",system-ui,sans-serif;overflow:hidden;
   user-select:none;-webkit-user-select:none}
 
-#stage{position:absolute;inset:0;overflow:hidden}
+/* Сцена смотрит через перспективу: барабан обязан УХОДИТЬ, а не просто
+   мельчать. Без точки схода дальние капсулы читаются как «другие
+   кнопки», с ней — как та же лента, повёрнутая от тебя. */
+#stage{position:absolute;inset:0;overflow:hidden;perspective:1100px;
+  perspective-origin:50% 50%}
 
 /* сектор — просто подсветка области, в которую нажали */
 #sect{position:absolute;inset:0;pointer-events:none;opacity:0;
@@ -41,43 +45,42 @@ body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
    вспоминая: три кружка на дороге значит три уровня пройдено. */
 
 /* ── КАПСУЛА ── */
-/* КАРТА = РЫЧАГ + ПЛАШКА.
-   Рычаг крепится к точке уровня и поворачивается — он решает, куда карта
-   смотрит. Плашка сидит на конце рычага и держит текст прямым.
+/* СПИСОК, А НЕ ВЕЕР.
+   Веер пробовали — владелец посмотрел и сказал: не то. Капсулы теперь
+   стоят столбиком, как строки, и это честнее: список и есть список, а
+   раскладывать его лучами значило заставлять глаз бежать по дуге там,
+   где он привык бежать сверху вниз.
 
-   Разделение нужно ровно для одного: веер иногда раскрывается ВЛЕВО —
-   когда справа нет места. Повернуть карту целиком значило бы положить
-   надписи вверх ногами, а нечитаемая надпись это не «зеркально», это
-   просто нечитаемая надпись. Поэтому рычаг разворачивается на 180°, а
-   плашка внутри — обратно, и текст остаётся прямым, с какой бы стороны
-   от точки веер ни встал. */
-.cap{position:absolute;left:0;top:0;height:46px;
-  transform-origin:-1px 50%;will-change:transform,opacity}
+   Глубина осталась и делает главную работу. Крайние капсулы отвёрнуты
+   от зрителя и отодвинуты назад — это не «другие кнопки», это та же
+   лента, уходящая в барабан. Ближняя строка стоит ровно и светлее всех,
+   и именно она выбрана. Прозрачности нет нигде: дальние ТЕМНЕЕ, а не
+   прозрачнее, — сквозь прозрачную видно фон, и текст на ней тонет. */
+.cap{position:absolute;left:0;top:0;height:44px;
+  transform-origin:50% 50%;will-change:transform,filter;
+  transform-style:preserve-3d}
 .cap .body{display:flex;align-items:center;gap:11px;white-space:nowrap;
-  height:46px;padding:0 22px 0 18px;border-radius:999px;cursor:pointer;
-  /* Плашка НЕ полупрозрачная: сплошной цвет, ничего не просвечивает. */
-  background:linear-gradient(168deg,#3a3a43,#24242b);
+  height:44px;padding:0 20px 0 16px;border-radius:999px;cursor:pointer;
+  background:linear-gradient(168deg,#3d3d47,#26262e);
   border:1px solid rgba(255,255,255,.20);
-  box-shadow:0 18px 34px -16px rgba(0,0,0,.95), 0 2px 4px rgba(0,0,0,.6),
+  box-shadow:0 16px 30px -14px rgba(0,0,0,.95), 0 2px 4px rgba(0,0,0,.6),
              inset 0 1px 0 rgba(255,255,255,.08)}
-/* При зеркальном веере плашку доворачивать НЕ НАДО. Рычаг уже повёрнут
-   на 180°, то есть его собственная ось X снова смотрит вправо, и текст
-   на ней и так прямой. Доворот плашки был вторым разворотом поверх
-   первого — ровно то, из-за чего надписи вставали вверх ногами.
-   Смещаем плашку на свою длину назад, чтобы она легла ПО ТУ сторону
-   точки, а не накрыла её собой. */
+/* Список слева от точки сдвигается целиком, но ПОРЯДОК внутри строки не
+   трогаем. Разворот содержимого ставил подпись перед именем — «зрение,
+   инструменты, длина  Возможности», — и строка начинала читаться с
+   конца. Зеркалить надо раскладку, а не язык. */
 .cap .ic{font-size:15px;line-height:1;flex:none}
-.cap .tx{font:400 15px/1 inherit;letter-spacing:.005em}
+.cap .tx{font:400 14.5px/1 inherit;letter-spacing:.005em}
 .cap .sub{font:400 11px/1 inherit;color:var(--dim)}
 .cap .rt{font:500 10px/1 inherit;color:var(--dim);letter-spacing:.08em}
-/* Выбранная — светлее и с обводкой. Внимание сохраняется: чтобы одна
-   стала ярче, остальные обязаны стать темнее, — но темнее, а не прозрачнее. */
-.cap.cur .body{background:linear-gradient(168deg,#5c5c69,#33333c);
-  border-color:rgba(255,255,255,.5);
-  box-shadow:0 22px 44px -18px #000, 0 2px 5px rgba(0,0,0,.7),
-             inset 0 1px 0 rgba(255,255,255,.14)}
+/* Выбранная — светлее и с обводкой. Внимание сохраняется: одна ярче,
+   значит остальные обязаны быть темнее. */
+.cap.cur .body{background:linear-gradient(168deg,#61616e,#37373f);
+  border-color:rgba(255,255,255,.55);
+  box-shadow:0 26px 50px -20px #000, 0 3px 6px rgba(0,0,0,.75),
+             inset 0 1px 0 rgba(255,255,255,.16)}
 .cap.cur .tx{color:#fff}
-.cap.cur .rt{color:rgba(255,255,255,.72)}
+.cap.cur .rt{color:rgba(255,255,255,.75)}
 
 /* ── ТОЧКИ ПРОЙДЕННОГО УРОВНЯ ──
    Ушёл вглубь — ВЕСЬ уровень сворачивается в точки, каждая капсула в свою,
@@ -189,8 +192,20 @@ const L1 = [
 /* Веер РОВНЫЙ: маленький угловой шаг и большой радиус. Круче — и карты
    встают лесенкой, у которой каждая следующая читается хуже предыдущей.
    Наклон нужен ровно настолько, чтобы было видно, что карт много. */
-const STEP = 7, RAD = 150, SPAN = 3;
-const LEN = 340, HH = 26;           // самая длинная карта и её полувысота
+/* РАДИУС МАЛЕНЬКИЙ. Карты начинаются почти от самой точки — как карты в
+   руке, которые сходятся у большого пальца и расходятся дальними углами.
+   Раньше радиус был сто пятьдесят, и между точкой и первой картой зияла
+   пустая ладонь; пока там лежал пунктир, дыру было чем оправдать, а без
+   него осталась просто дыра.
+
+   Разносит карты не радиус, а ДЛИНА: поворот на семь градусов уводит
+   дальний конец на четыре десятка пикселей, и веер раскрывается сам
+   собой, не расталкивая начало. */
+/* ROW — шаг строки, GAP — зазор от точки уровня до списка. Зазор
+   маленький намеренно: владелец просил вплотную, и он прав — пустая
+   полоса между точкой и списком ничего не сообщает, а место ест. */
+const ROW = 46, GAP = 16, SPAN = 3;
+const DEEP_Z = 78, DEEP_ROT = 11;   // насколько дальние уходят в барабан
 
 let stack = [];        // [{items, cur, title, x, y, dir, ic}]
 let els = [], nodes = [], busy = false;
@@ -199,58 +214,16 @@ const rad = d => d*Math.PI/180;
 const W = () => stage.clientWidth, H = () => stage.clientHeight;
 const top_ = () => stack[stack.length-1];
 
-const STEP2 = () => STEP;
-/* Следующая точка отступает настолько, чтобы её веер не накрыл кружок
-   предыдущей вместе с подписью. Меньше — и цепочка читается как каша. */
-const LINK = 150;
 
-/* ═══════════════ ГДЕ РАСКРЫТЬСЯ ═══════════════ */
-function clearance(x, y, deg){
-  const M = 20;
-  let worst = 1e9;
-  for (const o of [-SPAN, -SPAN/2, 0, SPAN/2, SPAN]){
-    const a = rad(deg + o*STEP);
-    const ux = Math.cos(a), uy = Math.sin(a), nx = -uy, ny = ux;
-    for (const r of [RAD, RAD + LEN]){
-      for (const h of [-HH, HH]){
-        const px = x + ux*r + nx*h, py = y + uy*r + ny*h;
-        worst = Math.min(worst, px - M, W() - M - px, py - M, H() - M - py);
-      }
-    }
-  }
-  return worst;
-}
-/* ВЕЕР ЧИТАЕТСЯ ТОЛЬКО ГОРИЗОНТАЛЬНЫМ. Карта длинная, надпись идёт вдоль
-   неё — стоит вееру уйти вниз или вверх, и текст встаёт на бок. Поэтому
-   направление ищется не по всему кругу, а в двух коридорах: вправо и
-   влево, с наклоном не больше тридцати пяти градусов. Влево читается
-   так же хорошо — рычаг разворачивается, плашка внутри остаётся прямой.
+/* ═══════════════ С КАКОЙ СТОРОНЫ ═══════════════
+   Список вертикальный, деваться ему по вертикали некуда — значит вопрос
+   только один: вправо от точки или влево. Вправо, пока справа есть место.
 
-   Первая проба искала по всем 360° и честно находила «место» внизу.
-   Место там было, а прочитать написанное — нет. */
-/* Шестнадцать, а не тридцать пять. Наклон веера складывается с наклоном
-   самой дальней карты (SPAN×STEP), и при тридцати пяти нижняя карта
-   вставала под полтинник — читать её приходилось, наклоняя голову. */
-const TILT = 16;
-function readable(){
-  const out = [];
-  for (let d = -TILT; d <= TILT; d += 5) out.push(d);          // вправо
-  for (let d = 180 - TILT; d <= 180 + TILT; d += 5) out.push(d); // влево
-  return out;
-}
-function aim(x, y, prefer){
-  const out = (prefer === undefined)
-    ? Math.atan2(y - H()/2, x - W()/2)*180/Math.PI : prefer;
-  let best = 0, score = -1e9;
-  for (const d of readable()){
-    const c = clearance(x, y, d);
-    // отклонение от «наружу» — но только как тонкий довесок: читаемость
-    // и наличие места важнее привычки
-    const dev = Math.abs(((d - out + 540) % 360) - 180);
-    const sc = (c >= 0 ? 10000 - dev : c*6 - dev);
-    if (sc > score){ score = sc; best = d; }
-  }
-  return best;
+   Тут раньше жила целая тригонометрия поиска направления по всему кругу.
+   Она честно работала и была не нужна: у списка два положения, а не
+   триста шестьдесят. */
+function side(x, y, w){
+  return (x + GAP + w + 24 < W()) ? 1 : -1;
 }
 
 /* ═══════════════ ОТКРЫТЬ / ЗАКРЫТЬ ═══════════════ */
@@ -258,7 +231,7 @@ function open(x, y){
   document.body.classList.add('open');
   stage.style.setProperty('--px', x+'px');
   stage.style.setProperty('--py', y+'px');
-  stack = [{items:L1, cur:1, title:'МОЗГИ', ic:'◆', x, y, dir: aim(x, y)}];
+  stack = [{items:L1, cur:1, title:'МОЗГИ', ic:'◆', x, y, side:1}];
   render(true);
 }
 function close(){
@@ -276,22 +249,23 @@ function offOf(i, lvl){
   if (off < -n/2) off += n;
   return off;
 }
-function place(el, off, lvl){
+function place(el, off, lvl, grow){
   const k = Math.abs(off);
-  const scale = k === 0 ? 1 : Math.max(.84, 1 - k*.055);
-  const ang = lvl.dir + off*STEP;
-  /* Сторона решается ПО ВЕЕРУ, а не по каждой карте. Считал по карте — и
-     у веера, смотрящего почти строго влево, соседние карты оказывались по
-     разные стороны от девяноста градусов: половина разворачивалась,
-     половина нет, и веер складывался бабочкой. Сторона у веера одна. */
-  const flip = Math.cos(rad(lvl.dir)) < 0;
-  el.classList.toggle('flip', flip);
+  const sg = lvl.side || 1;
+  el.classList.toggle('right', sg < 0);
+  /* Строка тем дальше, чем дальше от выбранной: уходит назад по Z и
+     отворачивается по X. Ближняя стоит ровно — она и есть выбор. */
+  const z = grow ? -260 : -k*DEEP_Z;
+  const rx = grow ? -26 : off*-DEEP_ROT;
+  const y = lvl.y + off*ROW;
+  const x = lvl.x + sg*GAP;
   el.style.transform =
-    'translate('+lvl.x+'px,'+lvl.y+'px) rotate('+(flip ? ang+180 : ang)+'deg) '+
-    (flip ? 'translateX('+(-RAD)+'px) translateX(-100%) '
-          : 'translateX('+RAD+'px) ') +
-    'translateY(-50%) scale('+scale+')';
-  el.style.opacity = k > SPAN ? 0 : 1;
+    'translate('+x+'px,'+y+'px) translateY(-50%) '+
+    (sg < 0 ? 'translateX(-100%) ' : '') +
+    'translateZ('+z+'px) rotateX('+rx+'deg)';
+  // дальние ТЕМНЕЕ, а не прозрачнее
+  el.style.filter = 'brightness('+(1 - Math.min(.62, k*.19)).toFixed(2)+')';
+  el.style.opacity = (k > SPAN || grow) ? 0 : 1;
   el.style.zIndex = 100 - k;
   el.classList.toggle('cur', off === 0);
   el.style.pointerEvents = k > SPAN ? 'none' : 'auto';
@@ -300,14 +274,17 @@ function place(el, off, lvl){
 /* Точка капсулы — её БЛИЖНИЙ конец, тот, которым она крепилась к уровню.
    Он один и тот же и для обычного веера, и для зеркального, поэтому
    считается одинаково: точка уровня плюс радиус по лучу карты. */
+/* Точка капсулы — её ближний край. Свёрнутый уровень оставляет столбик
+   таких точек: форма списка сохраняется, и видно, на какой строке ты
+   сворачивал. */
 function capPoint(lvl, off){
-  const a = rad(lvl.dir + off*STEP);
-  return {x: lvl.x + Math.cos(a)*RAD, y: lvl.y + Math.sin(a)*RAD};
+  return {x: lvl.x + (lvl.side || 1)*GAP*0.5, y: lvl.y + off*ROW};
 }
 
 function render(grow){
   els.forEach(e => e.remove()); els = [];
   const lvl = top_();
+  if (lvl.side === undefined) lvl.side = 1;
   lvl.items.forEach((it, i) => {
     const off = offOf(i, lvl);
     if (Math.abs(off) > SPAN + 1) return;
@@ -322,21 +299,27 @@ function render(grow){
     stage.appendChild(el); els.push(el);
     if (grow){
       el.style.transition = 'none';
-      const a0 = lvl.dir + off*STEP, f0 = Math.cos(rad(lvl.dir)) < 0;
-      el.classList.toggle('flip', f0);
-      el.style.transform = 'translate('+lvl.x+'px,'+lvl.y+'px) rotate('
-        +(f0 ? a0+180 : a0)+'deg) '
-        + (f0 ? 'translateX(-100%) ' : '')
-        + 'translateY(-50%) scale(.2)';
+      place(el, off, lvl, true);          // рождается из глубины барабана
       requestAnimationFrame(() => {
-        el.style.transition = 'transform .5s var(--spring), opacity .35s var(--ease)';
-        setTimeout(() => place(el, off, lvl), Math.abs(off)*45);
+        el.style.transition = 'transform .46s var(--spring), '
+                            + 'opacity .3s var(--ease), filter .3s var(--ease)';
+        setTimeout(() => place(el, off, lvl), Math.abs(off)*38);
       });
     } else {
-      el.style.transition = 'transform .42s var(--spring), opacity .3s var(--ease)';
+      el.style.transition = 'transform .38s var(--spring), '
+                          + 'opacity .26s var(--ease), filter .26s var(--ease)';
       place(el, off, lvl);
     }
     el.addEventListener('click', ev => { ev.stopPropagation(); pick(i); });
+  });
+  /* Сторону и ширину знаем только после отрисовки: ширина капсулы
+     зависит от текста, а угадывать её значит промахиваться. */
+  requestAnimationFrame(() => {
+    const cur = els.find(e => e.classList.contains('cur'));
+    lvl.w = cur ? cur.querySelector('.body').offsetWidth : 260;
+    const sg = side(lvl.x, lvl.y, lvl.w);
+    if (sg !== lvl.side){ lvl.side = sg; els.forEach(e =>
+      place(e, offOf(+e.dataset.i, lvl), lvl)); paintNodes(); }
   });
   paintNodes(); crumb(); say();
 }
@@ -383,27 +366,26 @@ function dive(next){
   /* Карты СХЛОПЫВАЮТСЯ В СВОЮ ТОЧКУ, и точка остаётся стоять кружком.
      Следующий уровень отступает по лучу выбранной карты — так цепочка
      точек показывает дорогу, а не наваливается сама на себя. */
+  /* Уровень уходит В ГЛУБИНУ БАРАБАНА и гаснет — каждая строка на своём
+     месте, не сваливаясь в общую кучу. Поэтому от уровня остаётся
+     столбик точек, повторяющий его форму: видно, на какой строке
+     сворачивал. */
   els.forEach(el => {
     const off = offOf(+el.dataset.i, lvl);
-    const a1 = lvl.dir + off*STEP, f1 = Math.cos(rad(lvl.dir)) < 0;
-    el.style.transition = 'transform .34s var(--ease), opacity .3s var(--ease)';
-    /* Каждая капсула сжимается В СВОЮ точку — туда, где она крепилась, —
-       а не сваливается обратно в общий центр. Поэтому от уровня остаётся
-       веерок точек, повторяющий его форму, и по нему видно, где ты был. */
-    el.style.transform = 'translate('+lvl.x+'px,'+lvl.y+'px) rotate('
-      + (f1 ? a1+180 : a1) + 'deg) '
-      + (f1 ? 'translateX('+(-RAD)+'px) translateX(-100%) '
-            : 'translateX('+RAD+'px) ')
-      + 'translateY(-50%) scale(.04)';
-    el.style.opacity = '0';
+    el.style.transition = 'transform .3s var(--ease), opacity .26s var(--ease)';
+    place(el, off, lvl, true);
   });
   /* Новый уровень начинается ровно там, где была выбранная капсула, —
      в её ближнем конце. Никаких отступов и никаких нитей: капсула
      свернулась в точку, и из этой самой точки пошёл следующий веер. */
-  const p = capPoint(lvl, 0);
-  next.x = Math.max(30, Math.min(W()-30, p.x));
-  next.y = Math.max(50, Math.min(H()-64, p.y));
-  next.dir = aim(next.x, next.y, lvl.dir);   // предпочитаем то же направление
+  /* Следующий уровень встаёт ВПЛОТНУЮ за выбранной строкой — сразу за её
+     дальним краем. Никаких отступов «на всякий случай»: уровни идут один
+     за другим лентой, и пустота между ними ничего не сообщала бы. */
+  const sg = lvl.side || 1;
+  const w = lvl.w || 260;
+  next.x = Math.max(20, Math.min(W()-20, lvl.x + sg*(GAP + w + GAP)));
+  next.y = Math.max(60, Math.min(H()-80, lvl.y));
+  next.side = sg;
   setTimeout(() => { stack.push(next); render(true); busy = false; }, 300);
 }
 function popTo(i){
@@ -411,15 +393,8 @@ function popTo(i){
   busy = true;
   const cur = top_();
   els.forEach(el => {
-    const off = offOf(+el.dataset.i, cur);
-    const a2 = cur.dir + off*STEP, f2 = Math.cos(rad(cur.dir)) < 0;
     el.style.transition = 'transform .26s var(--ease), opacity .2s var(--ease)';
-    el.style.transform = 'translate('+cur.x+'px,'+cur.y+'px) rotate('
-      + (f2 ? a2+180 : a2) + 'deg) '
-      + (f2 ? 'translateX('+(-RAD)+'px) translateX(-100%) '
-            : 'translateX('+RAD+'px) ')
-      + 'translateY(-50%) scale(.04)';
-    el.style.opacity = '0';
+    place(el, offOf(+el.dataset.i, cur), cur, true);
   });
   setTimeout(() => { stack.length = i + 1; render(true); busy = false; }, 240);
 }
@@ -486,9 +461,5 @@ addEventListener('wheel', ev => {
   lvl.cur = (lvl.cur + (ev.deltaY > 0 ? -1 : 1) + n) % n;
   repos();
 }, {passive:false});
-addEventListener('resize', () => {
-  if (!stack.length) return;
-  stack.forEach(l => { l.dir = aim(l.x, l.y, l.dir); });
-  render(false);
-});
+addEventListener('resize', () => { if (stack.length) render(false); });
 </script></body></html>
