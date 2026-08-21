@@ -18,6 +18,8 @@
                        "wait"        ничего не чинить — процесс идёт сам
 """
 
+import re
+
 # каждая запись: (список сигнатур в тексте ошибки, функция-строитель ответа)
 # порядок важен — более специфичные категории идут раньше общих.
 
@@ -65,6 +67,20 @@ _INTERNAL = ("audio_chunk", "shape of", "must be (", "expected shape",
 
 _OFFLINE = ("offline mode", "local_files_only", "hf_hub_offline",
             "can't load", "couldn't find", "is not a local folder")
+
+# 2026-08-21. Клиентский билд собирается ПРОФИЛЕМ, и всё, что в профиль не
+# вошло, физически отсутствует — импорт честно падает ModuleNotFoundError.
+# Владелец открыл билд профиля base, увидел шесть движков слуха и пять
+# голоса, все красные, у каждого «упал с незнакомой мне ошибкой», — и решил,
+# что сломалась Сайка. Не сломалась: их там просто нет.
+#
+# Отсутствие и поломка — разные вещи, и называть их одним словом хуже, чем
+# молчать: поломку идут чинить, а тут чинить нечего. Стоит ПОСЛЕ _CUDA
+# намеренно: сбой драйвера NVIDIA часто выходит наружу тем же ImportError,
+# и путать его с «не собрали» нельзя — там как раз есть что чинить.
+_NO_MODULE = ("no module named", "modulenotfounderror",
+              "cannot import name", "importerror",
+              "не в этой сборке")
 
 
 def _has(text, sigs):
@@ -175,6 +191,31 @@ def classify(component: str, error: str) -> dict:
                       "её нужно один раз скачать при интернете."),
             "action": "пока беру уже установленный движок",
             "fix": "switch"}
+
+    if _has(t, _NO_MODULE):
+        m = re.search(r"no module named ['\"]?([\w.]+)", t)
+        mod = m.group(1) if m else ""
+        try:
+            from anamorf import features as _f
+            built = _f.is_build()
+        except Exception:
+            built = False
+        if built:
+            return {
+                "category": "absent",
+                "human": (f"«{name}» нет в этой сборке — движок не вошёл в "
+                          f"профиль, которым собран билд"
+                          + (f" (не хватает модуля «{mod}»)." if mod else ".")),
+                "action": ("беру тот движок, что есть; чтобы появился этот — "
+                           "нужен билд с этой фичой или докачиваемый блок"),
+                "fix": "absent"}
+        return {
+            "category": "absent",
+            "human": (f"«{name}» не установлен"
+                      + (f": нет пакета «{mod}»." if mod else ".")),
+            "action": ("беру тот движок, что есть; поставить — "
+                       "python setup/install.py или docs по этой фиче"),
+            "fix": "absent"}
 
     return {
         "category": "unknown",
