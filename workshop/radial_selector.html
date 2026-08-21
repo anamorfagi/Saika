@@ -39,10 +39,6 @@ body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
    Первая точка ставится там, куда легла рука. Дальше каждый уровень
    оставляет свою — и все они видны сразу, так что глубину видно, не
    вспоминая: три кружка на дороге значит три уровня пройдено. */
-#trail{position:absolute;inset:0;pointer-events:none;opacity:0;
-  transition:opacity .3s var(--ease)}
-#trail circle{fill:#fff}
-body.open #trail{opacity:1}
 
 /* ── КАПСУЛА ── */
 /* КАРТА = РЫЧАГ + ПЛАШКА.
@@ -83,30 +79,33 @@ body.open #trail{opacity:1}
 .cap.cur .tx{color:#fff}
 .cap.cur .rt{color:rgba(255,255,255,.72)}
 
-/* ── КРУЖОК ПРОЙДЕННОГО УРОВНЯ ──
-   Уровень, из которого ушли вглубь, не исчезает — он сворачивается в
-   кружок и остаётся стоять там, где стоял. Так вся дорога видна целиком:
-   откуда нажал, что выбрал, где ты сейчас. И вернуться можно, просто
-   наведя мышь на нужный кружок, — не отматывая по одному шагу назад. */
-.node.first{background:radial-gradient(circle at 40% 34%,#fff,#dfe2e8);
-  border-color:rgba(255,255,255,.9)}
-.node.first span{color:#0b0b0d}
-.node{position:absolute;width:34px;height:34px;margin:-17px 0 0 -17px;
-  border-radius:50%;cursor:pointer;display:grid;place-items:center;
-  background:linear-gradient(168deg,#3a3a43,#22222a);
-  border:1px solid rgba(255,255,255,.28);
-  box-shadow:0 12px 22px -10px #000, inset 0 1px 0 rgba(255,255,255,.10);
-  transition:transform .38s var(--spring), box-shadow .25s var(--ease),
-             background .25s var(--ease)}
-.node span{font-size:14px;line-height:1;pointer-events:none}
-.node:hover{transform:scale(1.22);background:linear-gradient(168deg,#5c5c69,#33333c);
-  border-color:rgba(255,255,255,.6);box-shadow:0 0 0 5px rgba(255,255,255,.07),
-  0 14px 26px -10px #000}
-.node b{position:absolute;top:44px;left:50%;transform:translateX(-50%);
-  white-space:nowrap;font:400 10.5px/1 inherit;letter-spacing:.14em;
-  text-transform:uppercase;color:rgba(236,237,241,.34);pointer-events:none;
-  transition:color .25s var(--ease)}
-.node:hover b{color:rgba(236,237,241,.9)}
+/* ── ТОЧКИ ПРОЙДЕННОГО УРОВНЯ ──
+   Ушёл вглубь — ВЕСЬ уровень сворачивается в точки, каждая капсула в свою,
+   на своём месте. Получается след из точек: сколько развилок прошёл, столько
+   и веерков точек на экране, и видно, где ты сворачивал. Возврат — наведись
+   на точку: не только на ту, что выбирал, а на любую из того уровня, и
+   уровень раскроется заново уже на ней.
+
+   Пунктирных нитей между уровнями нет. Они были попыткой объяснить связь,
+   которой и так не требуется объяснений: новый веер растёт ИЗ точки, а
+   значит уже сказал всё, что нить могла бы сказать. */
+.dot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;
+  border-radius:50%;cursor:pointer;
+  background:rgba(255,255,255,.34);
+  box-shadow:0 0 0 3px rgba(255,255,255,.05);
+  transition:transform .32s var(--spring), background .22s var(--ease),
+             box-shadow .22s var(--ease)}
+.dot.pick{width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+  background:#fff;box-shadow:0 0 0 5px rgba(255,255,255,.10),
+                             0 0 22px 5px rgba(255,255,255,.28)}
+.dot:hover{transform:scale(1.9);background:#fff;
+  box-shadow:0 0 0 6px rgba(255,255,255,.10)}
+.dot b{position:absolute;top:18px;left:50%;transform:translateX(-50%) scale(.8);
+  transform-origin:top center;white-space:nowrap;
+  font:400 10px/1 inherit;letter-spacing:.14em;text-transform:uppercase;
+  color:rgba(236,237,241,0);pointer-events:none;transition:color .22s var(--ease)}
+.dot:hover b,.dot.pick b{color:rgba(236,237,241,.42)}
+.dot:hover b{color:rgba(236,237,241,.92)}
 
 /* строка снизу */
 #hint{position:absolute;left:0;right:0;bottom:0;height:46px;display:flex;
@@ -123,7 +122,6 @@ body.open #trail{opacity:1}
 
 <div id="stage">
   <div id="sect"></div>
-  <svg id="trail"></svg>
   <div id="ring"><div><b>ANAMORF</b><i>МОЗГИ</i></div></div>
 </div>
 <div id="crumb"></div>
@@ -132,7 +130,7 @@ body.open #trail{opacity:1}
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
-const stage = $('#stage'), trail = $('#trail');
+const stage = $('#stage');
 const NS = 'http://www.w3.org/2000/svg';
 
 /* ═══════════════ ДАННЫЕ (понарошку, но по форме настоящие) ═══════════════ */
@@ -191,7 +189,7 @@ const L1 = [
 /* Веер РОВНЫЙ: маленький угловой шаг и большой радиус. Круче — и карты
    встают лесенкой, у которой каждая следующая читается хуже предыдущей.
    Наклон нужен ровно настолько, чтобы было видно, что карт много. */
-const STEP = 9.5, RAD = 150, SPAN = 3;
+const STEP = 7, RAD = 150, SPAN = 3;
 const LEN = 340, HH = 26;           // самая длинная карта и её полувысота
 
 let stack = [];        // [{items, cur, title, x, y, dir, ic}]
@@ -230,7 +228,10 @@ function clearance(x, y, deg){
 
    Первая проба искала по всем 360° и честно находила «место» внизу.
    Место там было, а прочитать написанное — нет. */
-const TILT = 35;
+/* Шестнадцать, а не тридцать пять. Наклон веера складывается с наклоном
+   самой дальней карты (SPAN×STEP), и при тридцати пяти нижняя карта
+   вставала под полтинник — читать её приходилось, наклоняя голову. */
+const TILT = 16;
 function readable(){
   const out = [];
   for (let d = -TILT; d <= TILT; d += 5) out.push(d);          // вправо
@@ -264,7 +265,6 @@ function close(){
   document.body.classList.remove('open');
   els.forEach(e => e.remove()); els = [];
   nodes.forEach(e => e.remove()); nodes = [];
-  trail.innerHTML = '';
   stack = []; crumb(); hint('нажми в любом месте — веер вырастет оттуда');
 }
 
@@ -295,6 +295,14 @@ function place(el, off, lvl){
   el.style.zIndex = 100 - k;
   el.classList.toggle('cur', off === 0);
   el.style.pointerEvents = k > SPAN ? 'none' : 'auto';
+}
+
+/* Точка капсулы — её БЛИЖНИЙ конец, тот, которым она крепилась к уровню.
+   Он один и тот же и для обычного веера, и для зеркального, поэтому
+   считается одинаково: точка уровня плюс радиус по лучу карты. */
+function capPoint(lvl, off){
+  const a = rad(lvl.dir + off*STEP);
+  return {x: lvl.x + Math.cos(a)*RAD, y: lvl.y + Math.sin(a)*RAD};
 }
 
 function render(grow){
@@ -330,68 +338,41 @@ function render(grow){
     }
     el.addEventListener('click', ev => { ev.stopPropagation(); pick(i); });
   });
-  paintNodes(); drawTrail(); crumb(); say();
+  paintNodes(); crumb(); say();
 }
 function repos(){
   const lvl = top_();
   els.forEach(el => place(el, offOf(+el.dataset.i, lvl), lvl));
-  drawTrail(); say();
+  say();
 }
 
 /* ═══════════════ КРУЖКИ ПРОЙДЕННЫХ УРОВНЕЙ ═══════════════ */
 function paintNodes(){
   nodes.forEach(e => e.remove()); nodes = [];
-  stack.forEach((lvl, i) => {
-    if (i === stack.length - 1) return;          // текущий раскрыт, не кружок
-    const el = document.createElement('div');
-    el.className = 'node' + (i === 0 ? ' first' : '');
-    el.style.left = lvl.x+'px'; el.style.top = lvl.y+'px';
-    const chosen = lvl.items[lvl.cur] || {};
-    el.innerHTML = '<span>'+(chosen.ic || lvl.ic || '◍')+'</span>'
-                 + '<b>'+(chosen.n || lvl.title)+'</b>';
-    el.title = 'вернуться: ' + (chosen.n || lvl.title);
-    // Возврат по НАВЕДЕНИЮ, как и просил владелец: рука уже там, лишний
-    // клик тут был бы налогом. Клик тоже работает — для тех, кто не верит.
-    let t = 0;
-    /* Задержка побольше: рука по дороге к картам проходит над кружками, и
-       короткий порог возвращал назад ровно тогда, когда человек тянулся
-       вперёд. Возврат — намерение, у него должна быть остановка. */
-    el.addEventListener('pointerenter', () => { t = setTimeout(() => popTo(i), 380); });
-    el.addEventListener('pointerleave', () => clearTimeout(t));
-    el.addEventListener('click', ev => { ev.stopPropagation(); clearTimeout(t); popTo(i); });
-    stage.appendChild(el); nodes.push(el);
-  });
-}
-
-/* ═══════════════ НИТЬ ═══════════════ */
-function drawTrail(){
-  trail.setAttribute('viewBox', '0 0 '+W()+' '+H());
-  trail.innerHTML = '';
-  const dot = (x, y, r, o) => {
-    const c = document.createElementNS(NS,'circle');
-    c.setAttribute('cx', x); c.setAttribute('cy', y);
-    c.setAttribute('r', r); c.setAttribute('opacity', o);
-    trail.appendChild(c);
-  };
-  // цепочка между точками уровней
-  for (let i = 1; i < stack.length; i++){
-    const a = stack[i-1], b = stack[i];
-    for (let k = 1; k <= 5; k++){
-      const t = k/6;
-      dot(a.x + (b.x-a.x)*t, a.y + (b.y-a.y)*t, 1.7, .34);
-    }
-  }
-  // от текущей точки к её картам
-  const lvl = top_(); if (!lvl) return;
-  els.forEach(el => {
-    const off = offOf(+el.dataset.i, lvl), k = Math.abs(off);
-    if (k > SPAN) return;
-    const a = rad(lvl.dir + off*STEP), cs = Math.cos(a), sn = Math.sin(a);
-    for (let i2=1;i2<=4;i2++){
-      const t = 0.24 + i2*0.17;
-      dot(lvl.x + cs*RAD*t, lvl.y + sn*RAD*t,
-          k === 0 ? 2.0 : 1.5, (k === 0 ? .62 : .26) * (1.15 - i2*0.11));
-    }
+  stack.forEach((lvl, li) => {
+    if (li === stack.length - 1) return;          // текущий раскрыт
+    lvl.items.forEach((it, ii) => {
+      const off = offOf(ii, lvl);
+      if (Math.abs(off) > SPAN) return;
+      const p = capPoint(lvl, off);
+      const el = document.createElement('div');
+      el.className = 'dot' + (off === 0 ? ' pick' : '');
+      el.style.left = p.x+'px'; el.style.top = p.y+'px';
+      el.innerHTML = '<b>'+it.n+'</b>';
+      el.title = it.n;
+      /* Возврат по наведению с остановкой: рука по дороге к картам
+         проходит над точками, и мгновенный возврат отбрасывал бы назад
+         ровно тогда, когда человек тянется вперёд. */
+      let t = 0;
+      el.addEventListener('pointerenter', () => {
+        t = setTimeout(() => { lvl.cur = ii; popTo(li); }, 380);
+      });
+      el.addEventListener('pointerleave', () => clearTimeout(t));
+      el.addEventListener('click', ev => {
+        ev.stopPropagation(); clearTimeout(t); lvl.cur = ii; popTo(li);
+      });
+      stage.appendChild(el); nodes.push(el);
+    });
   });
 }
 
@@ -404,29 +385,40 @@ function dive(next){
      точек показывает дорогу, а не наваливается сама на себя. */
   els.forEach(el => {
     const off = offOf(+el.dataset.i, lvl);
-    el.style.transition = 'transform .34s var(--ease), opacity .26s var(--ease)';
     const a1 = lvl.dir + off*STEP, f1 = Math.cos(rad(lvl.dir)) < 0;
+    el.style.transition = 'transform .34s var(--ease), opacity .3s var(--ease)';
+    /* Каждая капсула сжимается В СВОЮ точку — туда, где она крепилась, —
+       а не сваливается обратно в общий центр. Поэтому от уровня остаётся
+       веерок точек, повторяющий его форму, и по нему видно, где ты был. */
     el.style.transform = 'translate('+lvl.x+'px,'+lvl.y+'px) rotate('
-      +(f1 ? a1+180 : a1)+'deg) '
-      + (f1 ? 'translateX(-100%) ' : '')
-      + 'translateY(-50%) scale(.16)';
+      + (f1 ? a1+180 : a1) + 'deg) '
+      + (f1 ? 'translateX('+(-RAD)+'px) translateX(-100%) '
+            : 'translateX('+RAD+'px) ')
+      + 'translateY(-50%) scale(.04)';
     el.style.opacity = '0';
   });
-  const a = rad(lvl.dir);
-  let nx = lvl.x + Math.cos(a)*LINK, ny = lvl.y + Math.sin(a)*LINK;
-  // новая точка тоже обязана уместиться — иначе следующий веер уедет за край
-  nx = Math.max(40, Math.min(W()-40, nx));
-  ny = Math.max(56, Math.min(H()-72, ny));
-  next.x = nx; next.y = ny;
-  next.dir = aim(nx, ny, lvl.dir);      // предпочитаем то же направление
+  /* Новый уровень начинается ровно там, где была выбранная капсула, —
+     в её ближнем конце. Никаких отступов и никаких нитей: капсула
+     свернулась в точку, и из этой самой точки пошёл следующий веер. */
+  const p = capPoint(lvl, 0);
+  next.x = Math.max(30, Math.min(W()-30, p.x));
+  next.y = Math.max(50, Math.min(H()-64, p.y));
+  next.dir = aim(next.x, next.y, lvl.dir);   // предпочитаем то же направление
   setTimeout(() => { stack.push(next); render(true); busy = false; }, 300);
 }
 function popTo(i){
   if (busy || i >= stack.length - 1) return;
   busy = true;
+  const cur = top_();
   els.forEach(el => {
-    el.style.transition = 'transform .28s var(--ease), opacity .22s var(--ease)';
-    el.style.transform = 'translate('+top_().x+'px,'+top_().y+'px) scale(.16)';
+    const off = offOf(+el.dataset.i, cur);
+    const a2 = cur.dir + off*STEP, f2 = Math.cos(rad(cur.dir)) < 0;
+    el.style.transition = 'transform .26s var(--ease), opacity .2s var(--ease)';
+    el.style.transform = 'translate('+cur.x+'px,'+cur.y+'px) rotate('
+      + (f2 ? a2+180 : a2) + 'deg) '
+      + (f2 ? 'translateX('+(-RAD)+'px) translateX(-100%) '
+            : 'translateX('+RAD+'px) ')
+      + 'translateY(-50%) scale(.04)';
     el.style.opacity = '0';
   });
   setTimeout(() => { stack.length = i + 1; render(true); busy = false; }, 240);
@@ -473,7 +465,7 @@ function hint(h){ $('#hint').innerHTML = '<span>'+h+'</span>'; }
 /* ═══════════════ ЖЕСТЫ ═══════════════ */
 stage.addEventListener('pointerdown', ev => {
   if (ev.button === 2) return;
-  if (ev.target.closest('.cap') || ev.target.closest('.node')) return;
+  if (ev.target.closest('.cap') || ev.target.closest('.dot')) return;
   if (document.body.classList.contains('open')){ close(); return; }
   open(ev.clientX, ev.clientY);
 });
