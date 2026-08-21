@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-20T12:11:01",
+  "updated": "2026-08-21T14:54:57",
   "items": [
     {
       "id": "s01",
@@ -819,26 +819,6 @@
     }
   ],
   "log": [
-    {
-      "ts": "2026-08-15T15:27:36",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:28:01",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:28:13",
-      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
-      "kind": "problem"
-    },
-    {
-      "ts": "2026-08-15T15:28:14",
-      "text": "⚠ llm: снизила ей надёжность в досье — при выборе модели это теперь учитывается",
-      "kind": "problem"
-    },
     {
       "ts": "2026-08-15T15:28:48",
       "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
@@ -1818,14 +1798,34 @@
       "ts": "2026-08-20T12:11:01",
       "text": "⚠ tts.qwen3: возьми модель полегче, урежь llamacpp.n_ctx или выгрузи текущую кнопкой 🧹 — после этого клон-голос поднимется; пока говорю запасным движком",
       "kind": "problem"
+    },
+    {
+      "ts": "2026-08-21T14:45:43",
+      "text": "⚠ stt.gigaam: переключаюсь на запасной движок; подробности — в logs/saika.log",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-21T14:45:49",
+      "text": "✓ stt.gigaam: движок восстановлен",
+      "kind": "fix"
+    },
+    {
+      "ts": "2026-08-21T14:47:42",
+      "text": "⚠ stt: работаю на faster_whisper",
+      "kind": "problem"
+    },
+    {
+      "ts": "2026-08-21T14:54:57",
+      "text": "⚠ llm: переключилась на cloud/GigaChat-2-Pro",
+      "kind": "problem"
     }
   ],
   "bugs": {
     "llm": {
-      "text": "google/gemma-4-e4b написала, что выполнила действие, но ни один инструмент не вызывался",
-      "count": 554,
+      "text": "основной бэкенд не ответил: 410 от https://models.github.ai/inference: {\"error\":{\"code\":\"github_models_retirement_brownout\",\"message\":\"GitHub Models is temporarily unavailable as part of a scheduled retirement brownout.\"}}\n",
+      "count": 555,
       "resolved": false,
-      "last": "2026-08-20T09:02"
+      "last": "2026-08-21T14:54"
     },
     "tts.qwen3": {
       "text": "На «qwen3» не осталось видеопамяти — её занимает моя же LLM. Это не поломка движка, а очередь за одной видеокартой.",
@@ -1840,10 +1840,10 @@
       "last": "2026-08-20T12:08"
     },
     "stt": {
-      "text": "gigaam: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.",
-      "count": 1909,
+      "text": "основной движок недоступен",
+      "count": 1910,
       "resolved": false,
-      "last": "2026-08-19T10:56"
+      "last": "2026-08-21T14:47"
     },
     "browser": {
       "text": "browser",
@@ -1877,9 +1877,9 @@
     },
     "stt.gigaam": {
       "text": "«gigaam» упал с незнакомой мне ошибкой.",
-      "count": 22,
-      "resolved": false,
-      "last": "2026-08-19T10:56"
+      "count": 23,
+      "resolved": true,
+      "last": "2026-08-21T14:45"
     },
     "stt.groq_whisper": {
       "text": "«groq_whisper» упал с незнакомой мне ошибкой.",

@@ -142,6 +142,111 @@ def alive(p: int) -> bool:
         return s.connect_ex(("127.0.0.1", p)) == 0
 
 
+_JOB = None            # держать глобально: закроется хэндл — умрёт вся ветка
+
+
+def adopt(proc) -> None:
+    """Привязать сервер и всё, что он породит, к жизни лаунчера.
+
+    Проблема, которую это решает, видна невооружённым глазом: человек
+    закрывает окно, а в диспетчере остаются python.exe и llama-server.exe.
+    Пересобрать билд поверх них нельзя — Windows держит их DLL. Выглядит
+    это как «я всё закрыл, а оно говорит что запущено», и человек прав.
+
+    Почему одного terminate() мало. Мы порождаем python.exe, а тот сам
+    порождает llama-server.exe. terminate() убивает только первого; внук
+    остаётся сиротой и живёт дальше, потому что в Windows связь
+    «родитель-ребёнок» после смерти родителя не значит ничего.
+
+    Job Object значит. Все процессы ветки складываются в одну «job», у
+    которой стоит флаг KILL_ON_JOB_CLOSE: закрылся последний хэндл на job
+    — ядро убивает всех, кто в ней. Хэндл закрывается, когда умирает наш
+    процесс, — ЛЮБОЙ смертью, включая снятие через диспетчер задач и
+    падение. Обещание сдерживает ядро, а не наш код в блоке finally,
+    который при аварийном выходе просто не выполнится.
+    """
+    global _JOB
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes as w
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in
+                        ("ReadOperationCount", "WriteOperationCount",
+                         "OtherOperationCount", "ReadTransferCount",
+                         "WriteTransferCount", "OtherTransferCount")]
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                        ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", w.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", w.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", w.DWORD),
+                        ("SchedulingClass", w.DWORD)]
+
+        class EXTENDED(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC),
+                        ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JobObjectExtendedLimitInformation = 9
+
+        k32.CreateJobObjectW.restype = w.HANDLE
+        k32.OpenProcess.restype = w.HANDLE
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = EXTENDED()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        k32.SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                    ctypes.byref(info), ctypes.sizeof(info))
+        PROCESS_SET_QUOTA, PROCESS_TERMINATE = 0x0100, 0x0001
+        h = k32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, proc.pid)
+        if h:
+            k32.AssignProcessToJobObject(job, h)
+            k32.CloseHandle(h)
+        _JOB = job
+        say("сервер привязан к окну — закроется вместе с ним")
+    except Exception as e:
+        # Не повод не запускаться: без job всё работает как раньше, просто
+        # сироты придётся снимать руками.
+        say(f"привязать сервер не вышло ({type(e).__name__}: {e})")
+
+
+def stop(proc) -> None:
+    """Погасить ветку целиком, не полагаясь на job.
+
+    Job гарантирует уборку при смерти лаунчера, но при нормальном выходе
+    гасить лучше явно и дождаться: так к моменту, когда exe исчезнет из
+    диспетчера, DLL уже отпущены и пересборка не упрётся в занятый файл.
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                           creationflags=0x08000000,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=10)
+        else:
+            proc.terminate()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+
+
 def start_server() -> subprocess.Popen | None:
     py = python_exe()
     if py is None:
@@ -175,9 +280,11 @@ def start_server() -> subprocess.Popen | None:
         out.flush()
     except Exception:
         out = subprocess.DEVNULL
-    return subprocess.Popen([str(py), "-m", "anamorf.main"],
+    proc = subprocess.Popen([str(py), "-m", "anamorf.main"],
                             cwd=str(APP), env=env, creationflags=flags,
                             stdout=out, stderr=subprocess.STDOUT)
+    adopt(proc)
+    return proc
 
 
 def wait_ready(proc: subprocess.Popen, p: int) -> bool:
@@ -324,10 +431,7 @@ def main() -> int:
     # версию удачной и убираем страховку, чтобы не копить старые копии.
     if time.time() - started > HEALTHY_AFTER and APP_PREV.is_dir():
         shutil.rmtree(APP_PREV, ignore_errors=True)
-    try:
-        proc.terminate()
-    except Exception:
-        pass
+    stop(proc)
     return 0
 
 
