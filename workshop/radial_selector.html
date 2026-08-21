@@ -129,6 +129,11 @@ body.open #anchor{opacity:1;transform:scale(1)}
   color:rgba(236,237,241,0);pointer-events:none;transition:color .22s var(--ease)}
 .dot:hover b,.dot.pick b{color:rgba(236,237,241,.42)}
 .dot:hover b{color:rgba(236,237,241,.92)}
+/* Точки-намёк меньше и тише пройденных: пройденное это факт, намёк это
+   всего лишь обещание. */
+.dot.deeper{width:7px;height:7px;margin:-3.5px 0 0 -3.5px;
+  background:rgba(255,255,255,.42)}
+.dot.deeper.pick{width:10px;height:10px;margin:-5px 0 0 -5px;background:#fff}
 
 /* строка снизу */
 #hint{position:absolute;left:0;right:0;bottom:0;height:46px;display:flex;
@@ -225,7 +230,10 @@ const L1 = [
 /* ROW — шаг строки, GAP — зазор от точки уровня до списка. Зазор
    маленький намеренно: владелец просил вплотную, и он прав — пустая
    полоса между точкой и списком ничего не сообщает, а место ест. */
-const ROW = 46, GAP = 16, SPAN = 3;
+/* ЗАЗОРОВ НЕТ. Владелец повторил это трижды, и трижды я оставлял то
+   пятьдесят пикселей, то двести. Пустота между точкой и списком ничего
+   не сообщает: связь и так видна — список из точки и вырос. */
+const ROW = 44, GAP = 34, SPAN = 3;
 const DEEP_Z = 78, DEEP_ROT = 11;   // насколько дальние уходят в барабан
 
 let stack = [];        // [{items, cur, title, x, y, dir, ic}]
@@ -261,6 +269,7 @@ function open(x, y){
 function close(){
   document.body.classList.remove('open');
   els.forEach(e => e.remove()); els = [];
+  hintEls.forEach(e => e.remove()); hintEls = [];
   nodes.forEach(e => e.remove()); nodes = [];
   stack = []; crumb(); hint('нажми в любом месте — веер вырастет оттуда');
 }
@@ -305,8 +314,12 @@ function place(el, off, lvl, grow){
    смотрит на свою точку уровня. Раньше точки жили на полпути к списку и
    между ними зияло, как выразился владелец, огромное расстояние: они
    повторяли шаг строк, но не стояли рядом ни с чем. */
+/* Точка строки стоит у ДАЛЬНЕГО её края — там, куда уходит дорога, и
+   там же, где раскроется следующий уровень. Так точки свёрнутого уровня
+   не остаются позади, а лежат ровно на пути. */
 function capPoint(lvl, off){
-  return {x: lvl.x + (lvl.side || 1)*(GAP*0.42), y: lvl.y + off*ROW};
+  const sg = lvl.side || 1, w = lvl.w || 260;
+  return {x: lvl.x + sg*(GAP + w + 6), y: lvl.y + off*ROW};
 }
 
 function render(grow){
@@ -346,6 +359,7 @@ function render(grow){
     }
     el.addEventListener('click', ev => { ev.stopPropagation(); pick(i); });
   });
+  hint3(lvl);
   /* Сторону и ширину знаем только после отрисовки: ширина капсулы
      зависит от текста, а угадывать её значит промахиваться. */
   requestAnimationFrame(() => {
@@ -364,6 +378,32 @@ function repos(){
 }
 
 /* ═══════════════ КРУЖКИ ПРОЙДЕННЫХ УРОВНЕЙ ═══════════════ */
+/* НАМЁК НА СЛЕДУЮЩИЙ УРОВЕНЬ.
+   У выделенной строки, с дальней её стороны, стоят три точки — ровно
+   там, где раскроется следующий уровень. Это единственный способ
+   сказать «здесь есть глубже» до того, как человек туда полез: сама
+   строка об этом молчит, а узнавать глубину методом тыка — плохая
+   игра. Наведи на этот край или нажми — раскроется. */
+let hintEls = [];
+function hint3(lvl){
+  hintEls.forEach(e => e.remove()); hintEls = [];
+  const it = lvl.items[lvl.cur];
+  if (!it || it.kind === 'toggle' || it.kind === 'leaf') return;
+  const sg = lvl.side || 1, w = lvl.w || 260;
+  const bx = lvl.x + sg*(GAP + w + 6);
+  [-1, 0, 1].forEach(k => {
+    const el = document.createElement('div');
+    el.className = 'dot deeper' + (k === 0 ? ' pick' : '');
+    el.style.left = (bx + sg*Math.abs(k)*7)+'px';
+    el.style.top  = (lvl.y + k*13)+'px';
+    el.addEventListener('click', ev => { ev.stopPropagation(); pick(lvl.cur); });
+    let t = 0;
+    el.addEventListener('pointerenter', () => { t = setTimeout(() => pick(lvl.cur), 260); });
+    el.addEventListener('pointerleave', () => clearTimeout(t));
+    stage.appendChild(el); hintEls.push(el);
+  });
+}
+
 function paintNodes(){
   nodes.forEach(e => e.remove()); nodes = [];
   stack.forEach((lvl, li) => {
@@ -415,9 +455,12 @@ function dive(next){
   /* Следующий уровень встаёт ВПЛОТНУЮ за выбранной строкой — сразу за её
      дальним краем. Никаких отступов «на всякий случай»: уровни идут один
      за другим лентой, и пустота между ними ничего не сообщала бы. */
+  /* Следующий уровень встаёт у ДАЛЬНЕГО края выбранной строки — того,
+     что смотрит от точки прочь, — и вплотную к нему. Дорога получается
+     лентой: точка, строка, точка, строка. Между ними ничего. */
   const sg = lvl.side || 1;
   const w = lvl.w || 260;
-  next.x = Math.max(20, Math.min(W()-20, lvl.x + sg*(GAP + w + GAP)));
+  next.x = Math.max(20, Math.min(W()-20, lvl.x + sg*(GAP + w + 6)));
   next.y = Math.max(60, Math.min(H()-80, lvl.y));
   next.side = sg;
   setTimeout(() => { stack.push(next); render(true); busy = false; }, 300);
