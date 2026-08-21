@@ -13580,15 +13580,11 @@ function value(t){
   if (t.live)  return txt(t.live).slice(0,22) || '';
   if (t.screen) return 'экран';
   if (t.drum){
-    const rs = rows(t.drum);
+    const rs = rows(t.drum);              // объекты {el, name, sub}
     if (!rs.length) return 'открыть';
-    const sel = rs.find(e => e.classList.contains('sel'))
-             || rs.find(e => e.querySelector('.st.ok'));
-    if (sel){
-      const mn = sel.querySelector('.mname');
-      const nm = (mn ? mn.textContent : sel.textContent).trim();
-      if (nm) return nm.slice(0, 22);
-    }
+    const sel = rs.find(x => x.el && (x.el.classList.contains('sel')
+                                   || x.el.querySelector('.st.ok')));
+    if (sel && sel.name) return sel.name.slice(0, 22);
     return rs.length + ' шт';
   }
   return '';
