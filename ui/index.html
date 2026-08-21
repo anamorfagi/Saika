@@ -12110,7 +12110,9 @@ html[data-skin="graphite"] body.zhome #main{display:none !important}
 /* На главном экране шапка раздевается: всё, что на ней было, лежит в
    центральном селекторе, а два ряда одних и тех же кнопок — это не выбор,
    это шум. На остальных экранах она возвращается целиком. */
-html[data-skin="graphite"] body.zhome header button:not(#btn-home),
+/* На главном шапка раздевается, но кнопка редактора остаётся: двигать
+   плашки можно только здесь, и прятать её именно тут было бы шуткой. */
+html[data-skin="graphite"] body.zhome header button:not(#btn-home):not(#btn-arrange),
 html[data-skin="graphite"] body.zhome #problems,
 html[data-skin="graphite"] body.zhome #bar,
 html[data-skin="graphite"] body.zhome #img-preview,
@@ -12346,6 +12348,8 @@ body.zarrange .ztool.zmoved{outline-color:rgba(255,255,255,.6)}
 body.zarrange .ztool.zdrag{cursor:grabbing;outline-color:#fff;
   transition:none !important;z-index:9}
 body.zarrange #zchat{border-style:dashed;color:var(--text)}
+body.zarrange #btn-arrange{background:var(--panel2);border-color:var(--g-hi);
+  color:var(--text);box-shadow:var(--tile-sh)}
 
 #zthreads{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;
   transform:translateZ(60px)}
@@ -12455,6 +12459,10 @@ const ZONES = [
   ]},
   {id:'hands', a:30, ic:'✥', name:'Руки', sub:'система и файлы', tools:[
     {ic:'✈', n:'Управление ПК', hit:'#btn-control'},
+    /* Цвет свечения живёт в «Системе», в блоке «Что и где она делает».
+       Сюда не копируем — уводим туда: копия разошлась бы с оригиналом,
+       и человек красил бы одно, а на экране горело бы другое. */
+    {ic:'🔦', n:'Свечение',      screen:'sys', focus:'.attn-glow'},
     {ic:'▤', n:'Система',       screen:'sys'},
     {ic:'🗺', n:'Карта',         hit:'#btn-board', leave:true},
     {ic:'🧪', n:'DreamPC',       hit:'#btn-dreampc'},
@@ -13036,7 +13044,15 @@ function hide(){
 function pick(z, t, i){
   SFX.pick();
   if (t.call){ try { t.call(); } catch(e){} say(z.name+' → '+t.n); return; }
-  if (t.screen){ const hadFan = !!open; hide(); goScreen(t.screen, hadFan); return; }
+  if (t.screen){
+    const hadFan = !!open; hide(); goScreen(t.screen, hadFan);
+    if (t.focus) setTimeout(() => {
+      const f = $(t.focus);
+      if (f){ if (f.tagName === 'DETAILS') f.open = true;
+              f.scrollIntoView({block:'center'}); }
+    }, 120);
+    return;
+  }
   if (t.hit){
     // Дев-доска живёт внутри #main, а на главном экране #main спрятан.
     // Открыть её, не уйдя с главного, значит показать пустоту.
@@ -13122,7 +13138,12 @@ function say(html){
 function zoneAt(cx, cy){
   const r = S.getBoundingClientRect();
   const x = cx-r.left-CX, y = cy-r.top-CY;
-  if (Math.hypot(x,y) < HOLE) return null;
+  const d = Math.hypot(x,y);
+  /* Дуга органа — тоже его мишень. Она лежит внутри дыры под ядром, то
+     есть в мёртвой зоне, и нажатие на неё не значило ничего: предмет,
+     который очевидно принадлежит органу и показывает именно его, на
+     нажатие не отзывался. Полоса вокруг дуги отдана тому же органу. */
+  if (d < HOLE*.80) return null;
   const a = Math.atan2(y,x)*180/Math.PI;
   return ZONES.find(z => Math.abs(((z.a-a+540)%360)-180) <= SPAN/2) || null;
 }
@@ -13385,7 +13406,12 @@ function wire(){
       spin(D, Math.sign(ev.deltaY));
       return;
     }
-    D.acc = (D.acc||0) + ev.deltaY;
+    /* Колесо инвертировано: вниз — вверх по списку. Барабан это ЦИЛИНДР,
+       и рука крутит не список, а его переднюю грань — ту, что к тебе.
+       Толкнул её вниз — верхняя сторона поехала к тебе, и снизу выехала
+       предыдущая строка. Так устроены все настоящие колёсики: наборный
+       диск, барабан лотереи, колесо мыши. */
+    D.acc = (D.acc||0) - ev.deltaY;
     while (Math.abs(D.acc) >= 42){ const st = Math.sign(D.acc); D.acc -= st*42; spin(D, st); }
   }, {passive:false});
 
@@ -13481,6 +13507,21 @@ function wire(){
     b.innerHTML = '◄ <span>главный</span>';
     b.onclick = goHome;
     head.insertBefore(b, head.firstChild);
+
+    /* Режим редактора — кнопкой справа в шапке, а не только пунктом в
+       «Местах». Переставлять плашки хочется ровно тогда, когда что-то
+       мешает, и лезть за этим внутрь веера — значит открывать то, что
+       собирался всего лишь подвинуть. Кнопка снаружи и всегда на месте. */
+    if (!document.getElementById('btn-arrange')){
+      const e = document.createElement('button');
+      e.className = 'iconbtn'; e.id = 'btn-arrange';
+      e.textContent = '✥';
+      e.title = 'Режим редактора — двигать плашки по местам (Esc выйти)';
+      e.onclick = () => arrange(!document.body.classList.contains('zarrange'));
+      const anchor = document.getElementById('btn-skin')
+                  || document.getElementById('btn-settings');
+      anchor ? anchor.parentNode.insertBefore(e, anchor) : head.appendChild(e);
+    }
     // Имя тоже ведёт домой: в вебе логотип возвращает на главную тридцать
     // лет подряд, и рука тянется туда сама, даже если её не просили.
     const nm = head.querySelector('.name');
@@ -13526,8 +13567,22 @@ const st  = {eyes:'off', brain:'off', hands:'off', voice:'off', ears:'off', face
    НАЛИВАЛАСЬ, а не перескакивала: полоска загрузки, которая мгновенно
    прыгает из нуля в сотню, не читается как загрузка вовсе. */
 const val = {eyes:0, brain:0, hands:0, voice:0, ears:0, face:0};
+/* ГОТОВНОСТЬ И РАБОТА — РАЗНЫЕ ФАКТЫ.
+   Полоска говорит «поднято и разогрето». Но включённые руки, которые
+   ничего не делают, и руки, которые прямо сейчас двигают чужие окна, —
+   это далеко не одно и то же, а выглядели они одинаково. Работу рисуем
+   бегущим по залитой части бликом: пока блик бежит — орган занят делом.
+   Врать тут нельзя, поэтому каждый признак взят из настоящего источника,
+   а не из «наверное, раз включено, значит работает». */
+const act = {eyes:false, brain:false, hands:false, voice:false, ears:false, face:false};
 const cur = {eyes:0, brain:0, hands:0, voice:0, ears:0, face:0};
 let RW=0, RH=0, t0=0, rctx=null;
+/* Время, а не кадры. Всё, что тикало по кадру (+.016 за раз), на слабой
+   машине шло медленнее ровно во столько раз, во сколько просела частота:
+   полоска загрузки ползла втрое медленнее, мигание мигало втрое реже, и
+   выглядело это не как «компьютер занят», а как «программа зависла».
+   Секунда обязана быть секундой у всех. */
+let lastT = 0, dt = 0;
 const NBAND = 84;                       // полос на половину круга
 const bOut = new Float32Array(NBAND), bInn = new Float32Array(NBAND);
 
@@ -13563,6 +13618,14 @@ async function poll(){
       st.face = fr && fr.getAttribute('src') ? 'ready' : 'off';
       const bc = document.getElementById('btn-control');
       st.hands = bc && /— ВКЛ/.test(bc.title || '') ? 'ready' : 'off';
+      /* Руки заняты ровно тогда, когда на чужом экране горит свечение
+         места, с которым она работает. Это не догадка по косвенным
+         признакам: поток свечения либо жив, либо нет, и сервер про это
+         знает точно. */
+      try {
+        const at = await (await fetch('/api/attention')).json();
+        act.hands = !!(at && at.glow && at.glow.running);
+      } catch(e){ act.hands = false; }
       /* Дуга — это ШКАЛА ГОТОВНОСТИ, от нуля до ста: ноль это «не
          работает и не загружено», сто это «поднято и разогрето». Ничего
          другого она не показывает.
@@ -13573,7 +13636,12 @@ async function poll(){
          выключенный, а полный VRAM у выключенного движка нарисовал бы
          полную дугу. Занятость железа — честное число, но это ДРУГОЕ
          число, и живёт оно на экране «Система», где рядом подписи. */
-      Object.keys(val).forEach(k => { val[k] = st[k] === 'ready' ? 1 : 0; });
+      /* Целью полоски заведует САМА полоска (organArc), а не опрос.
+         Опрос ходит раз в секунду и, выставляя цель здесь, каждую секунду
+         сбрасывал в ноль всё, что успело налиться за эту секунду: полоска
+         дёргалась у самого начала и выглядела намертво вставшей. Опрос
+         сообщает СОСТОЯНИЕ (грузится / поднялось / сломалось), полоска по
+         нему решает, куда ей ползти. Один факт — один хозяин. */
       trouble();
     }
   }catch(e){}
@@ -13702,72 +13770,85 @@ function selfData(){
 /* Дуга органа. Состояние рисуется ФОРМОЙ, а не цветом: в графите цвета
    нет вообще, и заводить его ради четырёх состояний значило бы завести
    вторую систему обозначений на том же экране. */
+/* ─────────────── ДУГА ОРГАНА ───────────────
+   Одна дуга — одна полоска загрузки, и ничего кроме. Ноль это «не
+   работает и не загружено», сто это «поднято и разогрето»; между ними
+   контур просто дозаполняется. Никаких засечек, делений и пунктиров:
+   владелец, увидев поперечную планку, спросил — зачем тут деление? —
+   и вопрос сам по себе был ответом. Форма, о которой спрашивают «что
+   это значит», уже не работает: у полоски загрузки не бывает шкалы с
+   рисками, у неё бывает только «докуда налилось».
+
+   Три состояния читаются одной и той же полоской:
+     грузится   — наливается И МИГАЕТ;
+     греется    — мигание ушло, контур спокойно дозаполняется до конца;
+     готово     — контур залит целиком и ровно горит.
+
+   Процентов загрузки бэкенд не сообщает. Придумывать их нельзя — ради
+   выдуманного числа человек станет ждать по-настоящему. Поэтому пока
+   идёт загрузка, полоска ползёт к потолку с замедлением и до конца сама
+   не доходит: это давняя и всем понятная манера полосок «идёт, сколько
+   осталось — не скажу». Конец наступает от СОБЫТИЯ: движок доложил, что
+   поднялся, — и только тогда дуга дозаполняется до ста. */
 function organArc(ctx, cx, cy, r, o, dim){
   const HALF = 25, a0 = o.a - HALF, a1 = o.a + HALF;
   const s = st[o.k] || 'off';
-  // догоняем цель за полсекунды: дуга наливается, а не щёлкает
-  cur[o.k] += ((val[o.k] || 0) - (cur[o.k] || 0)) * .07;
+
+  let tgt = val[o.k] || 0;
+  if (s === 'ready')        tgt = 1;
+  else if (s === 'off')     tgt = 0;
+  else if (s === 'loading'){
+    // Подход к потолку с замедлением: быстро в начале, всё медленнее к
+    // концу. Так ведут себя все честные полоски неизвестной длины — они
+    // обещают движение, но не обещают срок.
+    tgt = tgt + (.86 - tgt) * (1 - Math.exp(-dt/2.4));
+  }
+  // 'broken' — цель не трогаем: полоска замирает ровно там, где встала.
+  // Это и есть правда о поломке: дошло досюда и дальше не пошло.
+  val[o.k] = tgt;
+  cur[o.k] += (tgt - (cur[o.k] || 0)) * (1 - Math.exp(-dt/0.22));
   const v = Math.max(0, Math.min(1, cur[o.k]));
+
   ctx.lineCap = 'butt';
-  // след дуги виден всегда: место органа не должно исчезать вместе с ним
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255,255,255,'+(.10*dim)+')';
-  ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a1)); ctx.stroke();
-  if (s === 'off') return;
-  if (s === 'loading'){
-    /* Загрузка НЕОПРЕДЕЛЁННАЯ: сколько осталось — бэкенд не знает и не
-       сообщает, а дорисовать проценты значило бы придумать число, ради
-       которого человек станет ждать. Дуга налита от нуля, но край её
-       дышит и до конца не доходит: «идёт, и ещё не дошло» — ровно то,
-       что мы знаем, и ни слова сверх. */
-    const p = .18 + .42*(0.5 + 0.5*Math.sin(t0*1.9));
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(255,255,255,'+(.55*dim)+')';
-    ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a0+(a1-a0)*p)); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,'+(.95*dim)+')';   // край: докуда дошло
-    ctx.beginPath();
-    ctx.arc(cx,cy,r,rad(a0+(a1-a0)*Math.max(0,p-.07)),rad(a0+(a1-a0)*p));
-    ctx.stroke();
-    return;
-  }
-  if (s === 'broken'){
-    /* «Сломалось» рисуется как ОБОРВАННАЯ дуга с поперечной засечкой.
-
-       Сначала здесь была рвань пунктиром — и владелец, увидев её первым,
-       спросил: «почему какие-то пунктиры?». Справедливо: пунктир в
-       интерфейсах значит «черновик», «неактивно», «подсказка» — что
-       угодно, только не аварию. Форма обязана объясняться сама, иначе
-       она не форма, а шифр, к которому нужен ключ.
-
-       Поперечная планка поперёк дороги читается одинаково у всех и без
-       обучения: дальше хода нет. Дуга при этом честно начата — движок
-       пытался подняться, — и честно оборвана. */
-    const bp = a0 + (a1-a0)*.34;
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(255,255,255,'+(.55*dim)+')';
-    ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(bp)); ctx.stroke();
-    const ar = rad(bp), c1 = Math.cos(ar), s1 = Math.sin(ar);
-    ctx.lineWidth = 3; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx + c1*(r-9), cy + s1*(r-9));
-    ctx.lineTo(cx + c1*(r+9), cy + s1*(r+9));
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-    return;
-  }
-  // ноль — только след; сто — дуга целиком и в полную яркость
-  if (v <= .015) return;
+  // Пустой контур виден всегда: место органа не исчезает вместе с ним,
+  // иначе «выключено» и «его тут нет» выглядят одинаково.
   ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(255,255,255,'+((.45 + v*.5)*dim)+')';
-  ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a0 + (a1-a0)*v)); ctx.stroke();
-}
+  ctx.strokeStyle = 'rgba(255,255,255,'+(.13*dim)+')';
+  ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(a1)); ctx.stroke();
 
+  if (v <= .004) return;
+
+  let alpha = .92;                                   // готово и греется
+  if (s === 'loading') alpha = .40 + .52*(0.5 + 0.5*Math.sin(t0*3.6));   // мигает
+  else if (s === 'broken') alpha = .30;              // встало и не горит
+  ctx.strokeStyle = 'rgba(255,255,255,'+(alpha*dim)+')';
+  const aE = a0 + (a1-a0)*v;
+  ctx.beginPath(); ctx.arc(cx,cy,r,rad(a0),rad(aE)); ctx.stroke();
+
+  /* Блик бежит по залитой части, пока орган ЗАНЯТ ДЕЛОМ. Мигание уже
+     занято загрузкой, поэтому работа получает другое движение: не «то
+     ярче, то тусклее целиком», а «что-то идёт вдоль». Две разные вещи —
+     два разных движения, иначе оба перестают что-либо значить. */
+  if (act[o.k] && s === 'ready' && v > .05){
+    const w = (aE-a0)*.22, p = ((t0*.55) % 1.25) * (aE-a0+w) - w;
+    const b0 = Math.max(a0, a0+p), b1 = Math.min(aE, a0+p+w);
+    if (b1 > b0){
+      ctx.strokeStyle = 'rgba(255,255,255,'+(1*dim)+')';
+      ctx.lineWidth = 5.5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(cx,cy,r,rad(b0),rad(b1)); ctx.stroke();
+      ctx.lineWidth = 4; ctx.lineCap = 'butt';
+    }
+  }
+}
 function ringLoop(){
   new ResizeObserver(sizeRing).observe(ring); sizeRing();
   (function draw(){
     requestAnimationFrame(draw);
     if (!RW || !rctx || !document.body.classList.contains('zhome')) return;
-    t0 += .016;
+    const now = performance.now();
+    dt = lastT ? Math.min(.1, (now - lastT)/1000) : .016;   // потолок на случай
+    lastT = now;                                            // сворачивания окна
+    t0 += dt;
     const ctx=rctx, cx=RW/2, cy=RH/2;
     const R=Math.min(RW,RH)*.205, L=Math.min(RW,RH)*.115;
     const dim = document.body.classList.contains('zopen') ? .45 : 1;
@@ -13781,6 +13862,15 @@ function ringLoop(){
       ctx.beginPath(); ctx.arc(cx,cy,A.r,A.f,A.f+A.s); ctx.stroke();
     }
 
+    /* Голос занят, когда звучит; слух — когда микрофон включён и в него
+       что-то попало. Оба признака берём у тех же анализаторов, что кормят
+       спектр: второй источник разошёлся бы с первым. */
+    try {
+      act.voice = typeof saikaSpeaking === 'function' && saikaSpeaking();
+      act.ears  = typeof micOn !== 'undefined' && micOn &&
+                  typeof micLevel !== 'undefined' && micLevel > .04;
+      act.eyes  = isOn('#eyes-watch');
+    } catch(e){}
     const hd = hearData(), sd = selfData();
 
     /* Спектр на все 360°, а не огрызками между столбиками. Ось частот
