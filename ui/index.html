@@ -12294,8 +12294,15 @@ body.zaim .ztool.show:not(.aim){opacity:.5;filter:brightness(.72) saturate(.9)}
    считало барабан по разметке и честно не знало, что настоящий он вдвое
    выше. Окно на колесо — это и есть барабан; торчащие наружу капсулы
    были не глубиной, а протечкой. */
-.zdstage{position:relative;height:118px;margin-top:9px;perspective:600px;
-  overflow:hidden;transition:height .3s var(--zease)}
+.zdstage{position:relative;height:118px;perspective:600px;
+  /* Коробка обрезает капсулы СВЕРХУ И СНИЗУ — так и надо, барабан это
+     окно на колесо. Но overflow режет по всем четырём сторонам сразу, и
+     капсулы начало резать ещё и с боков: владелец прислал скриншот, где
+     у «google/gemma-4-e4b» откушены оба конца. Отступ с отрицательным
+     полем даёт коробке лишние двадцать пикселей по бокам, не сдвигая её
+     на экране: обрезка идёт по краю ПОЛЯ, а не содержимого. */
+  overflow:hidden;margin:9px -20px 0;padding:0 20px;
+  transition:height .3s var(--zease)}
 .ztool.zdrum:hover .zdstage,.ztool.zdrum.aim .zdstage{height:140px}
 .zdbar{position:absolute;inset:0;transform-style:preserve-3d}
 .zdi{position:absolute;left:0;right:0;top:50%;height:32px;margin-top:-16px;
