@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ANAMORF · радиальный селектор — проба</title>
+<style>
+:root{
+  --bg:#08080a; --ink:#ecedf1; --dim:rgba(236,237,241,.34);
+  --ease:cubic-bezier(.2,.85,.25,1);
+  --spring:cubic-bezier(.34,1.4,.5,1);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+  font:400 14px/1.4 "Inter","Segoe UI",system-ui,sans-serif;overflow:hidden;
+  user-select:none;-webkit-user-select:none}
+
+#stage{position:absolute;inset:0;overflow:hidden}
+
+/* сектор — просто подсветка области, в которую нажали */
+#sect{position:absolute;inset:0;pointer-events:none;opacity:0;
+  transition:opacity .4s var(--ease);
+  background:radial-gradient(circle at var(--px) var(--py),
+    rgba(255,255,255,.045),transparent 46%)}
+body.open #sect{opacity:1}
+
+#ring{position:absolute;left:50%;top:50%;width:190px;height:190px;
+  transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle at 38% 30%,#fff,#e2e5ea 62%,#c8ccd4);
+  box-shadow:0 26px 60px -26px #000, inset 0 2px 3px #fff,
+             inset 0 -12px 24px -12px rgba(20,24,32,.3);
+  display:grid;place-items:center;text-align:center;
+  transition:transform .55s var(--ease),filter .55s var(--ease)}
+#ring b{display:block;color:#0b0b0d;font:200 15px/1 inherit;letter-spacing:.26em;
+  text-indent:.26em}
+#ring i{display:block;margin-top:6px;color:rgba(11,11,13,.42);
+  font:500 8px/1 inherit;letter-spacing:.28em;font-style:normal}
+body.open #ring{transform:translate(-50%,-50%) scale(.72);filter:brightness(.5)}
+
+/* ── ЯКОРЬ: точка, из которой всё растёт ── */
+#anchor{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;
+  border-radius:50%;background:#fff;pointer-events:none;opacity:0;
+  box-shadow:0 0 0 6px rgba(255,255,255,.10), 0 0 26px 6px rgba(255,255,255,.35);
+  transform:scale(.2);transition:opacity .3s var(--ease),transform .45s var(--spring)}
+body.open #anchor{opacity:1;transform:scale(1)}
+#trail{position:absolute;inset:0;pointer-events:none}
+#trail circle{fill:#fff;opacity:0;transition:opacity .3s var(--ease)}
+body.open #trail circle{opacity:.5}
+
+/* ── КАПСУЛА ── */
+.cap{position:absolute;left:0;top:0;height:46px;padding:0 22px 0 18px;
+  display:flex;align-items:center;gap:11px;white-space:nowrap;
+  border-radius:999px;cursor:pointer;
+  transform-origin:-1px 50%;              /* поворот вокруг ЯКОРЯ, не вокруг себя */
+  /* Плашка НЕ полупрозрачная: сплошной цвет, ничего не просвечивает. */
+  background:linear-gradient(168deg,#3a3a43,#24242b);
+  border:1px solid rgba(255,255,255,.20);
+  box-shadow:0 18px 34px -16px rgba(0,0,0,.95), 0 2px 4px rgba(0,0,0,.6),
+             inset 0 1px 0 rgba(255,255,255,.08);
+  will-change:transform,opacity}
+.cap .ic{font-size:15px;line-height:1;flex:none}
+.cap .tx{font:400 15px/1 inherit;letter-spacing:.005em}
+.cap .sub{font:400 11px/1 inherit;color:var(--dim);margin-left:2px}
+.cap .rt{margin-left:8px;font:500 10px/1 inherit;color:var(--dim);
+  letter-spacing:.08em}
+/* Выбранная — светлее и с обводкой. Внимание сохраняется: чтобы одна
+   стала ярче, остальные обязаны стать темнее, — но темнее, а не прозрачнее. */
+.cap.cur{background:linear-gradient(168deg,#5c5c69,#33333c);
+  border-color:rgba(255,255,255,.5);
+  box-shadow:0 22px 44px -18px #000, 0 2px 5px rgba(0,0,0,.7),
+             inset 0 1px 0 rgba(255,255,255,.14)}
+.cap.cur .tx{color:#fff}
+.cap.cur .rt{color:rgba(255,255,255,.72)}
+
+/* строка снизу */
+#hint{position:absolute;left:0;right:0;bottom:0;height:46px;display:flex;
+  align-items:center;justify-content:center;gap:10px;
+  font:300 12.5px/1 inherit;color:var(--dim);letter-spacing:.02em;
+  border-top:1px solid rgba(255,255,255,.05)}
+#hint b{font-weight:400;letter-spacing:.18em;color:rgba(236,237,241,.72)}
+#crumb{position:absolute;left:0;right:0;top:0;height:44px;display:flex;
+  align-items:center;justify-content:center;gap:14px;
+  font:400 10.5px/1 inherit;letter-spacing:.2em;color:rgba(236,237,241,.26);
+  text-transform:uppercase}
+#crumb span.on{color:rgba(236,237,241,.8)}
+</style></head><body>
+
+<div id="stage">
+  <div id="sect"></div>
+  <svg id="trail"></svg>
+  <div id="ring"><div><b>ANAMORF</b><i>МОЗГИ</i></div></div>
+  <div id="anchor"></div>
+</div>
+<div id="crumb"></div>
+<div id="hint"><span>нажми в любом месте — веер вырастет оттуда</span></div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const stage = $('#stage'), anchor = $('#anchor'), trail = $('#trail');
+const NS = 'http://www.w3.org/2000/svg';
+
+/* ═══════════════ ДАННЫЕ (понарошку, но по форме настоящие) ═══════════════ */
+const MODELS = {
+  local:[
+    {n:'google/gemma-4-e4b', r:9.1, s:'llama.cpp · 5.8 ГБ'},
+    {n:'gemma4:12b',         r:8.4, s:'ollama · 8.1 ГБ'},
+    {n:'qwen3.5-9b-abliterated', r:8.0, s:'свой воркер · 19 ГБ'},
+    {n:'mistral-small-2603', r:7.2, s:'ollama · 14 ГБ'},
+    {n:'phi-5-mini',         r:6.1, s:'llama.cpp · 2.4 ГБ'},
+  ],
+  paid:[
+    {n:'openai/gpt-4.1',     r:9.6, s:'$2.00 / 1М'},
+    {n:'kimi-k3',            r:9.2, s:'$0.60 / 1М'},
+    {n:'GigaChat-2-Pro',     r:8.8, s:'₽ по пакету'},
+    {n:'openai/gpt-4.1-mini',r:8.3, s:'$0.40 / 1М'},
+    {n:'mistral-medium-3-5', r:7.9, s:'€0.40 / 1М'},
+  ],
+  free:[
+    {n:'@cf/qwen/qwen3-30b', r:8.1, s:'Cloudflare · бесплатно'},
+    {n:'GigaChat',           r:7.4, s:'Сбер · бесплатный тир'},
+    {n:'@cf/meta/llama-3.3-70b', r:7.1, s:'Cloudflare · бесплатно'},
+    {n:'mistral-small (free)', r:6.6, s:'1 млрд ток/мес'},
+  ],
+  diff:[
+    {n:'LLaDA-8B',           r:6.8, s:'DreamPC · 15 ГБ'},
+    {n:'Dream-7B-Instruct',  r:6.2, s:'DreamPC · 13 ГБ'},
+  ],
+};
+/* ТРЕТИЙ УРОВЕНЬ — всё, что относится к ОДНОЙ модели и больше ни к чему.
+   Сэмплинг и размышления живут здесь, а не в органе: и то и другое —
+   свойство конкретной модели, а не мозгов вообще. У gemma свой сэмплинг,
+   у gpt-4.1 свой, и общий на двоих был бы неправдой. */
+const DEEP = [
+  {ic:'🏅', n:'Досье',        s:'надёжность и цена'},
+  {ic:'⚡', n:'Скорость',     s:'кэш, контекст, температура'},
+  {ic:'🎚', n:'Сэмплинг',     s:'как она говорит'},
+  {ic:'💭', n:'Размышления',  s:'думать вслух или отвечать сразу'},
+  {ic:'👁', n:'Возможности',  s:'зрение, инструменты, длина'},
+  {ic:'🎓', n:'Обучение',     s:'дообучить на характере'},
+];
+/* Первый уровень органа «Мозги» */
+const L1 = [
+  {ic:'⏻',  n:'Включено',   s:'мозги работают', kind:'toggle', on:true},
+  {ic:'▤',  n:'Локальные',  s:'на твоём железе', kind:'list', set:'local'},
+  {ic:'☁',  n:'Онлайн платные', s:'по ключу и за деньги', kind:'list', set:'paid'},
+  {ic:'◇',  n:'Онлайн бесплатные', s:'по ключу, без денег', kind:'list', set:'free'},
+  {ic:'≋',  n:'Диффузионные', s:'ответ проявляется из шума', kind:'list', set:'diff'},
+];
+
+/* ═══════════════ СОСТОЯНИЕ ═══════════════ */
+let A = {x:0, y:0, dir:0};          // якорь и направление наружу
+let stack = [];                      // уровни: [{items, cur, title}]
+let els = [], busy = false;
+
+const rad = d => d*Math.PI/180;
+const W = () => stage.clientWidth, H = () => stage.clientHeight;
+
+/* Шаг веера и радиус. Карты в руке лежат внахлёст и расходятся углом —
+   поэтому шаг угловой, а не по расстоянию: так их можно листать вращением
+   вокруг одной точки, не пересчитывая раскладку. */
+/* Веер РОВНЫЙ: маленький угловой шаг и большой радиус. Круче — и карты
+   встают лесенкой, у которой каждая следующая читается хуже предыдущей.
+   Наклон тут нужен ровно настолько, чтобы было видно, что карт много, и
+   ни на градус больше. */
+const STEP = 9.5, RAD = 150, SPAN = 3;
+
+/* ЯКОРЮ НУЖНО МЕСТО.
+   Веер разворачивается наружу от ядра — так он не ложится на него. Но
+   если нажать у самого края, наружу места нет, и половина карт уезжает за
+   кадр: ровно это и случилось на первой пробе. Поэтому якорь отступает
+   назад по своему же лучу ровно настолько, чтобы веер уместился целиком.
+   Точка нажатия при этом остаётся узнаваемой: она не прыгает вбок, а
+   подтягивается по прямой к центру — как будто рука чуть не дотянулась. */
+const REACH = 470;                  // радиус + самая длинная карта
+function fit(x, y){
+  const cx = W()/2, cy = H()/2, M = 24;
+  let vx = x - cx, vy = y - cy;
+  const d = Math.hypot(vx, vy) || 1;
+  vx /= d; vy /= d;
+  const base = Math.atan2(vy, vx)*180/Math.PI;
+  /* Проверяем не одну точку на луче, а ТРИ — по крайним картам веера.
+     Первая проба смотрела только вдоль середины, и веер всё равно уезжал
+     краями: карта, повёрнутая на тридцать градусов, кончается совсем не
+     там, где кончается луч. Габарит меряют по углам, а не по оси. */
+  const angs = [base - SPAN*STEP, base, base + SPAN*STEP];
+  let k = d;
+  for (let i = 0; i < 80; i++){
+    const ok = angs.every(a => {
+      const ex = cx + vx*k + Math.cos(a*Math.PI/180)*REACH;
+      const ey = cy + vy*k + Math.sin(a*Math.PI/180)*REACH;
+      return ex > M && ex < W()-M && ey > M && ey < H()-M;
+    });
+    if (ok) break;
+    k -= 10;
+    if (k < 90){ k = 90; break; }
+  }
+  return {x: cx + vx*k, y: cy + vy*k};
+}
+
+function open(x, y){
+  const f = fit(x, y);
+  A.x = f.x; A.y = f.y;
+  A.dir = Math.atan2(A.y - H()/2, A.x - W()/2)*180/Math.PI;
+  document.body.classList.add('open');
+  stage.style.setProperty('--px', x+'px');
+  stage.style.setProperty('--py', y+'px');
+  anchor.style.left = x+'px'; anchor.style.top = y+'px';
+  drawTrail();
+  stack = [{items:L1, cur:1, title:'МОЗГИ'}];
+  render(true);
+}
+function close(){
+  document.body.classList.remove('open');
+  els.forEach(e => e.remove()); els = [];
+  stack = []; crumb(); hint('нажми в любом месте — веер вырастет оттуда');
+}
+
+function drawTrail(){
+  trail.setAttribute('viewBox', '0 0 '+W()+' '+H());
+  trail.innerHTML = '';
+  const cx = W()/2, cy = H()/2;
+  for (let i=1;i<=7;i++){
+    const t = i/8;
+    const c = document.createElementNS(NS,'circle');
+    c.setAttribute('cx', cx + (A.x-cx)*t);
+    c.setAttribute('cy', cy + (A.y-cy)*t);
+    c.setAttribute('r', 1.6 + t*1.1);
+    trail.appendChild(c);
+  }
+}
+
+/* ═══════════════ ОТРИСОВКА УРОВНЯ ═══════════════
+   Все карты приколоты ЛЕВЫМ КРАЕМ к якорю и повёрнуты каждая на свой угол.
+   Поэтому листание — это поворот всей руки вокруг одной точки, и центральная
+   карта всегда та, что смотрит ровно вдоль луча «наружу». */
+function place(el, off, n){
+  const ang = A.dir + off*STEP;
+  const k = Math.abs(off);
+  /* НЕПРОЗРАЧНЫЕ. Соседние карты не выцветают — они остаются такими же
+     плотными, и прочитать можно любую. Разница между «выбранной» и
+     «остальными» держится на светлоте самой плашки и на размере, а не на
+     полупрозрачности: сквозь полупрозрачную видно фон, и текст на ней
+     читается тем хуже, чем темнее то, что под ней. */
+  const scale = k === 0 ? 1 : Math.max(.84, 1 - k*.055);
+  el.style.transform =
+    'translate('+A.x+'px,'+A.y+'px) rotate('+ang+'deg) '+
+    'translateX('+RAD+'px) translateY(-50%) scale('+scale+')';
+  el.style.opacity = k > SPAN ? 0 : 1;
+  el.style.zIndex = 100 - k;
+  el.classList.toggle('cur', off === 0);
+  el.style.pointerEvents = k > SPAN ? 'none' : 'auto';
+}
+
+function render(grow){
+  els.forEach(e => e.remove()); els = [];
+  const lvl = stack[stack.length-1];
+  const n = lvl.items.length;
+  lvl.items.forEach((it, i) => {
+    // замкнутый круг: карта берёт КРАТЧАЙШИЙ путь до центра, поэтому список
+    // листается бесконечно в обе стороны и не упирается в край
+    let off = i - lvl.cur;
+    if (off >  n/2) off -= n;
+    if (off < -n/2) off += n;
+    if (Math.abs(off) > SPAN + 1) return;
+    const el = document.createElement('div');
+    el.className = 'cap';
+    el.innerHTML =
+      (it.ic ? '<span class="ic">'+it.ic+'</span>' : '<span class="ic">◍</span>') +
+      '<span class="tx">'+(it.n)+'</span>' +
+      (it.s ? '<span class="sub">'+it.s+'</span>' : '') +
+      (it.r ? '<span class="rt">'+it.r.toFixed(1)+'</span>' : '');
+    stage.appendChild(el); els.push(el);
+    el.dataset.i = i;
+    if (grow){
+      // рождение: карта выезжает ИЗ ЯКОРЯ, а не появляется на месте
+      el.style.transition = 'none';
+      el.style.transform = 'translate('+A.x+'px,'+A.y+'px) rotate('+(A.dir+off*STEP)+'deg) '
+                         + 'translateX(0px) translateY(-50%) scale(.2)';
+      el.style.opacity = '1';
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform .5s var(--spring), opacity .35s var(--ease)';
+        setTimeout(() => place(el, off, n), Math.abs(off)*45);
+      });
+    } else {
+      el.style.transition = 'transform .42s var(--spring), opacity .3s var(--ease)';
+      place(el, off, n);
+    }
+    el.addEventListener('click', ev => { ev.stopPropagation(); pick(i); });
+  });
+  crumb(); say();
+}
+
+function repos(){
+  const lvl = stack[stack.length-1], n = lvl.items.length;
+  els.forEach(el => {
+    let off = +el.dataset.i - lvl.cur;
+    if (off >  n/2) off -= n;
+    if (off < -n/2) off += n;
+    place(el, off, n);
+  });
+  say();
+}
+
+/* ═══════════════ ПЕРЕХОД ВГЛУБЬ ═══════════════
+   Выбранная карта СХЛОПЫВАЕТСЯ В ЯКОРЬ, и уже из него вырастает следующий
+   уровень. Это то, что делает лесенку понятной: новое приходит не «откуда-то
+   сверху», а буквально из того, что ты только что выбрал. */
+function dive(next){
+  if (busy) return; busy = true;
+  const lvl = stack[stack.length-1], n = lvl.items.length;
+  els.forEach(el => {
+    let off = +el.dataset.i - lvl.cur;
+    if (off >  n/2) off -= n;
+    if (off < -n/2) off += n;
+    el.style.transition = 'transform .34s var(--ease), opacity .28s var(--ease)';
+    el.style.transform = 'translate('+A.x+'px,'+A.y+'px) rotate('+(A.dir+off*STEP)+'deg) '
+                       + 'translateX(0px) translateY(-50%) scale(.18)';
+    el.style.opacity = '0';
+  });
+  setTimeout(() => { stack.push(next); render(true); busy = false; }, 300);
+}
+function back(){
+  if (busy) return;
+  if (stack.length <= 1){ close(); return; }
+  busy = true;
+  els.forEach(el => {
+    el.style.transition = 'transform .3s var(--ease), opacity .24s var(--ease)';
+    el.style.transform = 'translate('+A.x+'px,'+A.y+'px) scale(.18)';
+    el.style.opacity = '0';
+  });
+  setTimeout(() => { stack.pop(); render(true); busy = false; }, 260);
+}
+
+function pick(i){
+  const lvl = stack[stack.length-1];
+  if (i !== lvl.cur){ lvl.cur = i; repos(); return; }   // не по центру — просто подвести
+  const it = lvl.items[i];
+  if (it.kind === 'toggle'){ it.on = !it.on; it.s = it.on ? 'мозги работают' : 'выключено';
+    render(false); return; }
+  if (it.kind === 'list'){
+    // ВТОРОЙ УРОВЕНЬ: модели, по убыванию рейтинга, лучшая — по центру
+    const arr = MODELS[it.set].slice().sort((a,b) => b.r - a.r)
+                  .map(m => ({...m, kind:'model', ic:'◍'}));
+    dive({items:arr, cur:0, title:it.n});
+    return;
+  }
+  if (it.kind === 'model'){
+    // ТРЕТИЙ УРОВЕНЬ: глубокие настройки этой модели
+    dive({items:DEEP.map(d => ({...d, kind:'leaf'})), cur:0, title:it.n});
+    return;
+  }
+  if (it.kind === 'leaf'){ hint('<b>'+it.n.toUpperCase()+'</b> — тут открылась бы панель'); }
+}
+
+function crumb(){
+  $('#crumb').innerHTML = stack.map((l,i) =>
+    '<span'+(i===stack.length-1?' class="on"':'')+'>'+l.title+'</span>').join(' › ');
+}
+function say(){
+  const lvl = stack[stack.length-1];
+  if (!lvl) return;
+  const it = lvl.items[lvl.cur] || {};
+  hint('<b>'+(it.n||'').toUpperCase()+'</b> — колесо листает · клик по центру идёт глубже · правая кнопка назад');
+}
+function hint(h){ $('#hint').innerHTML = '<span>'+h+'</span>'; }
+
+/* ═══════════════ ЖЕСТЫ ═══════════════ */
+stage.addEventListener('pointerdown', ev => {
+  if (ev.button === 2) return;
+  if (ev.target.closest('.cap')) return;
+  if (document.body.classList.contains('open')){ close(); return; }
+  open(ev.clientX, ev.clientY);
+});
+addEventListener('contextmenu', ev => { ev.preventDefault(); if (stack.length) back(); });
+addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') back();
+  if (!stack.length) return;
+  const lvl = stack[stack.length-1], n = lvl.items.length;
+  if (ev.key === 'ArrowUp')   { lvl.cur = (lvl.cur - 1 + n) % n; repos(); }
+  if (ev.key === 'ArrowDown') { lvl.cur = (lvl.cur + 1) % n; repos(); }
+  if (ev.key === 'Enter')     pick(lvl.cur);
+});
+addEventListener('wheel', ev => {
+  if (!stack.length) return;
+  ev.preventDefault();
+  const lvl = stack[stack.length-1], n = lvl.items.length;
+  // вниз колесом — вверх по списку: рука крутит переднюю грань барабана
+  lvl.cur = (lvl.cur + (ev.deltaY > 0 ? -1 : 1) + n) % n;
+  repos();
+}, {passive:false});
+addEventListener('resize', () => { if (stack.length){ drawTrail(); repos(); } });
+</script></body></html>
