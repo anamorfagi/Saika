@@ -397,7 +397,9 @@ addEventListener('pointerup',()=>{ if(pan){ pan=null; persist(); } });
 wrap.addEventListener('wheel',ev=>{
   ev.preventDefault();
   const r=wrap.getBoundingClientRect(), mx=ev.clientX-r.left, my=ev.clientY-r.top;
-  const k0=D.view.k, k=Math.max(.25,Math.min(2.2,k0*(ev.deltaY>0?.9:1.11)));
+  /* Колесо инвертировано: от себя — отдалить, к себе — приблизить.
+     Так это работает во всех редакторах сцен, и рука уже знает. */
+  const k0=D.view.k, k=Math.max(.25,Math.min(2.2,k0*(ev.deltaY>0?1.11:.9)));
   D.view.x=mx-(mx-D.view.x)*(k/k0); D.view.y=my-(my-D.view.y)*(k/k0); D.view.k=k;
   applyView(); persist();
 },{passive:false});
