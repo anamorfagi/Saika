@@ -233,7 +233,10 @@ const L1 = [
 /* ЗАЗОРОВ НЕТ. Владелец повторил это трижды, и трижды я оставлял то
    пятьдесят пикселей, то двести. Пустота между точкой и списком ничего
    не сообщает: связь и так видна — список из точки и вырос. */
-const ROW = 44, GAP = 34, SPAN = 3;
+/* ВПЛОТНУЮ. Пустая полоса между точкой и списком ничего не сообщает и
+   только разводит взгляд. Четырнадцать пикселей — ровно чтобы капсула не
+   села на точку. */
+const ROW = 44, GAP = 14, SPAN = 3;
 const DEEP_Z = 78, DEEP_ROT = 11;   // насколько дальние уходят в барабан
 
 let stack = [];        // [{items, cur, title, x, y, dir, ic}]
@@ -317,9 +320,13 @@ function place(el, off, lvl, grow){
 /* Точка строки стоит у ДАЛЬНЕГО её края — там, куда уходит дорога, и
    там же, где раскроется следующий уровень. Так точки свёрнутого уровня
    не остаются позади, а лежат ровно на пути. */
+/* Точка пройденной строки садится ВПЛОТНУЮ к её краю. Капсула, из
+   которой ушли вглубь, просто становится точкой рядом с новой капсулой
+   следующего уровня. Никаких перегонов: точки остаются слева и справа и
+   одним своим присутствием говорят, что мы прошли дальше по дереву. */
 function capPoint(lvl, off){
   const sg = lvl.side || 1, w = lvl.w || 260;
-  return {x: lvl.x + sg*(GAP + w + 6), y: lvl.y + off*ROW};
+  return {x: lvl.x + sg*(GAP + w + 7), y: lvl.y + off*ROW};
 }
 
 function render(grow){
@@ -389,13 +396,16 @@ function hint3(lvl){
   hintEls.forEach(e => e.remove()); hintEls = [];
   const it = lvl.items[lvl.cur];
   if (!it || it.kind === 'toggle' || it.kind === 'leaf') return;
+  /* Точки у выделенной строки — ВПЛОТНУЮ к её краю. Пара пикселей: этого
+     хватает, чтобы прочиталось «там ещё уровень», и не хватает, чтобы они
+     начали спорить с самой строкой за внимание. */
   const sg = lvl.side || 1, w = lvl.w || 260;
-  const bx = lvl.x + sg*(GAP + w + 6);
+  const bx = lvl.x + sg*(GAP + w + 7);
   [-1, 0, 1].forEach(k => {
     const el = document.createElement('div');
     el.className = 'dot deeper' + (k === 0 ? ' pick' : '');
-    el.style.left = (bx + sg*Math.abs(k)*7)+'px';
-    el.style.top  = (lvl.y + k*13)+'px';
+    el.style.left = (bx + sg*Math.abs(k)*5)+'px';
+    el.style.top  = (lvl.y + k*11)+'px';
     el.addEventListener('click', ev => { ev.stopPropagation(); pick(lvl.cur); });
     let t = 0;
     el.addEventListener('pointerenter', () => { t = setTimeout(() => pick(lvl.cur), 260); });
@@ -460,7 +470,8 @@ function dive(next){
      лентой: точка, строка, точка, строка. Между ними ничего. */
   const sg = lvl.side || 1;
   const w = lvl.w || 260;
-  next.x = Math.max(20, Math.min(W()-20, lvl.x + sg*(GAP + w + 6)));
+  // следующий уровень — сразу за краем строки, между ними только точка
+  next.x = Math.max(20, Math.min(W()-20, lvl.x + sg*(GAP + w + 18)));
   next.y = Math.max(60, Math.min(H()-80, lvl.y));
   next.side = sg;
   setTimeout(() => { stack.push(next); render(true); busy = false; }, 300);
