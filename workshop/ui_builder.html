@@ -4,98 +4,141 @@
 <title>ANAMORF · конструктор селектора</title>
 <style>
 :root{--bg:#0a0a0c;--pan:#141418;--ln:rgba(255,255,255,.09);
-  --ink:#ecedf1;--dim:rgba(236,237,241,.42);--acc:#fff;
+  --ink:#ecedf1;--dim:rgba(236,237,241,.42);
   --ease:cubic-bezier(.2,.85,.25,1)}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
   font:400 13px/1.45 "Inter","Segoe UI",system-ui,sans-serif;overflow:hidden}
-#app{display:grid;grid-template-columns:280px 1fr 260px;height:100%}
+#app{display:grid;grid-template-columns:216px 1fr 292px;height:100%}
+/* ПАЛИТРА СЛЕВА, АУТЛАЙНЕР СПРАВА — как в редакторах сцен: слева из чего
+   строить, справа что построено и какое оно. Раскладка не украшение:
+   рука ищет инструмент всегда в одном месте, а свойства — всегда в
+   другом, и менять их местами между программами дороже, чем кажется. */
+.palette{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tile{background:#1c1c22;border:1px solid var(--ln);border-radius:10px;
+  padding:9px 8px;cursor:pointer;text-align:center;transition:all .16s var(--ease)}
+.tile:hover{background:#2b2b34;border-color:rgba(255,255,255,.34);transform:translateY(-1px)}
+.tile .gl{display:block;font-size:19px;line-height:1;margin-bottom:5px;color:#dcdce4}
+.tile b{display:block;font:500 11.5px/1 inherit}
+.tile i{display:block;margin-top:3px;font:400 9.5px/1.25 inherit;
+  font-style:normal;color:var(--dim)}
 .pan{background:var(--pan);border-right:1px solid var(--ln);overflow:auto;padding:12px}
 .pan:last-child{border-right:0;border-left:1px solid var(--ln)}
 h3{margin:0 0 8px;font:500 10.5px/1 inherit;letter-spacing:.18em;
   text-transform:uppercase;color:var(--dim)}
-.row{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:5px;flex-wrap:wrap}
 button{background:#22222a;color:var(--ink);border:1px solid var(--ln);
   border-radius:8px;padding:5px 9px;font:400 12px/1 inherit;cursor:pointer}
 button:hover{background:#2e2e38;border-color:rgba(255,255,255,.3)}
-button.on{background:#5a5a68;border-color:rgba(255,255,255,.5)}
+button.on{background:#5a5a68;border-color:rgba(255,255,255,.55)}
 input[type=text]{background:#0f0f13;color:var(--ink);border:1px solid var(--ln);
   border-radius:7px;padding:5px 8px;font:400 12px/1 inherit;width:100%}
 input[type=range]{width:100%;accent-color:#dcdce4}
 label{display:block;font:400 11px/1.5 inherit;color:var(--dim);margin-top:9px}
 label b{color:var(--ink);font-weight:500;float:right}
-
-/* дерево */
 #tree{margin-top:4px}
 .nd{display:flex;align-items:center;gap:5px;padding:4px 5px;border-radius:7px;
   cursor:pointer;border:1px solid transparent}
 .nd:hover{background:#1d1d23}
-.nd.sel{background:#2c2c36;border-color:rgba(255,255,255,.28)}
+.nd.sel{background:#2c2c36;border-color:rgba(255,255,255,.3)}
 .nd .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nd .tp{font:400 9.5px/1 inherit;color:var(--dim);letter-spacing:.1em;
-  text-transform:uppercase}
-.nd .mini{padding:2px 5px;font-size:11px;border-radius:6px}
+.nd .tp{font:400 9.5px/1 inherit;color:var(--dim)}
 
-/* сцена */
-#scene{position:relative;overflow:hidden;background:
-  radial-gradient(circle at 50% 45%,#101014,#08080a 70%)}
-#hintbar{position:absolute;left:0;right:0;bottom:0;height:38px;display:flex;
-  align-items:center;justify-content:center;gap:8px;font:300 12px/1 inherit;
-  color:var(--dim);border-top:1px solid var(--ln);background:rgba(10,10,12,.7)}
+#scene{position:relative;overflow:hidden;
+  background:radial-gradient(circle at 50% 45%,#101014,#08080a 70%)}
+#bar{position:absolute;left:0;right:0;top:0;height:38px;display:flex;
+  align-items:center;gap:8px;padding:0 12px;z-index:300;
+  background:rgba(10,10,12,.72);border-bottom:1px solid var(--ln)}
+#bar .sp{flex:1}
+#hintbar{position:absolute;left:0;right:0;bottom:0;height:36px;display:flex;
+  align-items:center;justify-content:center;font:300 12px/1 inherit;
+  color:var(--dim);border-top:1px solid var(--ln);background:rgba(10,10,12,.72);
+  z-index:300}
 #anchor{position:absolute;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
-  border-radius:50%;background:#fff;cursor:grab;z-index:200;
+  border-radius:50%;background:#fff;z-index:200;
   box-shadow:0 0 0 5px rgba(255,255,255,.09),0 0 24px 6px rgba(255,255,255,.3)}
-#anchor.drag{cursor:grabbing}
-.cap{position:absolute;height:var(--h,44px);transform-origin:50% 50%;
-  will-change:transform,filter}
-.cap .body{display:flex;align-items:center;gap:10px;white-space:nowrap;
-  height:var(--h,44px);padding:0 18px 0 15px;border-radius:999px;cursor:pointer;
+body.edit #anchor{cursor:grab}
+
+.el{position:absolute;transform-origin:50% 50%;will-change:transform,filter}
+body.edit .el{cursor:grab}
+body.edit .el.pick{outline:1px dashed rgba(255,255,255,.5);outline-offset:5px}
+body.edit .el.moved .body,body.edit .el.moved .pt{box-shadow:0 0 0 2px rgba(255,255,255,.35)}
+
+/* строка */
+.el .body{display:flex;align-items:center;gap:10px;white-space:nowrap;
+  height:var(--h,44px);padding:0 18px 0 15px;border-radius:999px;
   background:linear-gradient(168deg,#3d3d47,#26262e);
   border:1px solid rgba(255,255,255,.2);
   box-shadow:0 16px 30px -14px #000,0 2px 4px rgba(0,0,0,.6),
              inset 0 1px 0 rgba(255,255,255,.08)}
-.cap.cur .body{background:linear-gradient(168deg,#61616e,#37373f);
+.el.cur .body{background:linear-gradient(168deg,#61616e,#37373f);
   border-color:rgba(255,255,255,.55);
   box-shadow:0 26px 50px -20px #000,inset 0 1px 0 rgba(255,255,255,.16)}
-.cap .ic{font-size:14px;flex:none}
-.cap .tx{font:400 14px/1 inherit}
-.cap.cur .tx{color:#fff}
-.cap .sub{font:400 11px/1 inherit;color:var(--dim)}
-.dot{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;
-  background:rgba(255,255,255,.4);cursor:pointer;transition:transform .2s var(--ease)}
-.dot.pick{width:12px;height:12px;margin:-6px 0 0 -6px;background:#fff}
-.dot:hover{transform:scale(1.8)}
-.dot b{position:absolute;top:15px;left:50%;transform:translateX(-50%);
+.el .ic{font-size:14px;flex:none}
+.el .tx{font:400 14px/1 inherit}
+.el.cur .tx{color:#fff}
+.el .sub{font:400 11px/1 inherit;color:var(--dim)}
+
+/* точка как самостоятельный элемент */
+.el .pt{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.55);
+  box-shadow:0 0 0 4px rgba(255,255,255,.06)}
+.el.cur .pt{width:14px;height:14px;background:#fff;
+  box-shadow:0 0 0 5px rgba(255,255,255,.1),0 0 20px 5px rgba(255,255,255,.25)}
+.el .lb{position:absolute;top:17px;left:50%;transform:translateX(-50%);
   white-space:nowrap;font:400 9.5px/1 inherit;letter-spacing:.13em;
   text-transform:uppercase;color:var(--dim);pointer-events:none}
-#out{width:100%;height:130px;margin-top:8px;background:#0f0f13;color:var(--dim);
-  border:1px solid var(--ln);border-radius:8px;padding:7px;font:400 10px/1.4
-  ui-monospace,monospace;resize:none}
-</style></head><body>
+
+/* пунктир */
+.el.dash{pointer-events:none}
+body.edit .el.dash{pointer-events:auto}
+.el.dash i{position:absolute;width:4px;height:4px;border-radius:50%;
+  background:rgba(255,255,255,.5)}
+
+/* след пройденных уровней */
+.trace{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;
+  background:rgba(255,255,255,.32);cursor:pointer}
+.trace.pick{width:12px;height:12px;margin:-6px 0 0 -6px;background:#fff}
+.trace b{position:absolute;top:15px;left:50%;transform:translateX(-50%);
+  white-space:nowrap;font:400 9.5px/1 inherit;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--dim);pointer-events:none}
+
+#out{width:100%;height:120px;margin-top:8px;background:#0f0f13;color:var(--dim);
+  border:1px solid var(--ln);border-radius:8px;padding:7px;
+  font:400 10px/1.4 ui-monospace,monospace;resize:none}
+#log{position:absolute;right:12px;top:48px;width:230px;max-height:44%;
+  overflow:auto;z-index:250;pointer-events:none;display:none}
+body.sim #log{display:block}
+#log div{background:rgba(20,20,26,.9);border:1px solid var(--ln);border-radius:8px;
+  padding:5px 8px;margin-bottom:4px;font:400 11px/1.35 inherit;color:var(--dim)}
+#log div b{color:var(--ink);font-weight:500}
+</style></head><body class="edit">
 <div id="app">
 
-  <!-- ═════ СТРУКТУРА ═════ -->
+  <!-- ═════ СЛЕВА: ПАЛИТРА ═════ -->
   <div class="pan">
-    <h3>Структура</h3>
+    <h3>Палитра</h3>
+    <div class="palette">
+      <div class="tile" onclick="add('item',false)">
+        <span class="gl">▭</span><b>Плашка</b><i>строка списка</i></div>
+      <div class="tile" onclick="add('dot',false)">
+        <span class="gl">●</span><b>Точка</b><i>привяжется к выбранному</i></div>
+      <div class="tile" onclick="add('dash',false)">
+        <span class="gl">⋯</span><b>Линия</b><i>пунктир от выбранного</i></div>
+      <div class="tile" onclick="add('item',true)">
+        <span class="gl">⊞</span><b>Вложить</b><i>плашка внутрь выбранной</i></div>
+    </div>
+
+    <h3 style="margin-top:16px">Правка</h3>
     <div class="row">
-      <button onclick="addNode(false)">+ рядом</button>
-      <button onclick="addNode(true)">+ внутрь</button>
-      <button onclick="delNode()">удалить</button>
+      <button onclick="undo()" title="Ctrl+Z">↶ отменить</button>
+      <button onclick="redo()" title="Ctrl+Shift+Z">↷ вернуть</button>
     </div>
     <div class="row">
+      <button onclick="del()">удалить</button>
       <button onclick="move(-1)">↑</button>
       <button onclick="move(1)">↓</button>
       <button onclick="reset()" style="margin-left:auto">сброс</button>
     </div>
-    <div id="tree"></div>
-
-    <h3 style="margin-top:16px">Пункт</h3>
-    <label>Имя</label>
-    <input type="text" id="f-name" oninput="setF('n',this.value)">
-    <label>Подпись</label>
-    <input type="text" id="f-sub" oninput="setF('s',this.value)">
-    <label>Значок</label>
-    <input type="text" id="f-ic" oninput="setF('ic',this.value)">
 
     <h3 style="margin-top:16px">Готовый JSON</h3>
     <div class="row"><button onclick="copyOut()">скопировать</button>
@@ -103,31 +146,59 @@ label b{color:var(--ink);font-weight:500;float:right}
     <textarea id="out" spellcheck="false"></textarea>
   </div>
 
-  <!-- ═════ СЦЕНА ═════ -->
+  <!-- ═════ ЦЕНТР: СЦЕНА ═════ -->
   <div id="scene">
+    <div id="bar">
+      <button id="b-edit" class="on" onclick="setMode('edit')">правка</button>
+      <button id="b-sim" onclick="setMode('sim')">симуляция</button>
+      <span class="sp"></span>
+      <button onclick="rewind()">с начала</button>
+    </div>
     <div id="anchor"></div>
-    <div id="hintbar"><span>точку можно таскать · колесо листает · клик по строке — внутрь · правая кнопка — назад</span></div>
+    <div id="log"></div>
+    <div id="hintbar"><span id="tip"></span></div>
   </div>
 
-  <!-- ═════ МЕХАНИКА ═════ -->
+  <!-- ═════ СПРАВА: АУТЛАЙНЕР И ДЕТАЛИ ═════ -->
   <div class="pan">
-    <h3>Раскладка</h3>
+    <h3>Аутлайнер</h3>
+    <div id="tree"></div>
+
+    <h3 style="margin-top:16px">Детали</h3>
+    <label>Имя</label><input type="text" id="f-name" oninput="setF('n',this.value)">
+    <label>Подпись</label><input type="text" id="f-sub" oninput="setF('s',this.value)">
+    <label>Значок</label><input type="text" id="f-ic" oninput="setF('ic',this.value)">
+    <label>Смещение X <b id="v-dx"></b></label>
+    <input type="range" id="s-dx" min="-400" max="400" oninput="setF('dx',+this.value)">
+    <label>Смещение Y <b id="v-dy"></b></label>
+    <input type="range" id="s-dy" min="-400" max="400" oninput="setF('dy',+this.value)">
+    <div id="dashfields" style="display:none">
+      <label>Длина линии <b id="v-len"></b></label>
+      <input type="range" id="s-len" min="20" max="500" oninput="setF('len',+this.value)">
+      <label>Угол <b id="v-ang"></b></label>
+      <input type="range" id="s-ang" min="-180" max="180" oninput="setF('ang',+this.value)">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="setF('dx',0);setF('dy',0)">сбросить смещение</button>
+    </div>
+
+    <h3 style="margin-top:16px">Раскладка</h3>
     <label>Зазор от точки <b id="v-gap"></b></label>
-    <input type="range" id="s-gap" min="0" max="160" oninput="setS('gap',+this.value)">
+    <input type="range" id="s-gap" min="0" max="200" oninput="setS('gap',+this.value)">
     <label>Шаг строки <b id="v-row"></b></label>
-    <input type="range" id="s-row" min="30" max="90" oninput="setS('row',+this.value)">
+    <input type="range" id="s-row" min="26" max="100" oninput="setS('row',+this.value)">
     <label>Высота строки <b id="v-h"></b></label>
-    <input type="range" id="s-h" min="30" max="70" oninput="setS('h',+this.value)">
-    <label>Видно строк в каждую сторону <b id="v-span"></b></label>
-    <input type="range" id="s-span" min="1" max="6" oninput="setS('span',+this.value)">
+    <input type="range" id="s-h" min="28" max="72" oninput="setS('h',+this.value)">
+    <label>Видно строк в стороны <b id="v-span"></b></label>
+    <input type="range" id="s-span" min="1" max="7" oninput="setS('span',+this.value)">
 
     <h3 style="margin-top:14px">Глубина</h3>
     <label>Уход назад <b id="v-z"></b></label>
-    <input type="range" id="s-z" min="0" max="200" oninput="setS('z',+this.value)">
+    <input type="range" id="s-z" min="0" max="220" oninput="setS('z',+this.value)">
     <label>Поворот <b id="v-rot"></b></label>
-    <input type="range" id="s-rot" min="0" max="30" oninput="setS('rot',+this.value)">
+    <input type="range" id="s-rot" min="0" max="34" oninput="setS('rot',+this.value)">
     <label>Затемнение дальних <b id="v-dim"></b></label>
-    <input type="range" id="s-dim" min="0" max="40" oninput="setS('dim',+this.value)">
+    <input type="range" id="s-dim" min="0" max="45" oninput="setS('dim',+this.value)">
     <label>Перспектива <b id="v-per"></b></label>
     <input type="range" id="s-per" min="300" max="2400" step="50" oninput="setS('per',+this.value)">
 
@@ -136,19 +207,19 @@ label b{color:var(--ink);font-weight:500;float:right}
     <div class="row">
       <button data-o="click" onclick="setS('open','click')">клик</button>
       <button data-o="hover" onclick="setS('open','hover')">наведение</button>
-      <button data-o="hold"  onclick="setS('open','hold')">удержание</button>
+      <button data-o="hold" onclick="setS('open','hold')">удержание</button>
     </div>
-    <label>Задержка / удержание <b id="v-ms"></b></label>
+    <label>Задержка <b id="v-ms"></b></label>
     <input type="range" id="s-ms" min="0" max="900" step="20" oninput="setS('ms',+this.value)">
     <label>Сторона</label>
     <div class="row">
-      <button data-sd="1"  onclick="setS('side',1)">вправо</button>
+      <button data-sd="1" onclick="setS('side',1)">вправо</button>
       <button data-sd="-1" onclick="setS('side',-1)">влево</button>
-      <button data-sd="0"  onclick="setS('side',0)">сама</button>
+      <button data-sd="0" onclick="setS('side',0)">сама</button>
     </div>
-    <label>Точки-намёк на глубину</label>
+    <label>Точки-намёк</label>
     <div class="row">
-      <button data-hn="1" onclick="setS('hint',1)">показывать</button>
+      <button data-hn="1" onclick="setS('hint',1)">да</button>
       <button data-hn="0" onclick="setS('hint',0)">нет</button>
     </div>
   </div>
@@ -157,76 +228,133 @@ label b{color:var(--ink);font-weight:500;float:right}
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
-const scene = $('#scene'), anchor = $('#anchor');
+const scene = $('#scene'), anchor = $('#anchor'), logBox = $('#log');
 
 /* ═══ МОДЕЛЬ ═══
-   Плоский список узлов с ссылкой на родителя. Плоский, а не дерево из
-   вложенных объектов, ровно по одной причине: так порядок и перенос
-   правятся одной строкой, а дерево пришлось бы пересобирать целиком на
-   каждое движение мышкой. */
+   Узлы плоские, со ссылкой на родителя. Три вида: строка, точка, пунктир.
+   У КАЖДОГО своё смещение dx/dy — то, на сколько владелец сдвинул его
+   рукой поверх расчётной раскладки. Расчёт даёт порядок, смещение даёт
+   последнее слово; спорить с рукой не должен никакой алгоритм. */
 const DEF = {
   nodes:[
-    {id:1, p:0, ic:'⏻', n:'Включено',          s:'мозги работают'},
-    {id:2, p:0, ic:'▤', n:'Локальные',         s:'на твоём железе'},
-    {id:3, p:0, ic:'☁', n:'Онлайн платные',    s:'по ключу и за деньги'},
-    {id:4, p:0, ic:'◇', n:'Онлайн бесплатные', s:'по ключу, без денег'},
-    {id:5, p:0, ic:'≋', n:'Диффузионные',      s:'ответ из шума'},
-    {id:6, p:2, ic:'◍', n:'google/gemma-4-e4b', s:'llama.cpp · 5.8 ГБ'},
-    {id:7, p:2, ic:'◍', n:'gemma4:12b',         s:'ollama · 8.1 ГБ'},
-    {id:8, p:2, ic:'◍', n:'qwen3.5-9b',         s:'свой воркер · 19 ГБ'},
-    {id:9, p:6, ic:'🏅', n:'Досье',       s:'надёжность и цена'},
-    {id:10,p:6, ic:'⚡', n:'Скорость',    s:'кэш, контекст'},
-    {id:11,p:6, ic:'🎚', n:'Сэмплинг',    s:'как она говорит'},
-    {id:12,p:6, ic:'💭', n:'Размышления', s:'вслух или сразу'},
+    {id:1,p:0,t:'item',ic:'⏻',n:'Включено',s:'мозги работают',dx:0,dy:0},
+    {id:2,p:0,t:'item',ic:'▤',n:'Локальные',s:'на твоём железе',dx:0,dy:0},
+    {id:3,p:0,t:'item',ic:'☁',n:'Онлайн платные',s:'по ключу и за деньги',dx:0,dy:0},
+    {id:4,p:0,t:'item',ic:'◇',n:'Онлайн бесплатные',s:'по ключу, без денег',dx:0,dy:0},
+    {id:5,p:0,t:'item',ic:'≋',n:'Диффузионные',s:'ответ из шума',dx:0,dy:0},
+    {id:6,p:2,t:'item',ic:'◍',n:'google/gemma-4-e4b',s:'llama.cpp · 5.8 ГБ',dx:0,dy:0},
+    {id:7,p:2,t:'item',ic:'◍',n:'gemma4:12b',s:'ollama · 8.1 ГБ',dx:0,dy:0},
+    {id:8,p:2,t:'item',ic:'◍',n:'qwen3.5-9b',s:'свой воркер · 19 ГБ',dx:0,dy:0},
+    {id:9,p:6,t:'item',ic:'🏅',n:'Досье',s:'надёжность и цена',dx:0,dy:0},
+    {id:10,p:6,t:'item',ic:'⚡',n:'Скорость',s:'кэш, контекст',dx:0,dy:0},
+    {id:11,p:6,t:'item',ic:'🎚',n:'Сэмплинг',s:'как она говорит',dx:0,dy:0},
+    {id:12,p:6,t:'item',ic:'💭',n:'Размышления',s:'вслух или сразу',dx:0,dy:0},
   ],
-  style:{gap:34, row:44, h:44, span:2, z:78, rot:11, dim:19, per:900,
-         open:'click', ms:260, side:0, hint:1},
-  anchor:{x:0.34, y:0.5}
+  style:{gap:27,row:44,h:44,span:2,z:78,rot:11,dim:19,per:900,
+         open:'click',ms:260,side:0,hint:1},
+  anchor:{x:.34,y:.5}
 };
 let D = load() || JSON.parse(JSON.stringify(DEF));
-let sel = 1;                       // выбранный в дереве
-let stack = [];                    // открытые уровни на сцене
-let els = [], dots = [], hints = [];
+let sel = 1, mode = 'edit';
+let stack = [], nodesOnScreen = [], traces = [];
 
-function load(){ try{ return JSON.parse(localStorage.anamorf_builder); }catch(e){ return null; } }
-function save(){ try{ localStorage.anamorf_builder = JSON.stringify(D); }catch(e){}
-                 $('#out').value = JSON.stringify(D, null, 1); }
+function load(){ try{ const j = JSON.parse(localStorage.anamorf_builder2);
+  return (j && j.nodes) ? j : null; }catch(e){ return null; } }
+/* ═══ ОТМЕНА ═══
+   Снимок целиком, а не список действий. Разница практическая: список
+   действий надо уметь проигрывать назад — у каждого своя обратная
+   операция, и каждая новая кнопка добавляет ещё одну возможность
+   ошибиться. Снимок обратной операции не требует вовсе. Модель тут
+   меньше пары килобайт, полсотни снимков ничего не весят. */
+let hist = [], future = [];
+function snap(){
+  hist.push(JSON.stringify(D));
+  if (hist.length > 60) hist.shift();
+  future.length = 0;
+}
+function undo(){
+  if (!hist.length) return;
+  future.push(JSON.stringify(D));
+  D = JSON.parse(hist.pop());
+  if (!byId(sel)) sel = D.nodes.length ? D.nodes[0].id : 0;
+  tree(); fields(); sliders(); persist(); build();
+}
+function redo(){
+  if (!future.length) return;
+  hist.push(JSON.stringify(D));
+  D = JSON.parse(future.pop());
+  if (!byId(sel)) sel = D.nodes.length ? D.nodes[0].id : 0;
+  tree(); fields(); sliders(); persist(); build();
+}
+addEventListener('keydown', ev => {
+  const t = ev.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  const z = ev.key === 'z' || ev.key === 'Z' || ev.key === 'я' || ev.key === 'Я';
+  if ((ev.ctrlKey || ev.metaKey) && z){
+    ev.preventDefault();
+    ev.shiftKey ? redo() : undo();
+  }
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'y' || ev.key === 'Y')){
+    ev.preventDefault(); redo();
+  }
+});
+
+function persist(){ try{ localStorage.anamorf_builder2 = JSON.stringify(D); }catch(e){}
+  $('#out').value = JSON.stringify(D,null,1); }
+function save(){ persist(); }
 
 const kids = p => D.nodes.filter(n => n.p === p);
+const rows = p => kids(p).filter(n => n.t === 'item');
 const byId = i => D.nodes.find(n => n.id === i);
-const nextId = () => Math.max(0, ...D.nodes.map(n => n.id)) + 1;
+const nextId = () => Math.max(0,...D.nodes.map(n=>n.id))+1;
 
 /* ═══ ДЕРЕВО ═══ */
+const TN = {item:'', dot:'точка', dash:'пунктир'};
 function tree(){
   const box = $('#tree'); box.innerHTML = '';
-  (function walk(p, d){
+  (function walk(p,d){
     kids(p).forEach(n => {
       const el = document.createElement('div');
-      el.className = 'nd' + (n.id === sel ? ' sel' : '');
+      el.className = 'nd'+(n.id===sel?' sel':'');
       el.style.marginLeft = (d*13)+'px';
-      el.innerHTML = '<span>'+(n.ic||'◍')+'</span><span class="nm">'+n.n+'</span>'
-        + (kids(n.id).length ? '<span class="tp">'+kids(n.id).length+'</span>' : '');
+      el.innerHTML = '<span>'+(n.t==='dash'?'⋯':n.t==='dot'?'•':(n.ic||'◍'))+'</span>'
+        +'<span class="nm">'+n.n+'</span>'
+        +'<span class="tp">'+(TN[n.t]|| (rows(n.id).length||''))+'</span>';
       el.onclick = () => { sel = n.id; tree(); fields(); openTo(n.id); };
-      box.appendChild(el);
-      walk(n.id, d+1);
+      box.appendChild(el); walk(n.id,d+1);
     });
-  })(0, 0);
+  })(0,0);
 }
 function fields(){
-  const n = byId(sel); if (!n) return;
-  $('#f-name').value = n.n; $('#f-sub').value = n.s || ''; $('#f-ic').value = n.ic || '';
+  const n = byId(sel); if(!n) return;
+  $('#f-name').value = n.n; $('#f-sub').value = n.s||''; $('#f-ic').value = n.ic||'';
+  $('#s-dx').value = n.dx||0; $('#v-dx').textContent = (n.dx||0)+' px';
+  $('#s-dy').value = n.dy||0; $('#v-dy').textContent = (n.dy||0)+' px';
+  const dash = n.t === 'dash';
+  $('#dashfields').style.display = dash ? 'block' : 'none';
+  if (dash){ $('#s-len').value = n.len||120; $('#v-len').textContent = (n.len||120)+' px';
+             $('#s-ang').value = n.ang||0;   $('#v-ang').textContent = (n.ang||0)+'°'; }
 }
-function setF(k, v){ const n = byId(sel); if (!n) return; n[k] = v; tree(); save(); draw(); }
+function setF(k,v){ const n = byId(sel); if(!n) return; snap(); n[k] = v; tree(); fields(); save(); draw(); }
 
-function addNode(inside){
+function add(t,inside){
+  snap();
   const cur = byId(sel);
-  const p = inside ? sel : (cur ? cur.p : 0);
-  const n = {id:nextId(), p, ic:'◍', n:'новый пункт', s:''};
+  /* Точка и пунктир ПРИВЯЗЫВАЮТСЯ к выбранному элементу — становятся его
+     детьми и живут от его края. Раньше они падали в тот же уровень и
+     стояли по вычисленным координатам, то есть «где-то там»: сдвинулась
+     строка — они остались на месте, сменился уровень — уехали вовсе.
+     Привязка к предмету, а не к координате: предмет двигается вместе с
+     ними. */
+  const p = (t !== 'item') ? sel : (inside ? sel : (cur ? cur.p : 0));
+  const n = {id:nextId(), p, t, dx:0, dy:0,
+             ic: t==='item'?'◍':'', n: t==='dot'?'точка':t==='dash'?'пунктир':'новый пункт', s:''};
+  if (t==='dash'){ n.len = 120; n.ang = 0; }
   D.nodes.push(n); sel = n.id; tree(); fields(); save(); openTo(n.id);
 }
-function delNode(){
-  const kill = new Set([sel]);
-  let grew = true;
+function del(){
+  snap();
+  const kill = new Set([sel]); let grew = true;
   while (grew){ grew = false;
     D.nodes.forEach(n => { if (kill.has(n.p) && !kill.has(n.id)){ kill.add(n.id); grew = true; } }); }
   D.nodes = D.nodes.filter(n => !kill.has(n.id));
@@ -234,209 +362,285 @@ function delNode(){
   tree(); fields(); save(); build();
 }
 function move(d){
-  const i = D.nodes.findIndex(n => n.id === sel); if (i < 0) return;
-  const sib = D.nodes.filter(n => n.p === D.nodes[i].p);
-  const k = sib.indexOf(D.nodes[i]); const t = sib[k+d]; if (!t) return;
+  snap();
+  const i = D.nodes.findIndex(n=>n.id===sel); if(i<0) return;
+  const sib = D.nodes.filter(n=>n.p===D.nodes[i].p);
+  const k = sib.indexOf(D.nodes[i]); const t = sib[k+d]; if(!t) return;
   const j = D.nodes.indexOf(t);
-  [D.nodes[i], D.nodes[j]] = [D.nodes[j], D.nodes[i]];
-  tree(); save(); build();
+  [D.nodes[i],D.nodes[j]] = [D.nodes[j],D.nodes[i]];
+  tree(); save(); draw();
 }
-function reset(){ D = JSON.parse(JSON.stringify(DEF)); sel = 1; tree(); fields(); sliders(); save(); build(); }
+function reset(){ snap(); D = JSON.parse(JSON.stringify(DEF)); sel = 1;
+  tree(); fields(); sliders(); save(); build(); }
 
 /* ═══ ПОЛЗУНКИ ═══ */
-function setS(k, v){ D.style[k] = v; sliders(); save(); build(); }
+function setS(k,v){ snap(); D.style[k] = v; sliders(); save(); draw(); }
 function sliders(){
   const S = D.style;
-  const put = (id, val, txt) => { const e = $(id); if (e) e.value = val;
-    const t = $(id.replace('#s-','#v-')); if (t) t.textContent = txt; };
-  put('#s-gap', S.gap, S.gap+' px'); put('#s-row', S.row, S.row+' px');
-  put('#s-h', S.h, S.h+' px');       put('#s-span', S.span, S.span);
-  put('#s-z', S.z, S.z+' px');       put('#s-rot', S.rot, S.rot+'°');
-  put('#s-dim', S.dim, (S.dim/100).toFixed(2)); put('#s-per', S.per, S.per+' px');
-  put('#s-ms', S.ms, S.ms+' мс');
-  document.querySelectorAll('[data-o]').forEach(b => b.classList.toggle('on', b.dataset.o === S.open));
-  document.querySelectorAll('[data-sd]').forEach(b => b.classList.toggle('on', +b.dataset.sd === S.side));
-  document.querySelectorAll('[data-hn]').forEach(b => b.classList.toggle('on', +b.dataset.hn === S.hint));
+  const put=(id,v,t)=>{const e=$(id); if(e)e.value=v;
+    const q=$(id.replace('#s-','#v-')); if(q)q.textContent=t;};
+  put('#s-gap',S.gap,S.gap+' px'); put('#s-row',S.row,S.row+' px');
+  put('#s-h',S.h,S.h+' px'); put('#s-span',S.span,S.span);
+  put('#s-z',S.z,S.z+' px'); put('#s-rot',S.rot,S.rot+'°');
+  put('#s-dim',S.dim,(S.dim/100).toFixed(2)); put('#s-per',S.per,S.per+' px');
+  put('#s-ms',S.ms,S.ms+' мс');
+  document.querySelectorAll('[data-o]').forEach(b=>b.classList.toggle('on',b.dataset.o===S.open));
+  document.querySelectorAll('[data-sd]').forEach(b=>b.classList.toggle('on',+b.dataset.sd===S.side));
+  document.querySelectorAll('[data-hn]').forEach(b=>b.classList.toggle('on',+b.dataset.hn===S.hint));
 }
+
+/* ═══ РЕЖИМ ═══ */
+function setMode(m){
+  mode = m;
+  document.body.className = m;
+  $('#b-edit').classList.toggle('on', m==='edit');
+  $('#b-sim').classList.toggle('on', m==='sim');
+  $('#tip').textContent = m==='edit'
+    ? 'таскай что угодно мышью · клик выбирает · колесо листает'
+    : 'симуляция: работает ровно так, как будет в приложении · правая кнопка — назад';
+  logBox.innerHTML = '';
+  build();
+}
+function say(t){
+  if (mode !== 'sim') return;
+  const d = document.createElement('div'); d.innerHTML = t;
+  logBox.insertBefore(d, logBox.firstChild);
+  while (logBox.children.length > 9) logBox.lastChild.remove();
+}
+function rewind(){ build(); logBox.innerHTML = ''; }
 
 /* ═══ СЦЕНА ═══ */
-const W = () => scene.clientWidth, H = () => scene.clientHeight - 38;
-function ax(){ return D.anchor.x * W(); }
-function ay(){ return D.anchor.y * H(); }
+const W = () => scene.clientWidth, H = () => scene.clientHeight;
+const ax = () => D.anchor.x*W(), ay = () => D.anchor.y*H();
 
-function build(){
-  stack = [{p:0, cur:0, x:ax(), y:ay()}];
-  draw();
-}
-function openTo(id){                       // раскрыть путь до узла из дерева
-  const path = []; let n = byId(id);
-  while (n){ path.unshift(n); n = byId(n.p); }
-  stack = [{p:0, cur:0, x:ax(), y:ay()}];
-  path.forEach((node, i) => {
-    const lvl = stack[stack.length-1];
-    const k = kids(lvl.p);
-    lvl.cur = Math.max(0, k.findIndex(x => x.id === node.id));
-    if (i < path.length-1) stack.push({p:node.id, cur:0, x:0, y:0});
+function build(){ stack = [{p:0,cur:0,x:ax(),y:ay()}]; draw(); }
+function openTo(id){
+  const path=[]; let n=byId(id);
+  while(n){ path.unshift(n); n=byId(n.p); }
+  stack=[{p:0,cur:0,x:ax(),y:ay()}];
+  path.forEach((node,i)=>{
+    const lvl=stack[stack.length-1], k=rows(lvl.p);
+    const j=k.findIndex(x=>x.id===node.id);
+    if(j>=0) lvl.cur=j;
+    if(i<path.length-1 && rows(node.id).length) stack.push({p:node.id,cur:0,x:0,y:0});
   });
   draw();
 }
-
-function sideOf(lvl, w){
-  const S = D.style;
-  if (S.side !== 0) return S.side;
-  return (lvl.x + S.gap + w + 30 < W()) ? 1 : -1;
-}
+const sideOf = (lvl,w) => D.style.side!==0 ? D.style.side
+  : ((lvl.x + D.style.gap + w + 30 < W()) ? 1 : -1);
 
 function draw(){
-  els.forEach(e => e.remove()); els = [];
-  dots.forEach(e => e.remove()); dots = [];
-  hints.forEach(e => e.remove()); hints = [];
+  nodesOnScreen.forEach(e=>e.remove()); nodesOnScreen=[];
+  traces.forEach(e=>e.remove()); traces=[];
   const S = D.style;
-  scene.style.perspective = S.per + 'px';
+  scene.style.perspective = S.per+'px';
   anchor.style.left = ax()+'px'; anchor.style.top = ay()+'px';
 
-  stack.forEach((lvl, li) => {
-    if (li === 0){ lvl.x = ax(); lvl.y = ay(); }
+  stack.forEach((lvl,li)=>{
+    if(li===0){ lvl.x=ax(); lvl.y=ay(); }
     scene.style.perspectiveOrigin = lvl.x+'px '+lvl.y+'px';
-    const k = kids(lvl.p);
-    if (!k.length) return;
+    const k = rows(lvl.p); if(!k.length) return;
     lvl.cur = Math.min(lvl.cur, k.length-1);
-    const last = li === stack.length-1;
-    let wMax = 240;
+    const last = li===stack.length-1;
 
-    k.forEach((it, i) => {
-      let off = i - lvl.cur;
-      const n = k.length;
-      if (off >  n/2) off -= n;
-      if (off < -n/2) off += n;
-      if (Math.abs(off) > S.span) return;
-      const el = document.createElement('div');
-      el.className = 'cap' + (off === 0 ? ' cur' : '');
-      el.style.setProperty('--h', S.h+'px');
-      el.innerHTML = '<div class="body"><span class="ic">'+(it.ic||'◍')+'</span>'
-        + '<span class="tx">'+it.n+'</span>'
-        + (it.s ? '<span class="sub">'+it.s+'</span>' : '') + '</div>';
-      scene.appendChild(el);
-      (last ? els : dots).push(el);
-      el._it = it; el._lvl = lvl; el._off = off;
-      if (!last){ el.style.display = 'none'; return; }
-      wire(el, it, lvl, i);
-    });
+    // сначала измеряем выбранную, чтобы знать ширину уровня
+    const probe = mk(k[lvl.cur], lvl, 0, true);
+    lvl.w = probe.querySelector('.body') ? probe.querySelector('.body').offsetWidth : 200;
+    probe.remove();
+    const sg = sideOf(lvl,lvl.w); lvl.sg = sg;
 
-    // ширина выбранной — от неё пляшет всё остальное
-    const cur = (last ? els : []).find(e => e.classList.contains('cur'));
-    if (cur) wMax = cur.querySelector('.body').offsetWidth;
-    lvl.w = wMax;
-    const sg = sideOf(lvl, wMax);
-    lvl.sg = sg;
-
-    (last ? els : []).forEach(el => {
-      const off = el._off, kk = Math.abs(off);
-      el.style.left = (lvl.x + (sg>0 ? S.gap : -S.gap))+'px';
-      el.style.top  = (lvl.y + off*S.row)+'px';
-      el.style.transform = 'translateY(-50%) '+(sg<0?'translateX(-100%) ':'')
-        + 'translateZ('+(-kk*S.z)+'px) rotateX('+(off*-S.rot)+'deg)';
-      el.style.filter = 'brightness('+(1 - Math.min(.7, kk*S.dim/100)).toFixed(2)+')';
-      el.style.zIndex = 100 - kk;
-    });
-
-    // не последний уровень — точками на своих местах
-    if (!last){
-      k.forEach((it, i) => {
-        let off = i - lvl.cur; const n = k.length;
-        if (off >  n/2) off -= n;
-        if (off < -n/2) off += n;
-        if (Math.abs(off) > S.span) return;
-        const d = document.createElement('div');
-        d.className = 'dot' + (off === 0 ? ' pick' : '');
-        d.style.left = (lvl.x + sg*(S.gap + lvl.w + 6))+'px';
-        d.style.top  = (lvl.y + off*S.row)+'px';
-        if (off === 0) d.innerHTML = '<b>'+it.n+'</b>';
-        d.onclick = () => { stack.length = li+1; lvl.cur = i; draw(); };
-        scene.appendChild(d); dots.push(d);
+    if (last){
+      let curEl = null;
+      k.forEach((it,i)=>{
+        let off=i-lvl.cur; const n=k.length;
+        if(off> n/2) off-=n; if(off< -n/2) off+=n;
+        if(Math.abs(off)>S.span) return;
+        const el = mk(it,lvl,off,false);
+        pos(el,it,lvl,off,sg);
+        wire(el,it,lvl,i);
+        if (off === 0) curEl = el;
       });
-      // следующий уровень стоит вплотную за дальним краем
-      const nx = stack[li+1];
-      if (nx){ nx.x = lvl.x + sg*(S.gap + lvl.w + 6); nx.y = lvl.y; }
-    } else if (S.hint){
-      const it = k[lvl.cur];
-      if (it && kids(it.id).length){
-        [-1,0,1].forEach(q => {
-          const d = document.createElement('div');
-          d.className = 'dot' + (q===0?' pick':'');
-          d.style.left = (lvl.x + sg*(S.gap + lvl.w + 16 + Math.abs(q)*6))+'px';
-          d.style.top  = (lvl.y + q*12)+'px';
-          d.onclick = () => dive(lvl, it);
-          if (S.open === 'hover'){
-            let t=0; d.onpointerenter=()=>{t=setTimeout(()=>dive(lvl,it),S.ms);};
-            d.onpointerleave=()=>clearTimeout(t);
-          }
-          scene.appendChild(d); hints.push(d);
-        });
-      }
+      /* ВСЁ ОСТАЛЬНОЕ СЧИТАЕТСЯ ОТ НАСТОЯЩЕГО КРАЯ ВЫБРАННОЙ СТРОКИ.
+         Раньше считалось от предсказанной ширины — и не совпадало ни с
+         чем: строку сдвинули рукой, ширина другая, поворот и глубина
+         сместили её ещё раз. Отсюда и «открывается в рандомном месте».
+         Спрашиваем у экрана, где строка на самом деле, и пляшем оттуда. */
+      const edge = anchorOf(curEl, sg);
+      lvl.edge = edge;
+      kids(lvl.p).filter(n=>n.t!=='item').forEach(n=>{
+        const el = mk(n,lvl,0,false);
+        el.style.left=(edge.x+(n.dx||0))+'px';
+        el.style.top =(edge.y+(n.dy||0))+'px';
+        drag(el,n);
+      });
+      const it=k[lvl.cur];
+      // привязанные к самой строке точки и пунктиры — от её края
+      if (it) kids(it.id).filter(n=>n.t!=='item').forEach(n=>{
+        const el = mk(n,lvl,0,false);
+        el.style.left=(edge.x+(n.dx||0))+'px';
+        el.style.top =(edge.y+(n.dy||0))+'px';
+        drag(el,n);
+      });
+      if (S.hint && it && rows(it.id).length) [-1,0,1].forEach(q=>{
+        const d=document.createElement('div');
+        d.className='trace'+(q===0?' pick':'');
+        d.style.left=(edge.x+sg*(10+Math.abs(q)*6))+'px';
+        d.style.top =(edge.y+q*12)+'px';
+        d.onclick=()=>dive(lvl,it);
+        scene.appendChild(d); traces.push(d);
+      });
+    } else {
+      const ex = (lvl.edge ? lvl.edge.x : lvl.x+sg*(S.gap+lvl.w+6));
+      k.forEach((it,i)=>{
+        let off=i-lvl.cur; const n=k.length;
+        if(off> n/2) off-=n; if(off< -n/2) off+=n;
+        if(Math.abs(off)>S.span) return;
+        const d=document.createElement('div');
+        d.className='trace'+(off===0?' pick':'');
+        d.style.left=(ex+(it.dx||0))+'px';
+        d.style.top=(lvl.y+off*S.row+(it.dy||0))+'px';
+        if(off===0) d.innerHTML='<b>'+it.n+'</b>';
+        d.onclick=()=>{ stack.length=li+1; lvl.cur=i; draw(); };
+        scene.appendChild(d); traces.push(d);
+      });
+      const nx=stack[li+1];
+      if(nx){ const e=lvl.edge||{x:lvl.x+sg*(S.gap+lvl.w+6),y:lvl.y};
+              nx.x=e.x+sg*6; nx.y=e.y; }
     }
   });
-  $('#out').value = JSON.stringify(D, null, 1);
+  save();
 }
 
-function wire(el, it, lvl, i){
-  const S = D.style;
-  const k = kids(lvl.p);
-  const go = () => { lvl.cur = k.indexOf(it); draw(); if (kids(it.id).length) dive(lvl, it); };
-  if (S.open === 'hold'){
-    let t = 0;
-    el.onpointerdown = ev => { ev.preventDefault(); lvl.cur = k.indexOf(it); draw();
-      t = setTimeout(() => { if (kids(it.id).length) dive(lvl, it); }, S.ms); };
-    el.onpointerup = () => clearTimeout(t);
-    el.onpointerleave = () => clearTimeout(t);
-  } else if (S.open === 'hover'){
-    let t = 0;
-    el.onclick = () => { lvl.cur = k.indexOf(it); draw(); };
-    el.onpointerenter = () => { t = setTimeout(go, S.ms); };
-    el.onpointerleave = () => clearTimeout(t);
+/* Край предмета в координатах сцены. Берём НАСТОЯЩИЙ прямоугольник —
+   после всех поворотов, сдвигов и перспективы, — потому что именно к
+   нему и тянется рука. */
+function anchorOf(el, sg){
+  const r = scene.getBoundingClientRect();
+  if (!el) return {x: W()/2, y: H()/2};
+  const b = el.getBoundingClientRect();
+  return {x: (sg > 0 ? b.right : b.left) - r.left, y: b.top + b.height/2 - r.top};
+}
+
+function mk(it,lvl,off,probe){
+  const S=D.style;
+  const el=document.createElement('div');
+  el.className='el '+it.t+(off===0?' cur':'')+(it.id===sel?' pick':'')
+             +((it.dx||it.dy)?' moved':'');
+  el.style.setProperty('--h',S.h+'px');
+  if(it.t==='item'){
+    el.innerHTML='<div class="body"><span class="ic">'+(it.ic||'◍')+'</span>'
+      +'<span class="tx">'+it.n+'</span>'
+      +(it.s?'<span class="sub">'+it.s+'</span>':'')+'</div>';
+  } else if(it.t==='dot'){
+    el.innerHTML='<div class="pt"></div>'+(it.n?'<span class="lb">'+it.n+'</span>':'');
   } else {
-    el.onclick = () => { if (lvl.cur === k.indexOf(it)) go();
-                         else { lvl.cur = k.indexOf(it); draw(); } };
+    const len=it.len||120, ang=it.ang||0, N=Math.max(2,Math.round(len/16));
+    let h='';
+    for(let q=0;q<N;q++){
+      const t=q/(N-1);
+      h+='<i style="left:'+(Math.cos(ang*Math.PI/180)*len*t).toFixed(1)+'px;top:'
+        +(Math.sin(ang*Math.PI/180)*len*t).toFixed(1)+'px"></i>';
+    }
+    el.innerHTML=h;
+  }
+  if(probe) el.style.visibility='hidden';
+  scene.appendChild(el);
+  if(!probe) nodesOnScreen.push(el);
+  return el;
+}
+function pos(el,it,lvl,off,sg){
+  const S=D.style, k=Math.abs(off);
+  el.style.left=(lvl.x+(sg>0?S.gap:-S.gap)+(it.dx||0))+'px';
+  el.style.top =(lvl.y+off*S.row+(it.dy||0))+'px';
+  el.style.transform='translateY(-50%) '+(sg<0?'translateX(-100%) ':'')
+    +'translateZ('+(-k*S.z)+'px) rotateX('+(off*-S.rot)+'deg)';
+  el.style.filter='brightness('+(1-Math.min(.72,k*S.dim/100)).toFixed(2)+')';
+  el.style.zIndex=100-k;
+}
+
+/* ═══ ВЗАИМОДЕЙСТВИЕ ═══ */
+function wire(el,it,lvl,i){
+  const S=D.style, k=rows(lvl.p);
+  if(mode==='edit'){ drag(el,it); return; }
+  const pick=()=>{ lvl.cur=k.indexOf(it); say('выбрано <b>'+it.n+'</b>'); draw(); };
+  const go=()=>{ pick(); if(rows(it.id).length) dive(lvl,it);
+                 else say('<b>'+it.n+'</b> — конец ветки, тут открылась бы панель'); };
+  if(S.open==='hold'){
+    let t=0;
+    el.onpointerdown=ev=>{ ev.preventDefault(); pick();
+      say('держу <b>'+it.n+'</b> — '+S.ms+' мс');
+      t=setTimeout(()=>{ if(rows(it.id).length) dive(lvl,it); }, S.ms); };
+    el.onpointerup=()=>clearTimeout(t);
+    el.onpointerleave=()=>clearTimeout(t);
+  } else if(S.open==='hover'){
+    let t=0;
+    el.onclick=pick;
+    el.onpointerenter=()=>{ t=setTimeout(go,S.ms); };
+    el.onpointerleave=()=>clearTimeout(t);
+  } else {
+    el.onclick=()=>{ if(lvl.cur===k.indexOf(it)) go(); else pick(); };
   }
 }
-function dive(lvl, it){
-  const li = stack.indexOf(lvl);
-  stack.length = li+1;
-  stack.push({p:it.id, cur:0, x:0, y:0});
-  sel = it.id; tree(); fields(); draw();
+function dive(lvl,it){
+  const li=stack.indexOf(lvl);
+  stack.length=li+1;
+  stack.push({p:it.id,cur:0,x:0,y:0});
+  say('открыт уровень <b>'+it.n+'</b> — '+rows(it.id).length+' строк');
+  sel=it.id; tree(); fields(); draw();
 }
 
-/* ═══ ЖЕСТЫ ═══ */
-let drag = false;
-anchor.addEventListener('pointerdown', ev => { drag = true; anchor.classList.add('drag');
-  anchor.setPointerCapture(ev.pointerId); });
-addEventListener('pointermove', ev => {
-  if (!drag) return;
-  const r = scene.getBoundingClientRect();
-  D.anchor.x = Math.max(.03, Math.min(.97, (ev.clientX - r.left)/W()));
-  D.anchor.y = Math.max(.05, Math.min(.95, (ev.clientY - r.top)/H()));
-  draw();
+/* ═══ ТАСКАНИЕ ═══
+   В правке двигается ВСЁ: строки, точки, пунктиры, сама точка нажатия.
+   Смещение пишется в узел и переживает перестроение — иначе рука двигала
+   бы предмет, который на следующем кадре возвращается на место. */
+function drag(el,it){
+  el.onpointerdown=ev=>{
+    if(mode!=='edit') return;
+    ev.preventDefault(); ev.stopPropagation();
+    sel=it.id; tree(); fields(); 
+    const r=scene.getBoundingClientRect();
+    const x0=ev.clientX-r.left, y0=ev.clientY-r.top;
+    snap();
+    const dx0=it.dx||0, dy0=it.dy||0;
+    el.setPointerCapture(ev.pointerId);
+    const mv=e=>{ it.dx=Math.round(dx0+(e.clientX-r.left-x0));
+                  it.dy=Math.round(dy0+(e.clientY-r.top-y0)); fields(); draw(); };
+    const up=()=>{ el.removeEventListener('pointermove',mv);
+                   el.removeEventListener('pointerup',up); save(); };
+    el.addEventListener('pointermove',mv); el.addEventListener('pointerup',up);
+  };
+}
+let dragA=false;
+anchor.addEventListener('pointerdown',ev=>{ if(mode!=='edit') return;
+  dragA=true; anchor.setPointerCapture(ev.pointerId); });
+addEventListener('pointermove',ev=>{
+  if(!dragA) return;
+  const r=scene.getBoundingClientRect();
+  D.anchor.x=Math.max(.03,Math.min(.97,(ev.clientX-r.left)/W()));
+  D.anchor.y=Math.max(.08,Math.min(.92,(ev.clientY-r.top)/H()));
+  build();
 });
-addEventListener('pointerup', () => { if (drag){ drag = false;
-  anchor.classList.remove('drag'); save(); } });
-scene.addEventListener('wheel', ev => {
-  if (!stack.length) return;
+addEventListener('pointerup',()=>{ if(dragA){ dragA=false; save(); } });
+
+scene.addEventListener('wheel',ev=>{
+  if(!stack.length) return;
   ev.preventDefault();
-  const lvl = stack[stack.length-1], n = kids(lvl.p).length;
-  if (!n) return;
-  lvl.cur = (lvl.cur + (ev.deltaY > 0 ? -1 : 1) + n) % n;
+  const lvl=stack[stack.length-1], n=rows(lvl.p).length; if(!n) return;
+  lvl.cur=(lvl.cur+(ev.deltaY>0?-1:1)+n)%n;
+  say('колесо → <b>'+rows(lvl.p)[lvl.cur].n+'</b>');
   draw();
-}, {passive:false});
-scene.addEventListener('contextmenu', ev => { ev.preventDefault();
-  if (stack.length > 1){ stack.pop(); draw(); } });
+},{passive:false});
+scene.addEventListener('contextmenu',ev=>{ ev.preventDefault();
+  if(stack.length>1){ stack.pop(); say('назад'); draw(); } });
 
 function copyOut(){ $('#out').select(); document.execCommand('copy'); }
 function pasteIn(){
-  try { D = JSON.parse($('#out').value); sel = D.nodes[0].id;
-        tree(); fields(); sliders(); save(); build(); }
-  catch(e){ alert('не разобрал JSON: ' + e.message); }
+  try{ const j=JSON.parse($('#out').value);
+    if(!j.nodes) throw new Error('нет узлов');
+    D=j; sel=D.nodes[0].id; tree(); fields(); sliders(); save(); build();
+  }catch(e){ alert('не разобрал JSON: '+e.message); }
 }
-addEventListener('resize', draw);
+addEventListener('resize',()=>build());
 
-tree(); fields(); sliders(); save(); build();
+tree(); fields(); sliders(); setMode('edit');
 </script></body></html>
