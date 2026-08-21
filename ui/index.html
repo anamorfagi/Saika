@@ -12387,7 +12387,6 @@ body.zarrange .ztool{outline:1px dashed rgba(255,255,255,.28);outline-offset:5px
 body.zarrange .ztool.zmoved{outline-color:rgba(255,255,255,.6)}
 body.zarrange .ztool.zdrag{cursor:grabbing;outline-color:#fff;
   transition:none !important;z-index:9}
-body.zarrange #zchat{border-style:dashed;color:var(--text)}
 body.zarrange #btn-arrange{background:var(--panel2);border-color:var(--g-hi);
   color:var(--text);box-shadow:var(--tile-sh)}
 
@@ -12397,47 +12396,9 @@ body.zarrange #btn-arrange{background:var(--panel2);border-color:var(--g-hi);
   opacity:0;transition:opacity .35s}
 #zthreads line.show{opacity:1}
 
-/* ── НИЖНЯЯ СТРОКА: РАЗГОВОР ──
-   Раньше их было две. Капсула «скажи или брось файл» стояла ВНУТРИ сцены,
-   в секторе «Голос», и читалась как часть органа, чем не была: голос это
-   то, чем она говорит, а разговор — то, куда идёшь ты. Под сценой висела
-   вторая плашка — подсказка. Две строки об одном это не выбор, это шум.
-
-   Теперь одна строка, и стоит она там, где на КАЖДОМ остальном экране
-   стоит поле ввода. Рука ищет разговор внизу не потому, что мы так
-   решили, а потому что он там всегда и был.
-
-   Одна строка, три состояния, и они не пересекаются во времени:
-     покой на главном  — зовёт в разговор и принимает файл;
-     веер раскрыт      — говорит, что делать рукой;
-     ушли с главного   — уводит назад.
-   Строка, которая меняется на каждое действие, обязана иметь одно
-   постоянное место, иначе глаз ищет её заново каждый раз. */
-#zchat{display:none;flex:none;height:44px;align-items:center;justify-content:center;
-  gap:10px;border-radius:var(--r-tile);background:var(--tile);
-  border:1px solid var(--tile-bd);box-shadow:var(--tile-sh-lo);
-  backdrop-filter:blur(var(--gb)) saturate(115%);
-  font:300 12.5px/1 inherit;color:rgba(236,238,241,.34);
-  letter-spacing:.02em;text-align:center;padding:0 18px;user-select:none;
-  cursor:pointer;overflow:hidden;
-  transition:color .25s var(--zease),border-color .25s var(--zease),
-             background .25s var(--zease),height .28s var(--zease)}
-html[data-skin="graphite"] #zchat{display:flex}
-html:not([data-skin="graphite"]) #zchat{display:none}
-#zchat i{font-style:normal;font-size:14px;opacity:.55;transition:opacity .25s}
-#zchat b{font-weight:400;letter-spacing:.2em;color:var(--text)}
-#zchat:hover{color:var(--text);border-color:var(--g-hi);background:var(--panel)}
-#zchat:hover i{opacity:.9}
-/* Пока веер раскрыт, строка не зовёт в разговор — она подсказывает руку.
-   Значок разговора при этом уходит: иначе строка обещает две вещи разом. */
-body.zopen #zchat{cursor:default}
-/* Значок разговора горит только когда строка ЗОВЁТ в разговор. Под
-   подсказкой и под «назад» он обещал бы не то, что строка делает. */
-#zchat:not(.idle) i{opacity:0;width:0;margin-left:-10px}
-body.zopen #zchat:hover{color:rgba(236,238,241,.34);border-color:var(--tile-bd);
-  background:var(--tile)}
-#zchat.drag{height:66px;color:var(--text);border-style:dashed;
-  border-color:rgba(255,255,255,.55);background:var(--panel2);font-size:13.5px}
+/* Нижней строки-плашки больше нет: её место занял бар (#zbar) —
+   микрофон, чип модели, настоящее поле ввода, отправка, журнал.
+   Стили бара — в <style id="zones-panels"> ниже. */
 
 /* ═══ ПРАВЫЙ ЯЩИК ═══
    Настоящие панели старого интерфейса — списки моделей, движков голоса и
@@ -12574,6 +12535,187 @@ html[data-skin="graphite"] header .name{cursor:pointer}
 @media (prefers-reduced-motion:reduce){#zstage *{animation:none!important;transition:none!important}}
 </style>
 
+<style id="zones-panels">
+/* ═══════════════════════════════════════════════════════════════════════
+   БЛОКИ ОРГАНОВ + НИЖНИЙ БАР (2026-08-21)
+
+   Барабан-селектор забракован владельцем по взаимодействию. Вместо ЛЮБЫХ
+   селекторов — раскрывающиеся блоки: нажатие в сектор мягко разворачивает
+   его в полноценную панель органа (container transform: панель растёт из
+   точки нажатия, закрытие — обратный морф). Ядро и кольца живут под ней.
+
+   Внизу — один бар в стиле взрослых AI-продуктов: микрофон, чип модели,
+   настоящее поле ввода, отправка и журнал. Плашка «◄ ГЛАВНЫЙ ЭКРАН»
+   убрана совсем; подсказки живут тонкой строкой над баром и появляются
+   только когда есть что сказать.
+   ═════════════════════════════════════════════════════════════════════ */
+
+/* ── ПАНЕЛЬ ОРГАНА ── */
+#zpanel{position:absolute;z-index:12;display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;transform:scale(.10);
+  background:linear-gradient(180deg,#1a1a20,#131317);
+  border:1px solid var(--tile-bd);border-radius:18px;
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.95), 0 2px 6px rgba(0,0,0,.6),
+             inset 0 1px 0 rgba(255,255,255,.05);
+  transition:transform .38s var(--zspring), opacity .22s var(--zease)}
+body.zpanel #zpanel{opacity:1;transform:none;pointer-events:auto}
+#zp-head{display:flex;align-items:center;gap:14px;flex:none;height:58px;
+  padding:0 12px 0 12px;border-bottom:1px solid var(--tile-bd)}
+#zp-back,#zp-x{width:36px;height:36px;flex:none;border-radius:10px;
+  border:1px solid var(--tile-bd);background:rgba(255,255,255,.03);
+  color:var(--text);cursor:pointer;font:400 15px/1 inherit;
+  transition:background .18s,border-color .18s}
+#zp-back:hover,#zp-x:hover{background:rgba(255,255,255,.08);
+  border-color:rgba(255,255,255,.3)}
+#zp-x{margin-left:auto}
+#zp-hgroup{min-width:0}
+#zp-name{font:300 15px/1 inherit;letter-spacing:.3em;text-indent:.02em;
+  text-transform:uppercase;color:var(--text)}
+#zp-status{margin-top:5px;font:400 11px/1 inherit;color:rgba(236,238,241,.45);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#zp-body{flex:1;min-height:0;overflow:auto;padding:8px 34px 30px;
+  scrollbar-width:thin}
+.zp-sec{max-width:700px;margin:0 auto;padding:20px 0 8px;
+  border-top:1px solid var(--tile-bd)}
+.zp-sec.zp-how{border-top:0}
+.zp-cap{font:500 10.5px/1 inherit;letter-spacing:.24em;text-transform:uppercase;
+  color:rgba(236,238,241,.38);margin-bottom:14px}
+.zp-desc{margin:12px 0 4px;font:300 13.5px/1.6 inherit;
+  color:rgba(236,238,241,.62);max-width:64ch}
+
+/* пайплайн: капсулы-узлы, соединённые линиями; активный узел светится
+   по живому состоянию — где его можно взять честно */
+.zp-pipew{overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin}
+.zp-pipe{display:block}
+.zp-node rect{fill:rgba(255,255,255,.035);stroke:var(--tile-bd);stroke-width:1;
+  transition:fill .3s,stroke .3s}
+.zp-node text{fill:rgba(236,238,241,.66);font-size:11.5px;font-family:inherit;
+  letter-spacing:.02em;transition:fill .3s}
+.zp-node.lit rect{fill:rgba(255,255,255,.11);stroke:rgba(255,255,255,.5)}
+.zp-node.lit text{fill:#fff}
+.zp-link{stroke:rgba(255,255,255,.18);stroke-width:1}
+.zp-arrow{fill:none;stroke:rgba(255,255,255,.18);stroke-width:1}
+
+/* строки-настройки: 13-14px основной, 11px вторичный приглушённый */
+.zp-row{display:flex;align-items:center;gap:12px;padding:11px 14px;
+  border:1px solid var(--tile-bd);border-radius:12px;margin-bottom:8px;
+  background:rgba(255,255,255,.02);cursor:pointer;
+  transition:background .18s,border-color .18s}
+.zp-row:hover{background:rgba(255,255,255,.055);border-color:rgba(255,255,255,.2)}
+.zp-row.zp-dev{cursor:default}
+.zp-row.zp-dev:hover{background:rgba(255,255,255,.02);border-color:var(--tile-bd)}
+.zp-rtx{min-width:0;flex:1}
+.zp-rtx b{display:block;font:400 13.5px/1.3 inherit;color:rgba(236,238,241,.92)}
+.zp-rtx small{display:block;margin-top:3px;font:400 11px/1.35 inherit;
+  color:rgba(236,238,241,.42)}
+.zp-pill{flex:none;font:500 10px/1 inherit;letter-spacing:.1em;
+  text-transform:uppercase;padding:5px 11px;border-radius:999px;
+  border:1px solid var(--tile-bd);color:rgba(236,238,241,.45)}
+.zp-pill.on{border-color:rgba(255,255,255,.55);color:#fff}
+.zp-go{flex:none;font:300 16px/1 inherit;color:rgba(236,238,241,.4)}
+.zp-row:hover .zp-go{color:#fff}
+.zp-badge{flex:none;font:500 9px/1 inherit;letter-spacing:.14em;
+  text-transform:uppercase;color:rgba(236,238,241,.35);
+  border:1px dashed rgba(255,255,255,.22);padding:4px 9px;border-radius:999px}
+.zp-empty{font:300 12.5px/1 inherit;color:rgba(236,238,241,.4);
+  padding:16px;border:1px dashed var(--tile-bd);border-radius:12px;
+  text-align:center}
+.zp-scope{display:block;width:100%;height:64px;border:1px solid var(--tile-bd);
+  border-radius:12px;background:rgba(0,0,0,.25)}
+/* усыновлённые панели (.pop): здесь они содержимое, а не выпадашки */
+#zp-body .pop{position:static !important;display:block !important;
+  opacity:1 !important;transform:none !important;min-width:0 !important;
+  max-width:none !important;width:100% !important;max-height:none !important;
+  box-shadow:none !important;border:0 !important;background:none !important;
+  backdrop-filter:none !important;padding:0 !important;margin:0 !important;
+  pointer-events:auto !important;animation:none !important}
+
+/* ── НИЖНИЙ БАР ── */
+#zbar{display:none;position:relative;flex:none;height:54px;align-items:center;
+  gap:10px;padding:0 10px;border-radius:var(--r-tile);background:var(--tile);
+  border:1px solid var(--tile-bd);box-shadow:var(--tile-sh-lo);
+  backdrop-filter:blur(var(--gb)) saturate(115%)}
+html[data-skin="graphite"] body.zhome #zbar{display:flex}
+#zbar.drag{border-style:dashed;border-color:rgba(255,255,255,.55)}
+#zbar>button{flex:none;height:38px;border-radius:12px;cursor:pointer;
+  border:1px solid var(--tile-bd);background:rgba(255,255,255,.03);
+  color:var(--text);font:400 14px/1 inherit;
+  transition:background .18s,border-color .18s}
+#zbar>button:hover{background:rgba(255,255,255,.08);
+  border-color:rgba(255,255,255,.3)}
+#zb-mic{width:42px}
+#zb-mic.rec{border-color:rgba(255,120,110,.65);color:#fff;
+  background:rgba(224,101,95,.18)}
+#zb-model{display:inline-flex;align-items:center;gap:8px;padding:0 14px;
+  max-width:230px;font:400 12px/1 inherit}
+#zb-model i{font-style:normal;opacity:.55;font-size:11px}
+#zb-model span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  letter-spacing:.02em}
+#zb-input{flex:1;min-width:60px;height:38px;border-radius:12px;
+  border:1px solid var(--tile-bd);background:rgba(255,255,255,.035);
+  color:var(--text);padding:0 14px;font:300 13.5px/1.2 inherit;outline:none;
+  transition:border-color .18s,background .18s}
+#zb-input::placeholder{color:rgba(236,238,241,.32)}
+#zb-input:focus{border-color:rgba(255,255,255,.35);
+  background:rgba(255,255,255,.06)}
+#zb-send{width:42px}
+#zb-log{width:42px;position:relative;font-size:15px}
+#zb-logn{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;
+  padding:0 3px;border-radius:8px;font:600 8.5px/15px inherit;font-style:normal;
+  text-align:center;color:#fff;background:rgba(200,80,74,.9);display:none}
+#zb-logn:not(:empty){display:block}
+body.zlogopen #zb-log{background:rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.35)}
+
+/* тонкая строка-подсказка над баром: появляется, только когда есть что
+   сказать; сюда перенаправлен say() */
+#zhint{position:absolute;left:50%;bottom:calc(100% + 8px);
+  transform:translateX(-50%) translateY(4px);max-width:80%;
+  padding:6px 14px;border-radius:999px;background:rgba(19,19,23,.92);
+  border:1px solid var(--tile-bd);opacity:0;pointer-events:none;
+  font:300 11.5px/1.35 inherit;color:rgba(236,238,241,.6);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;z-index:29;
+  transition:opacity .25s var(--zease),transform .25s var(--zease)}
+#zhint.show{opacity:1;transform:translateX(-50%)}
+#zhint b{font-weight:500;letter-spacing:.14em;color:var(--text)}
+
+/* ── ЖУРНАЛ: глаза владельца на всё, что происходит ── */
+#zlog{position:absolute;right:0;bottom:calc(100% + 10px);z-index:30;
+  width:min(620px,92vw);height:min(46vh,430px);display:flex;
+  flex-direction:column;border-radius:14px;overflow:hidden;
+  background:#111115;border:1px solid var(--tile-bd);
+  box-shadow:0 30px 70px -24px rgba(0,0,0,.95);
+  opacity:0;pointer-events:none;transform:translateY(14px);
+  transition:opacity .24s var(--zease),transform .3s var(--zease)}
+body.zlogopen #zlog{opacity:1;pointer-events:auto;transform:none}
+#zl-head{display:flex;align-items:center;gap:10px;flex:none;height:40px;
+  padding:0 8px 0 14px;border-bottom:1px solid var(--tile-bd)}
+#zl-head b{font:500 10.5px/1 inherit;letter-spacing:.24em;
+  text-transform:uppercase;color:rgba(236,238,241,.55)}
+#zl-n{flex:1;font:400 10px/1 inherit;color:rgba(236,238,241,.3)}
+#zl-errs{height:26px;padding:0 10px;border-radius:8px;font:400 10px/1 inherit;
+  letter-spacing:.06em;border:1px solid var(--tile-bd);
+  background:none;color:rgba(236,238,241,.5);cursor:pointer}
+#zl-errs.on{border-color:rgba(255,255,255,.45);color:#fff}
+#zl-x{width:26px;height:26px;border-radius:8px;border:1px solid var(--tile-bd);
+  background:none;color:var(--text);cursor:pointer;font-size:11px}
+#zl-body{flex:1;min-height:0;overflow:auto;padding:8px 0;
+  font:400 11px/1.6 ui-monospace,'Cascadia Mono',Consolas,monospace}
+.zl-r{display:flex;gap:10px;padding:1px 14px;align-items:baseline}
+.zl-t{flex:none;color:rgba(236,238,241,.3)}
+.zl-k{flex:none;width:30px;font-weight:600;color:rgba(236,238,241,.35)}
+.zl-r.k-err .zl-k{color:var(--err,#e0655f)}
+.zl-r.k-net .zl-k,.zl-r.k-warn .zl-k{color:var(--warn,#d9a441)}
+.zl-m{min-width:0;word-break:break-word;white-space:pre-wrap;
+  color:rgba(236,238,241,.72)}
+.zl-r.k-say .zl-m{color:rgba(236,238,241,.45)}
+.zl-m i{font-style:normal;color:rgba(236,238,241,.4)}
+.zl-empty{padding:18px;text-align:center;color:rgba(236,238,241,.35);
+  font:300 12px/1 inherit}
+#zlog.only-err .zl-r:not(.k-err):not(.k-net){display:none}
+</style>
+
+
 <script>
 /* ─────────────────────────────────────────────────────────────────────
    ОБЛАСТИ ЭКРАНА (2026-08-20)
@@ -12600,6 +12742,70 @@ function hit(sel){ const e = $(sel); if (e) e.click(); return !!e; }
 function txt(sel){ const e = $(sel); return e ? (e.textContent||'').trim() : ''; }
 function isOn(sel){ const e = $(sel); return !!(e && (e.classList.contains('on') ||
                      e.classList.contains('sel') || e.classList.contains('active'))); }
+/* Слух включён — это класс .rec на кнопке, а не .on: читаем оба. */
+function isOn2(sel){ const e = $(sel); return !!(e && (e.classList.contains('rec') ||
+                     e.classList.contains('on') || e.classList.contains('sel') ||
+                     e.classList.contains('active'))); }
+function curRow(sel){ const r = rows(sel).find(x => x.sel); return r ? r.name : ''; }
+
+/* ═══════════════ ЖУРНАЛ ═══════════════
+   Лента последних ~200 событий: console.error/warn (оригиналы сохранены),
+   ошибки окна и promise, неудачные fetch к /api, смены статусов say().
+   Это глаза владельца на всё, что происходит под капотом. Перехваты
+   ставятся сразу при разборе слоя, чтобы поймать и загрузочные ошибки. */
+const ZLOG = [];
+try { window.__saikaZlog = ZLOG; } catch(e){}
+function zfmt(t){ const d = new Date(t), p = n => String(n).padStart(2,'0');
+  return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds()); }
+function zlogPush(kind, text){
+  try{
+    text = String(text == null ? '' : text).trim().slice(0,600);
+    if (!text) return;
+    const last = ZLOG[ZLOG.length-1];
+    if (last && last.kind === kind && last.text === text){ last.n++; last.t = Date.now(); }
+    else ZLOG.push({t: Date.now(), kind, text, n: 1});
+    if (ZLOG.length > 200) ZLOG.splice(0, ZLOG.length - 200);
+    if (document.body && document.body.classList.contains('zlogopen')) scheduleLog();
+  }catch(e){}
+}
+let zlRaf = 0;
+function scheduleLog(){
+  if (zlRaf) return;
+  zlRaf = requestAnimationFrame(() => { zlRaf = 0; renderLog(); });
+}
+(function(){
+  try{
+    const ce = console.error.bind(console), cw = console.warn.bind(console);
+    console.error = function(){
+      try { zlogPush('err', [...arguments].map(a =>
+        a && a.stack ? (a.message || a) : a).map(String).join(' ')); } catch(e){}
+      return ce.apply(console, arguments);
+    };
+    console.warn = function(){
+      try { zlogPush('warn', [...arguments].map(String).join(' ')); } catch(e){}
+      return cw.apply(console, arguments);
+    };
+    addEventListener('error', ev => zlogPush('err',
+      (ev.message || 'ошибка') + (ev.filename
+        ? ' @ ' + String(ev.filename).split('/').pop() + ':' + (ev.lineno || '') : '')));
+    addEventListener('unhandledrejection', ev => {
+      const r = ev.reason;
+      zlogPush('err', 'promise: ' + (r && (r.message || r) || '?'));
+    });
+    /* обёртка fetch — оригинал сохранён, поведение не тронуто: мы только
+       смотрим на результат запросов к /api и записываем неудачные */
+    const of = window.fetch;
+    window.fetch = function(u){
+      const url = typeof u === 'string' ? u : (u && u.url) || '';
+      const p = of.apply(window, arguments);
+      if (url.indexOf('/api') === 0){
+        p.then(r => { if (r && !r.ok) zlogPush('net', r.status + ' ' + url); },
+               () => zlogPush('net', 'нет ответа ' + url));
+      }
+      return p;
+    };
+  }catch(e){}
+})();
 
 /* Углы закреплены и объяснимы телом: глаза смотрят вверх, руки работают
    внизу, слух слева, мозги справа. Объяснимое запоминается, произвольное — нет. */
@@ -12696,6 +12902,11 @@ function savePlaced(){
 
 // ─────────────────────────── сборка ───────────────────────────
 let S, svg, glow, well, scene, field, orb, ring, core, layer, threads, hintEl;
+/* панель органа и нижний бар */
+let zpEl=null, zpBody=null, zpOpen=null, zpZone=null, zpTimer=0, zpGen=0,
+    zpPipeCtl=null, zpLive=[], adopted=[];
+let barEl=null, zbInput=null, zbMic=null, zbModel=null, logEl=null, zlBody=null;
+let vsRaf=0, vsCv=null, vsBands=null;
 const N = {};
 let open = null, press = null, aimed = null, lastMove = 0;
 
@@ -12722,7 +12933,8 @@ function goBack(){
 addEventListener('popstate', () => {
   if (suppress > 0){ suppress--; return; }
   if (depth > 0) depth--;
-  if (open) hide();
+  if (zpOpen) closePanel();
+  else if (open) hide();
   else if (!document.body.classList.contains('zhome')) applyHome();
 });
 
@@ -12769,14 +12981,14 @@ function build(){
     dr.querySelector('#zdrawer-x').addEventListener('click', () => shut());
   }
 
-  const cap = document.createElement('div');
-  cap.id = 'zchat';
-  cap.innerHTML = '<i>✦</i><span></span>';
-  shell.parentNode.insertBefore(cap, shell.nextSibling);
+  /* Плашки «◄ ГЛАВНЫЙ ЭКРАН» больше нет. Вместо неё — нижний бар:
+     микрофон, чип модели, настоящее поле ввода, отправка, журнал. */
+  buildBar(shell);
+  buildPanel();
 
   svg=$('#zsvg'); glow=$('#zglow'); well=$('#zwell'); scene=$('#zscene');
   field=$('#zfield'); orb=$('#zorb'); ring=$('#zring'); core=$('#zcore');
-  layer=$('#zlayer'); threads=$('#zthreads'); hintEl=cap;
+  layer=$('#zlayer'); threads=$('#zthreads');
   klayer=$('#zklayer'); kdash=$('#zkdash'); kanchorEl=$('#zkanchor');
   kline=document.createElementNS(NS,'line'); kdash.appendChild(kline);
   kanchorEl.addEventListener('click', ev => {
@@ -13757,6 +13969,612 @@ function openDrawer(btnSel, title, focusSel){
   return true;
 }
 
+/* ═══════════════ БЛОКИ ОРГАНОВ (2026-08-21) ═══════════════
+   Нажатие в сектор мягко разворачивает его в панель органа — паттерн
+   container transform: панель растёт из точки нажатия (transform-origin
+   в ней), закрытие — обратный морф. Ядро и кольца живут под панелью:
+   она непрозрачная, но ничего не останавливает.
+
+   Каждая панель — одна и та же сетка: шапка с живым статусом, схема
+   «как это работает» с подсветкой активных узлов по настоящему
+   состоянию, и секции с НАСТОЯЩИМИ данными. Правило прежнее — зеркало,
+   а не копия: существующие панели принимаются внутрь целиком (adoption,
+   как в ящике), тумблеры кликают по настоящим кнопкам, списки читаются
+   с настоящих списков. Второго источника правды здесь нет; когда данных
+   нет — честная заглушка. */
+
+function buildPanel(){
+  zpEl = document.createElement('div');
+  zpEl.id = 'zpanel';
+  zpEl.innerHTML =
+    '<div id="zp-head">' +
+      '<button id="zp-back" title="Назад (Esc)">←</button>' +
+      '<div id="zp-hgroup"><div id="zp-name"></div><div id="zp-status"></div></div>' +
+      '<button id="zp-x" title="Закрыть (Esc)">✕</button>' +
+    '</div><div id="zp-body"></div>';
+  S.appendChild(zpEl);
+  zpBody = zpEl.querySelector('#zp-body');
+  /* «Назад» и «✕» — тот же шаг назад, что Esc и боковая кнопка мыши:
+     все дороги ведут в один обработчик popstate. */
+  zpEl.querySelector('#zp-back').addEventListener('click', () => goBack());
+  zpEl.querySelector('#zp-x').addEventListener('click', () => goBack());
+}
+
+/* ── усыновление настоящих панелей (как в ящике openDrawer): узел
+   переносится сюда, на закрытии возвращается через span-распорку ── */
+function adoptPanel(container, btnSel){
+  const pp = panelOf(btnSel);
+  if (!pp) return false;
+  try { const b = $(btnSel); if (b && b.onclick) b.onclick(); } catch(e){}
+  const slot = document.createElement('span');
+  slot.style.display = 'none';
+  pp.parentNode.replaceChild(slot, pp);
+  adopted.push({node: pp, slot});
+  container.appendChild(pp);
+  pp.classList.add('show');
+  return true;
+}
+function unadoptAll(){
+  adopted.forEach(a => {
+    if (a.slot.parentNode) a.slot.parentNode.replaceChild(a.node, a.slot);
+    a.node.classList.remove('show');
+  });
+  adopted = [];
+}
+
+/* ── кирпичи сетки ── */
+function zpSec(parent, title){
+  const el = document.createElement('section');
+  el.className = 'zp-sec';
+  if (title) el.innerHTML = '<div class="zp-cap">'+esc(title)+'</div>';
+  parent.appendChild(el);
+  return el;
+}
+function zpEmpty(parent){
+  const d = document.createElement('div');
+  d.className = 'zp-empty';
+  d.textContent = 'пусто · сервер не ответил';
+  parent.appendChild(d);
+  return d;
+}
+function zpRowBase(parent, name, sub){
+  const r = document.createElement('div');
+  r.className = 'zp-row';
+  r.innerHTML = '<div class="zp-rtx"><b>'+esc(name)+'</b>' +
+                (sub ? '<small>'+esc(sub)+'</small>' : '') + '</div>';
+  parent.appendChild(r);
+  return r;
+}
+/* Тумблер-зеркало: состояние читается у настоящей кнопки, клик уходит ей же. */
+function zpToggle(parent, name, sub, sel, stateFn, labelFn){
+  const r = zpRowBase(parent, name, sub);
+  const pill = document.createElement('span');
+  pill.className = 'zp-pill';
+  r.appendChild(pill);
+  const upd = () => {
+    let on = false, lb = '';
+    try { on = !!stateFn(); lb = labelFn ? (labelFn() || '') : ''; } catch(e){}
+    pill.classList.toggle('on', on);
+    pill.textContent = lb || (on ? 'вкл' : 'выкл');
+  };
+  upd();
+  zpLive.push(upd);
+  r.addEventListener('click', () => {
+    SFX.pick();
+    if (!hit(sel)){ say('кнопка не нашлась'); return; }
+    setTimeout(upd, 200); setTimeout(upd, 700);
+  });
+  return r;
+}
+function zpBtnRow(parent, name, sub, fn){
+  const r = zpRowBase(parent, name, sub);
+  const c = document.createElement('span');
+  c.className = 'zp-go';
+  c.textContent = '›';
+  r.appendChild(c);
+  r.addEventListener('click', () => { SFX.pick(); fn(); });
+  return r;
+}
+/* Честное «скоро»: серый бейдж, никакой имитации работы. */
+function zpSoon(parent, name, sub){
+  const r = zpRowBase(parent, name, sub);
+  r.classList.add('zp-dev');
+  const b = document.createElement('span');
+  b.className = 'zp-badge';
+  b.textContent = 'в разработке';
+  r.appendChild(b);
+  return r;
+}
+/* Уход с главного из панели: экран заменяет шаг панели в истории —
+   «назад» с экрана вернёт на главный, а не в панель, которую человек
+   уже закрыл своим же выбором. */
+function zpLeave(t){
+  const was = !!zpOpen;
+  closePanel();
+  goScreen(t.screen || null, was);
+  if (t.hit) setTimeout(() => hit(t.hit), 80);
+  if (t.focus) setTimeout(() => {
+    const f = $(t.focus);
+    if (f){ if (f.tagName === 'DETAILS') f.open = true;
+            f.scrollIntoView({block:'center'}); }
+  }, 200);
+}
+
+/* ── схема-пайплайн: капсулы-узлы, линии со стрелками ── */
+function zpPipe(nodes){
+  const w0 = document.createElement('div');
+  w0.className = 'zp-pipew';
+  const sv = document.createElementNS(NS,'svg');
+  sv.setAttribute('class','zp-pipe');
+  const H = 56, GY = 28;
+  let x = 2;
+  const map = {};
+  nodes.forEach((n, i) => {
+    if (i){
+      const ln = document.createElementNS(NS,'line');
+      ln.setAttribute('x1',x); ln.setAttribute('y1',GY);
+      ln.setAttribute('x2',x+26); ln.setAttribute('y2',GY);
+      ln.setAttribute('class','zp-link');
+      sv.appendChild(ln);
+      const ar = document.createElementNS(NS,'path');
+      ar.setAttribute('d','M '+(x+20)+' '+(GY-4)+' L '+(x+26)+' '+GY+' L '+(x+20)+' '+(GY+4));
+      ar.setAttribute('class','zp-arrow');
+      sv.appendChild(ar);
+      x += 34;
+    }
+    const w = Math.round(32 + n.t.length*7.4);
+    const g = document.createElementNS(NS,'g');
+    g.setAttribute('class','zp-node');
+    const rc = document.createElementNS(NS,'rect');
+    rc.setAttribute('x',x); rc.setAttribute('y',GY-17);
+    rc.setAttribute('width',w); rc.setAttribute('height',34);
+    rc.setAttribute('rx',17);
+    const tx = document.createElementNS(NS,'text');
+    tx.setAttribute('x',x+w/2); tx.setAttribute('y',GY+4);
+    tx.setAttribute('text-anchor','middle');
+    tx.textContent = n.t;
+    g.appendChild(rc); g.appendChild(tx); sv.appendChild(g);
+    map[n.k] = g;
+    x += w;
+  });
+  sv.setAttribute('viewBox','0 0 '+(x+2)+' '+H);
+  sv.setAttribute('width',x+2); sv.setAttribute('height',H);
+  w0.appendChild(sv);
+  return {el:w0, set(l){
+    Object.keys(map).forEach(k => map[k].classList.toggle('lit', !!(l && l[k])));
+  }};
+}
+
+/* ── живой спектр её голоса: тот же анализатор, что кормит кольцо ── */
+function startScope(cv){
+  stopScope();
+  vsCv = cv; vsBands = new Float32Array(56);
+  const ctx = cv.getContext('2d');
+  (function loop(){
+    if (vsCv !== cv || !cv.isConnected){ if (vsCv === cv) vsRaf = 0; return; }
+    vsRaf = requestAnimationFrame(loop);
+    const w = cv.clientWidth || 600, h = cv.clientHeight || 64;
+    if (cv.width !== w) cv.width = w;
+    if (cv.height !== h) cv.height = h;
+    ctx.clearRect(0,0,w,h);
+    toBands(selfData(), vsBands);
+    const n = vsBands.length, bw = w/n;
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < n; i++){
+      const v = vsBands[i], bh = Math.max(1.5, v*(h-8));
+      ctx.globalAlpha = .18 + v*.72;
+      ctx.fillRect(i*bw+1, h-bh-3, Math.max(1,bw-2), bh);
+    }
+    ctx.globalAlpha = 1;
+  })();
+}
+function stopScope(){
+  if (vsRaf) cancelAnimationFrame(vsRaf);
+  vsRaf = 0; vsCv = null;
+}
+
+/* ── содержимое по органам. Инструменты — те же, что были в ZONES и в
+   настоящих панелях; данные — оттуда же. ── */
+function zpSpeaking(){
+  try { return typeof saikaSpeaking === 'function' && saikaSpeaking(); }
+  catch(e){ return false; }
+}
+const ZPANELS = {
+  ears: {
+    desc: 'Звук с микрофона сначала проходит шумодав — он давит клавиатуру и ' +
+      'вентилятор до распознавания. Детектор речи (VAD) отделяет фразы от ' +
+      'тишины, движок распознавания превращает голос в текст, и этот текст ' +
+      'уходит в мозги как обычное сообщение.',
+    pipe: [{k:'mic',t:'Микрофон'},{k:'ns',t:'Шумодав'},{k:'vad',t:'VAD'},
+           {k:'stt',t:'Движок STT'},{k:'out',t:'Текст'}],
+    lit(){
+      const rec = isOn2('#btn-listen');
+      return {mic:rec, ns:/вкл/i.test(txt('#mic-ns-label')), vad:rec,
+              stt:rec && !!curRow('#stt-engines'), out:rec};
+    },
+    status(){
+      return (curRow('#stt-engines') || 'движок не выбран') + ' · ' +
+             (isOn2('#btn-listen') ? 'слушает' : 'не слушает');
+    },
+    build(b){
+      const s1 = zpSec(b, 'Состояние');
+      zpToggle(s1, 'Слушать меня', 'микрофон интерфейса · клавиша M',
+        '#btn-listen', () => isOn2('#btn-listen'),
+        () => isOn2('#btn-listen') ? 'слушает' : 'выключен');
+      zpToggle(s1, 'Шумодав', 'чистка звука до распознавания',
+        '#btn-mic-ns', () => /вкл/i.test(txt('#mic-ns-label')),
+        () => (txt('#mic-ns-label').split(':')[1] || '').trim());
+      const s2 = zpSec(b, 'Движки и микрофон');
+      if (!adoptPanel(s2, '#btn-mic')) zpEmpty(s2);
+    },
+  },
+  voice: {
+    desc: 'Ответ рождается текстом. Движок синтеза превращает его в голос — ' +
+      'клонирующие движки поверх накладывают тембр Сайки, — и готовый звук ' +
+      'уходит в выбранное устройство вывода. Упал движок — включается ' +
+      'запасной по рейтингу.',
+    pipe: [{k:'txt',t:'Текст'},{k:'tts',t:'Движок TTS'},
+           {k:'clone',t:'Окраска · клон'},{k:'out',t:'Устройство'}],
+    lit(){
+      const sp = zpSpeaking();
+      return {txt:sp, tts:!!curRow('#tts-engines'), clone:sp, out:sp};
+    },
+    status(){
+      return (curRow('#tts-engines') || 'движок не выбран') +
+             (zpSpeaking() ? ' · говорит' : ' · молчит');
+    },
+    build(b){
+      const s0 = zpSec(b, 'Её голос сейчас');
+      const cv = document.createElement('canvas');
+      cv.className = 'zp-scope';
+      s0.appendChild(cv);
+      startScope(cv);
+      const s1 = zpSec(b, 'Синтез — движки, громкость, вывод');
+      if (!adoptPanel(s1, '#btn-tts')) zpEmpty(s1);
+    },
+  },
+  brain: {
+    desc: 'Твоё сообщение складывается с памятью, характером и заметками — и ' +
+      'уходит в выбранную модель, локальную или облачную. Модель может ' +
+      'дёргать инструменты: руки, глаза, поиск, файлы. Ответ возвращается ' +
+      'текстом и голосом; упала модель — включится следующая по рейтингу.',
+    pipe: [{k:'in',t:'Ввод'},{k:'ctx',t:'Контекст · Характер'},
+           {k:'llm',t:'Модель'},{k:'tools',t:'Инструменты'},{k:'out',t:'Ответ'}],
+    lit(){
+      const lb = txt('#model-label');
+      const on = !!lb && !/модель…|выбери/.test(lb);
+      return {in:on, ctx:on, llm:on, tools:on, out:on};
+    },
+    status(){ return txt('#model-label') || 'модель не выбрана'; },
+    build(b){
+      /* Панель модели уже богатая: рейтинги, сэмплинг, облако,
+         размышления. Принимаем её целиком и даём ей место. */
+      const s1 = zpSec(b, 'Модели и настройки');
+      if (!adoptPanel(s1, '#btn-model')) zpEmpty(s1);
+      const s2 = zpSec(b, 'Обучение');
+      zpBtnRow(s2, 'Дообучение характера',
+        'LoRA на её собственных диалогах', () => hit('#btn-train'));
+    },
+  },
+  eyes: {
+    desc: 'По запросу она снимает выбранный дисплей или камеру, распознаёт ' +
+      'снимок и использует увиденное в ответе. Наблюдение — фоновый режим: ' +
+      'она поглядывает на экран сама и замечает перемены.',
+    pipe: [{k:'src',t:'Экран · Камера'},{k:'shot',t:'Снимок'},
+           {k:'ocr',t:'Распознавание'},{k:'mind',t:'Понимание'}],
+    lit(){
+      const on = isOn('#eyes-toggle') || /включ/i.test(txt('#eyes-label'));
+      const w = isOn('#eyes-watch');
+      return {src:on, shot:on, ocr:on, mind:w};
+    },
+    status(){
+      const on = /включ/i.test(txt('#eyes-label'));
+      return (txt('#eyes-label') || 'выключены') +
+             (isOn('#eyes-watch') ? ' · наблюдает' : (on ? '' : ''));
+    },
+    build(b){
+      const s1 = zpSec(b, 'Экран и камера');
+      if (!adoptPanel(s1, '#btn-eyes')) zpEmpty(s1);
+      const s2 = zpSec(b, 'Дальше');
+      zpSoon(s2, 'Режимы фокусировки', 'смотреть только на нужное окно');
+      zpSoon(s2, 'Подсветка взгляда', 'видно, куда именно она смотрит');
+    },
+  },
+  hands: {
+    desc: 'Команда разбирается в план, шаги исполняются настоящими мышью, ' +
+      'клавиатурой и деревом окон (UIA). Свечение заранее показывает место ' +
+      'экрана, с которым она работает, — видно, что она собирается сделать, ' +
+      'до того, как она это сделала.',
+    pipe: [{k:'cmd',t:'Команда'},{k:'plan',t:'План'},
+           {k:'act',t:'Мышь · Клавиатура · UIA'},{k:'glow',t:'Подсветка'}],
+    lit(){
+      const bc = $('#btn-control');
+      const on = !!(bc && /— ВКЛ/.test(bc.title || ''));
+      return {cmd:on, plan:on, act:on, glow:act.hands};
+    },
+    status(){
+      const bc = $('#btn-control');
+      return (bc && /— ВКЛ/.test(bc.title || ''))
+        ? 'управление ПК включено' + (act.hands ? ' · работает' : '')
+        : 'управление ПК выключено';
+    },
+    build(b){
+      const s1 = zpSec(b, 'Управление');
+      zpToggle(s1, 'Управление ПК', 'мышь, клавиатура, окна — её руки',
+        '#btn-control', () => {
+          const bc = $('#btn-control');
+          return !!(bc && /— ВКЛ/.test(bc.title || ''));
+        });
+      zpBtnRow(s1, 'Свечение', 'цвет и место — в «Системе», блок «Что и где она делает»',
+        () => zpLeave({screen:'sys', focus:'.attn-glow'}));
+      zpSoon(s1, 'Подсветка мелких кнопок', 'точная метка на том, что она жмёт');
+      const s2 = zpSec(b, 'Инструменты');
+      zpBtnRow(s2, 'Карта', 'дев-доска: что сделано и что дальше',
+        () => zpLeave({hit:'#btn-board'}));
+      zpBtnRow(s2, 'DreamPC', 'диффузионная модель — эксперимент',
+        () => hit('#btn-dreampc'));
+    },
+  },
+  face: {
+    desc: 'Лицо — VRM или Live2D-модель в своём окне. Пока она говорит, звук ' +
+      'раскладывается на виземы, и губы движутся синхронно с голосом; жесты ' +
+      'она выбирает по смыслу ответа.',
+    pipe: [{k:'txt',t:'Ответ'},{k:'vis',t:'Виземы губ'},
+           {k:'vrm',t:'VRM · Live2D'},{k:'win',t:'Окно аватара'}],
+    lit(){
+      const fr = document.getElementById('av-frame');
+      const ld = !!(fr && fr.getAttribute('src'));
+      const sp = zpSpeaking();
+      return {txt:sp, vis:sp, vrm:ld, win:ld};
+    },
+    status(){
+      const fr = document.getElementById('av-frame');
+      return (fr && fr.getAttribute('src')) ? 'аватар загружен' : 'аватар не загружен';
+    },
+    build(b){
+      const s1 = zpSec(b, 'Аватар');
+      zpBtnRow(s1, 'Экран аватара', 'её лицо крупно, рядом с разговором',
+        () => zpLeave({screen:'face'}));
+      zpBtnRow(s1, 'Библиотека внешности', 'VRM · Live2D · спрайты, загрузка своих',
+        () => zpLeave({screen:'face', hit:'#av-open'}));
+      const s2 = zpSec(b, 'Голос и настройки');
+      zpBtnRow(s2, 'Карта голосов', 'как она звучит — целый экран',
+        () => zpLeave({screen:'voice'}));
+      zpBtnRow(s2, 'Настройки', 'внешний вид · заметки автора',
+        () => zpLeave({hit:'#btn-settings'}));
+    },
+  },
+};
+
+/* ── открыть / закрыть ── */
+function openPanel(z, cx, cy, keepStep){
+  if (open) hide();
+  if (!keepStep) markForward();
+  zpGen++;
+  unadoptAll(); stopScope();
+  zpZone = z; zpOpen = z.id; zpLive = [];
+  const P = ZPANELS[z.id] || {};
+  zpEl.querySelector('#zp-name').textContent = z.name;
+  zpEl.querySelector('#zp-status').textContent = '';
+  zpBody.innerHTML = '';
+  const how = document.createElement('section');
+  how.className = 'zp-sec zp-how';
+  how.innerHTML = '<div class="zp-cap">Как это работает</div>';
+  zpPipeCtl = P.pipe ? zpPipe(P.pipe) : null;
+  if (zpPipeCtl) how.appendChild(zpPipeCtl.el);
+  if (P.desc){
+    const d = document.createElement('p');
+    d.className = 'zp-desc';
+    d.textContent = P.desc;
+    how.appendChild(d);
+  }
+  zpBody.appendChild(how);
+  try { if (P.build) P.build(zpBody); } catch(e){ console.error('zpanel:', e); }
+  /* морф из направления сектора: transform-origin — в точке нажатия
+     (она может лежать и вне панели — тогда рост идёт со стороны сектора) */
+  const pw = Math.min(880, W - 56), ph = H - 44;
+  zpEl.style.width = pw + 'px';
+  zpEl.style.height = ph + 'px';
+  zpEl.style.left = ((W - pw)/2) + 'px';
+  zpEl.style.top = ((H - ph)/2) + 'px';
+  zpEl.style.transformOrigin =
+    (cx - (W - pw)/2) + 'px ' + (cy - (H - ph)/2) + 'px';
+  SFX.open();
+  Object.keys(N).forEach(k => {
+    const n = N[k], on = k === z.id;
+    if (n.path) n.path.classList.toggle('active', on);
+    if (n.lab)  n.lab.classList.toggle('on', on);
+  });
+  document.body.classList.add('zpanel');
+  zpTick();
+  clearInterval(zpTimer);
+  zpTimer = setInterval(zpTick, 1000);
+  zpBody.scrollTop = 0;
+  say();
+}
+function closePanel(){
+  if (!zpOpen) return;
+  const gen = ++zpGen;
+  zpOpen = null; zpZone = null;
+  clearInterval(zpTimer); zpTimer = 0;
+  SFX.close();
+  document.body.classList.remove('zpanel');
+  Object.keys(N).forEach(k => {
+    const n = N[k];
+    if (n.path) n.path.classList.remove('active');
+    if (n.lab)  n.lab.classList.remove('on');
+  });
+  /* содержимое убираем после обратного морфа; если за это время открыли
+     другую панель — она уже всё перестроила, не трогаем */
+  setTimeout(() => {
+    if (zpGen !== gen) return;
+    unadoptAll(); stopScope();
+    zpBody.innerHTML = '';
+    zpLive = []; zpPipeCtl = null;
+  }, 400);
+  say();
+}
+function zpTick(){
+  if (!zpOpen) return;
+  const P = ZPANELS[zpOpen];
+  if (!P) return;
+  try { zpEl.querySelector('#zp-status').textContent = P.status ? P.status() : ''; }
+  catch(e){}
+  try { if (zpPipeCtl && P.lit) zpPipeCtl.set(P.lit()); } catch(e){}
+  zpLive.forEach(f => { try { f(); } catch(e){} });
+}
+
+/* ═══════════════ НИЖНИЙ БАР ═══════════════
+   Один бар в стиле взрослых AI-продуктов: микрофон (зеркало #btn-listen),
+   чип активной модели (клик — блок МОЗГИ), настоящее поле ввода (текст
+   уходит в настоящий механизм чата), отправка и журнал. */
+function buildBar(shell){
+  barEl = document.createElement('div');
+  barEl.id = 'zbar';
+  barEl.innerHTML =
+    '<div id="zhint"></div>' +
+    '<button id="zb-mic" title="Слушать меня — вкл/выкл (клавиша M)">🎙</button>' +
+    '<button id="zb-model" title="Мозги: модели и настройки">' +
+      '<i>◆</i><span>модель…</span></button>' +
+    '<input id="zb-input" placeholder="Скажи, напиши или брось файл" ' +
+      'autocomplete="off" spellcheck="false">' +
+    '<button id="zb-send" title="Отправить (Enter)">➤</button>' +
+    '<button id="zb-log" title="Журнал — что происходит под капотом">≣' +
+      '<em id="zb-logn"></em></button>' +
+    '<div id="zlog"><div id="zl-head"><b>журнал</b><span id="zl-n"></span>' +
+      '<button id="zl-errs">только ошибки</button>' +
+      '<button id="zl-x" title="Закрыть (Esc)">✕</button></div>' +
+      '<div id="zl-body"></div></div>';
+  shell.parentNode.insertBefore(barEl, shell.nextSibling);
+  zbInput = barEl.querySelector('#zb-input');
+  zbMic   = barEl.querySelector('#zb-mic');
+  zbModel = barEl.querySelector('#zb-model');
+  logEl   = barEl.querySelector('#zlog');
+  zlBody  = barEl.querySelector('#zl-body');
+  hintEl  = barEl.querySelector('#zhint');
+
+  zbMic.addEventListener('click', () => {
+    SFX.pick();
+    if (!hit('#btn-listen')){ say('микрофон не найден'); return; }
+    setTimeout(() => {
+      barTick();
+      say(isOn2('#btn-listen') ? 'микрофон <b>включён</b>'
+                               : 'микрофон <b>выключен</b>');
+      setTimeout(() => { if (!open && !zpOpen) say(); }, 2000);
+    }, 150);
+  });
+
+  zbModel.addEventListener('click', () => {
+    const z = ZONES.find(x => x.id === 'brain');
+    if (!z) return;
+    if (zpOpen === 'brain'){ goBack(); return; }
+    const nd = N.brain;
+    const cx = nd && nd.hx ? nd.hx : W*.7, cy = nd && nd.hy ? nd.hy : H*.4;
+    if (zpOpen){ closePanel(); openPanel(z, cx, cy, true); }
+    else openPanel(z, cx, cy);
+  });
+
+  /* ОТПРАВКА — в настоящий механизм чата: то же поле #input, та же
+     кнопка #btn-send, тот же send() со всеми его правилами (тайная
+     фраза, вложения, вебсокет). Уходим на экран чата, чтобы был виден
+     ответ. Своего канала отправки здесь нет. */
+  function zbSend(){
+    const v = zbInput.value.trim();
+    if (!v){
+      if (zpOpen) closePanel();
+      goScreen('chat');
+      const i = $('#input'); if (i) i.focus();
+      return;
+    }
+    if (zpOpen) closePanel();
+    goScreen('chat');
+    const i = $('#input');
+    if (!i){ say('поле чата не нашлось'); return; }
+    i.value = v;
+    zbInput.value = '';
+    hit('#btn-send');
+    i.focus();
+  }
+  barEl.querySelector('#zb-send').addEventListener('click', zbSend);
+  zbInput.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter'){ ev.preventDefault(); zbSend(); }
+    if (ev.key === 'Escape') zbInput.blur();
+    ev.stopPropagation();
+  });
+
+  const logBtn = barEl.querySelector('#zb-log');
+  logBtn.addEventListener('click', () => {
+    document.body.classList.toggle('zlogopen');
+    if (document.body.classList.contains('zlogopen')){
+      renderLog();
+      zlBody.scrollTop = zlBody.scrollHeight;
+    }
+  });
+  barEl.querySelector('#zl-x').addEventListener('click',
+    () => document.body.classList.remove('zlogopen'));
+  barEl.querySelector('#zl-errs').addEventListener('click', ev => {
+    logEl.classList.toggle('only-err');
+    ev.target.classList.toggle('on');
+  });
+
+  /* Файл ловит старый глобальный обработчик на window — наше дело
+     показать, что цель принимает, и увести в чат, где видно превью. */
+  let dragDepth = 0;
+  const hasFiles = ev => {
+    const t = ev.dataTransfer;
+    return !!t && [...(t.types||[])].includes('Files');
+  };
+  [S, barEl].forEach(host => host.addEventListener('dragenter', ev => {
+    if (!hasFiles(ev)) return;
+    dragDepth++;
+    barEl.classList.add('drag');
+    say('отпусти — прикреплю к разговору');
+  }));
+  [S, barEl].forEach(host => host.addEventListener('dragleave', () => {
+    if (--dragDepth > 0) return;
+    dragDepth = 0;
+    barEl.classList.remove('drag');
+    say();
+  }));
+  [S, barEl].forEach(host => host.addEventListener('drop', () => {
+    dragDepth = 0;
+    barEl.classList.remove('drag');
+    say();
+    setTimeout(() => { if (zpOpen) closePanel(); goScreen('chat'); }, 0);
+  }));
+
+  barTick();
+  setInterval(barTick, 900);
+}
+function barTick(){
+  if (!barEl || !document.body.classList.contains('zhome')) return;
+  try {
+    zbMic.classList.toggle('rec', isOn2('#btn-listen'));
+    const m = txt('#model-label') || 'модель…';
+    const sp = zbModel.querySelector('span');
+    if (sp.textContent !== m) sp.textContent = m;
+    const n = barEl.querySelector('#zb-logn');
+    let errs = 0;
+    ZLOG.forEach(e => { if (e.kind === 'err' || e.kind === 'net') errs += e.n; });
+    n.textContent = errs ? String(Math.min(errs, 99)) : '';
+  } catch(e){}
+}
+function renderLog(){
+  if (!zlBody) return;
+  const stick = zlBody.scrollHeight - zlBody.scrollTop - zlBody.clientHeight < 48;
+  const K = {err:'ERR', warn:'WRN', net:'NET', say:'···'};
+  zlBody.innerHTML = ZLOG.length
+    ? ZLOG.map(e =>
+        '<div class="zl-r k-'+e.kind+'"><span class="zl-t">'+zfmt(e.t)+'</span>' +
+        '<span class="zl-k">'+(K[e.kind]||e.kind)+'</span>' +
+        '<span class="zl-m">'+esc(e.text)+(e.n>1?' <i>×'+e.n+'</i>':'')+
+        '</span></div>').join('')
+    : '<div class="zl-empty">пока тихо — ни ошибок, ни событий</div>';
+  const n = document.getElementById('zl-n');
+  if (n) n.textContent = ZLOG.length ? ZLOG.length + ' записей' : '';
+  if (stick) zlBody.scrollTop = zlBody.scrollHeight;
+}
+
 const SCREENS = ['chat','voice','face','sys'];
 function remembered(){
   try { return SCREENS.includes(localStorage.saika_mode) ? localStorage.saika_mode : 'chat'; }
@@ -13794,6 +14612,7 @@ function applyHome(){
    после кнопки «главный» боковая кнопка мыши повела бы обратно в те
    экраны, из которых человек только что демонстративно вышел. */
 function goHome(){
+  if (zpOpen) closePanel();
   if (open) hide();
   if (depth > 0){
     const d = depth; depth = 0; suppress = 1;
@@ -13802,24 +14621,18 @@ function goHome(){
   applyHome();
 }
 
-/* Три состояния одной строки. Чем строка занята сейчас — видно по ней
-   самой, а не по тому, что человек помнит о своём последнем действии. */
+/* Подсказка — тонкая строка над баром. Появляется только когда есть что
+   сказать; в покое молчит и не занимает места. Всё, что говорит say(),
+   попадает и в журнал — статусы это тоже события. */
 function say(html){
-  if (!hintEl) return;
-  const sp = hintEl.querySelector('span');
-  if (!sp) return;
-  if (!document.body.classList.contains('zhome')){
-    hintEl.classList.remove('idle');
-    sp.innerHTML = '◄ <b>ГЛАВНЫЙ ЭКРАН</b> — клик сюда или Esc';
-    return;
+  const line = html || saidTrouble || '';
+  if (hintEl){
+    hintEl.innerHTML = line;
+    hintEl.classList.toggle('show', !!line);
   }
-  if (html){ hintEl.classList.remove('idle'); sp.innerHTML = html; return; }
-  /* Вернулись в покой — и если что-то сломано или грузится, строка
-     говорит об этом, а не зовёт в разговор. Приглашение подождёт;
-     поломка — нет. */
-  if (saidTrouble){ hintEl.classList.remove('idle'); sp.innerHTML = saidTrouble; return; }
-  hintEl.classList.add('idle');
-  sp.innerHTML = 'Скажи, напиши или брось сюда файл';
+  if (html){
+    try { zlogPush('say', String(html).replace(/<[^>]*>/g,'')); } catch(e){}
+  }
 }
 
 // ─────────────────────────── жест ───────────────────────────
@@ -13857,15 +14670,22 @@ function begin(z, ev){
   /* В режиме расстановки секторы не открывают и не закрывают ничего:
      расстановка — работа руками по разложенному. */
   if (document.body.classList.contains('zarrange')) return;
-  /* Барабан раскрыт, а нажали В ДРУГУЮ ОБЛАСТЬ / в пустоту — закрываем
-     и на этом всё. Второе нажатие мимо — самый естественный способ
-     сказать «не надо», и он обязан значить ровно это. */
-  if (open){ hide(); return; }
-  /* Точка — РОВНО там, где легла рука, и остаётся там. Из неё растёт
-     барабан-селектор; старый веер карточек здесь больше не живёт. */
-  press = {z, x:ev.clientX, y:ev.clientY, moved:false};
   const r = S.getBoundingClientRect();
-  openDrum(z, ev.clientX - r.left, ev.clientY - r.top);
+  const cx = ev.clientX - r.left, cy = ev.clientY - r.top;
+  /* Панель уже раскрыта: нажатие в СВОЙ сектор закрывает её (повторное
+     нажатие — самый естественный способ сказать «не надо»), нажатие в
+     ЧУЖОЙ — переезжает в его панель без промежуточного закрытия. */
+  if (zpOpen){
+    if (zpOpen === z.id){ goBack(); return; }
+    closePanel();
+    openPanel(z, cx, cy, true);
+    return;
+  }
+  if (open){ hide(); return; }
+  /* Барабан-селектор забракован владельцем: нажатие в сектор теперь
+     раскрывает БЛОК ОРГАНА — панель, растущую из точки нажатия. Код
+     барабана (openDrum/dstack) оставлен мёртвым ниже. */
+  openPanel(z, cx, cy);
 }
 
 /* НАЧАЛО ОТСЧЁТА ВЕЕРА — ТАМ, ГДЕ ЛЕГЛА РУКА.
@@ -14104,6 +14924,15 @@ function wire(){
      спектра вокруг ядра — и есть её голос, нажатие по нему обрывает
      озвучку. Мишень — вся мёртвая зона между ядром и секторами. */
   S.addEventListener('pointerdown', ev => {
+    /* Панель органа раскрыта: клик по ней — её дело, клик по сектору
+       разбирает begin() (повторный — закрыть, чужой — переехать), а клик
+       мимо всего — тот же шаг назад, что Esc и боковая кнопка мыши. */
+    if (zpOpen){
+      const t0 = ev.target;
+      if (!(t0.closest && (t0.closest('#zpanel') || t0.closest('#zsvg'))))
+        goBack();
+      return;
+    }
     if (open || dstack.length) return;
     if (document.body.classList.contains('zarrange')) return;
     const t = ev.target;
@@ -14223,8 +15052,11 @@ function wire(){
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
                          || t.isContentEditable);
     if (ev.key === 'Escape'){
-      // Ящик закрывается первым: он сверху, и Esc всегда относится к тому,
-      // что сверху, — иначе человек закрывает не то, на что смотрит.
+      // Esc относится к тому, что сверху: журнал, ящик, расстановка, потом
+      // общий шаг назад (он же закрывает панель органа через историю).
+      if (document.body.classList.contains('zlogopen')){
+        document.body.classList.remove('zlogopen'); return;
+      }
       if (document.body.classList.contains('zdrawer')){ shut(); return; }
       if (document.body.classList.contains('zarrange')){
         window.saikaArrange(false); return;
@@ -14242,47 +15074,8 @@ function wire(){
     try { fr.contentDocument.addEventListener('keydown', onEsc); } catch(e){}
   });
 
-  /* Капсула разговора. Файл ловит не она, а старый глобальный обработчик
-     на window — он был здесь задолго до нас и работает в любом месте
-     окна. Наше дело только показать, куда целиться, и увести в чат, где
-     видно превью прикреплённого: на главном экране превью спрятано
-     вместе с плашкой, и без перехода человек решил бы, что файл пропал. */
-  const cap = document.getElementById('zchat');
-  if (cap){
-    cap.addEventListener('click', () => {
-      // Строка делает ровно то, что на ней написано в эту секунду.
-      if (!document.body.classList.contains('zhome')){ goBack(); return; }
-      if (open){ hide(); return; }
-      goScreen('chat');
-      const i = document.getElementById('input'); if (i) i.focus();
-    });
-    let dragDepth = 0;
-    const hasFiles = ev => {
-      const t = ev.dataTransfer;
-      return !!t && [...(t.types||[])].includes('Files');
-    };
-    // Ронять можно куда угодно по главному экрану — ловит старый
-    // глобальный обработчик. Наше дело показать, что цель принимает.
-    [S, cap].forEach(host => host.addEventListener('dragenter', ev => {
-      if (!hasFiles(ev)) return;
-      dragDepth++; cap.classList.add('drag');
-      cap.querySelector('span').textContent = 'отпусти — прикреплю к разговору';
-    }));
-    S.addEventListener('dragleave', () => {
-      // dragleave прилетает и при переходе на дочерний элемент, поэтому
-      // считаем глубину, а не ловим каждое событие.
-      if (--dragDepth > 0) return;
-      dragDepth = 0; cap.classList.remove('drag');
-      cap.querySelector('span').textContent = 'Скажи, напиши или брось сюда файл';
-    });
-    S.addEventListener('drop', () => {
-      dragDepth = 0; cap.classList.remove('drag');
-      cap.querySelector('span').textContent = 'Скажи, напиши или брось сюда файл';
-      // Не мешаем чужому обработчику: он уже висит на window и сработает
-      // после нас. Уходим в чат следующим тактом, когда файл уже принят.
-      setTimeout(() => goScreen('chat'), 0);
-    });
-  }
+  /* Файлы по-прежнему ловит старый глобальный обработчик на window —
+     подсветку цели и уход в чат после броска делает нижний бар (buildBar). */
 
   // Кнопка «домой» в шапке — единственный способ вернуться с экрана,
   // и он обязан быть в одном и том же месте всегда.
@@ -14318,17 +15111,18 @@ function wire(){
      экране нет, поэтому ловим первую же букву на всём документе и
      переносим её в поле вместе с человеком. Искать, куда писать, не
      нужно: пиши, а интерфейс догонит. */
+  /* Начал печатать — буква едет в поле нижнего бара: разговор теперь
+     начинается прямо на главном, искать экран чата не нужно. */
   addEventListener('keydown', ev => {
     if (!document.body.classList.contains('zhome')) return;
     if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+    if (zpOpen || document.body.classList.contains('zdrawer')) return;
     const t = ev.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (ev.key.length !== 1 && ev.key !== 'Enter') return;
-    goScreen('chat');
-    const inp = document.getElementById('input');
-    if (!inp) return;
-    inp.focus();
-    if (ev.key.length === 1){ inp.value += ev.key; ev.preventDefault(); }
+    if (!zbInput) return;
+    zbInput.focus();
+    if (ev.key.length === 1){ zbInput.value += ev.key; ev.preventDefault(); }
   });
 }
 
