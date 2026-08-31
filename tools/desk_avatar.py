@@ -28,6 +28,7 @@
 """
 import importlib.util
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -97,7 +98,20 @@ def _now():
 
 def main():
     cfg = _cfg()
-    port = int((cfg.get("server") or {}).get("port", 8765))
+    # ПОРТ — ОТ ТОГО, КТО НАС ЗАПУСТИЛ (2026-08-23, живой тупик:
+    # «ERR_CONNECTION_REFUSED» бесконечно). Окно читало порт из настроек
+    # по умолчанию и получало 8765, а программа слушала 8799 — то есть
+    # стучалось в дверь, за которой никого нет и не будет. Конфигов
+    # несколько (умолчания в app\, настройки этой машины рядом со
+    # сборкой), и угадывать, какой из них главный, — не наше дело:
+    # правильный порт знает тот, кто нас открыл, и он его передаёт.
+    port = 0
+    try:
+        port = int(os.environ.get("ANAMORF_PORT") or 0)
+    except Exception:
+        port = 0
+    if not port:
+        port = int((cfg.get("server") or {}).get("port", 8765))
     desk = ((cfg.get("avatar") or {}).get("desk") or {})
 
     from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
@@ -161,7 +175,45 @@ def main():
             # живой промах: окно открылось честно, прозрачное и поверх
             # всего, и показало {"detail":"Not Found"}. Сервер отдаёт файл
             # по маршруту /avatar; имени файла в URL нет вообще.)
-            self.view.load(QUrl(f"http://127.0.0.1:{port}/avatar?desk=1"))
+            # СЕРВЕР МОГ ЕЩЁ НЕ ПОДНЯТЬСЯ (2026-08-23, живой случай:
+            # окно открылось и показало «ERR_CONNECTION_REFUSED»). Оно
+            # стартовало ровно в те полторы минуты, пока программа
+            # переезжала на новый код и порт был закрыт. Одна попытка
+            # загрузки — и человек видит ошибку браузера вместо модели,
+            # хотя всё исправно и через минуту заработало бы само.
+            # Поэтому не грузим вслепую: ждём, пока порт ответит, и
+            # перезагружаем страницу, если она всё-таки не открылась.
+            self._url = QUrl(f"http://127.0.0.1:{port}/avatar?desk=1")
+            self._tries = 0
+
+            def _try_load():
+                self._tries += 1
+                alive = False
+                try:
+                    with urllib.request.urlopen(
+                            f"http://127.0.0.1:{port}/api/avatar/desk",
+                            timeout=1.5):
+                        alive = True
+                except Exception:
+                    alive = False
+                if alive:
+                    self.view.load(self._url)
+                    return
+                if self._tries < 120:          # до двух минут ожидания
+                    QTimer.singleShot(1000, _try_load)
+                else:
+                    print("сервер так и не ответил — окно осталось пустым",
+                          flush=True)
+
+            _try_load()
+
+            # и страховка на случай, если страница всё же не открылась:
+            # молча пустое окно ничем не лучше ошибки
+            def _recheck():
+                if self.view.url().isEmpty() or "avatar" not in \
+                        self.view.url().toString():
+                    self.view.load(self._url)
+            QTimer.singleShot(8000, _recheck)
 
             lay = QVBoxLayout(self)
             lay.setContentsMargins(0, 0, 0, 0)

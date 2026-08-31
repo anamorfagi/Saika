@@ -106,6 +106,22 @@ class Registry:
     def save(self):
         if not self.dirty:
             return
+        # ПУСТОЙ РЕЕСТР НЕ ЗАТИРАЕТ НЕПУСТОЙ (27.08.2026, потеряно на себе).
+        # Живая правка перечитала модуль, завела чистое состояние поверх
+        # рабочего — и первый же обычный save() записал ноль голосов поверх
+        # двенадцати. На диске должна оставаться последняя версия, в которой
+        # голоса ЕСТЬ: пустой список пишем только по явному «забудь всех».
+        try:
+            if not self.speakers and (DIR / "meta.json").exists():
+                _old = json.loads((DIR / "meta.json").read_text("utf-8"))
+                if _old.get("speakers"):
+                    log.warning("Отпечатки: в памяти пусто, а на диске %d "
+                                "голосов — не затираю. Загрузи их (vp load) "
+                                "или сотри явно.", len(_old["speakers"]))
+                    self.dirty = False
+                    return
+        except Exception as _e:
+            log.debug("проверка пустого реестра пропущена: %s", _e)
         try:
             DIR.mkdir(parents=True, exist_ok=True)
             arrays, colors, pinned, auto, hyp = {}, {}, {}, {}, {}
@@ -537,8 +553,16 @@ class Registry:
             conf = float(np.clip(conf, 0.0, 1.0))
             if s > best[1]:
                 best = (name if s >= thr else "", s, conf, name)
-        return (best[0], float(best[1]),
-                float(best[2] if best[0] else 0.0), best[3])
+        _name = best[0]
+        if not _name and best[3]:
+            _soft = CFG.get("voiceprint.soft_assign_cos", None)
+            try:
+                if _soft is not None and best[1] >= float(_soft):
+                    _name = best[3]   # не дотянул до порога — тянем к ближайшему
+            except Exception:
+                pass
+        return (_name, float(best[1]),
+                float(best[2] if _name else 0.0), best[3])
 
     def adapt(self, name: str, emb, conf: float):
         """Дописать эталон живой речью. ЗАЧЕМ: запись при знакомстве ловит

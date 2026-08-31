@@ -69,6 +69,17 @@ def _venv_python():
 
 def kill_stale():
     """Убить зависший с прошлого запуска воркер (см. dreampc.kill_stale)."""
+    # ЖИВОГО СОСЕДА НЕ УБИВАЕМ (2026-08-25, аудит). Раньше kill_stale слепо
+    # снимал ЛЮБОЙ процесс на порту. Если запущены две копии Сайки (исходник
+    # и собранный билд), старт одной убивал воркер другой, тот поднимал свой
+    # — и два тяжёлых воркера дрались за карту. Теперь: отвечает здоровым
+    # health — значит он либо наш с прошлого раза, либо чужой рабочий; не
+    # трогаем, ensure_running его подхватит. Убиваем только молчащий (завис).
+    try:
+        if _health() is not None:
+            return
+    except Exception:
+        pass
     kill_by_port(_cfg().get("port", 8769), "зависший воркер обучения")
 
 
@@ -188,3 +199,25 @@ def stop_training():
 
 def export_gguf(payload: dict):
     return _post("/export_gguf", payload, timeout=5)
+
+
+def stop_worker():
+    """Погасить СВОЙ воркер при выходе Сайки (2026-08-25, аудит). Воркер —
+    детач-процесс и переживает закрытие окна: без явного terminate он висел
+    в памяти гигабайтами до следующего старта. Гасим только свой (_proc),
+    чужого (второй экземпляр) не трогаем — им займётся его собственный
+    выход."""
+    global _proc
+    try:
+        if _proc is not None and _proc.poll() is None:
+            _proc.terminate()
+            try:
+                _proc.wait(timeout=3)
+            except Exception:
+                try:
+                    _proc.kill()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    _proc = None

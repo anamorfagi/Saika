@@ -1,0 +1,29 @@
+КАРТА: NVIDIA GeForce RTX 4070 Ti SUPER, 16376 MiB, 1267 MiB, 14795 MiB
+
+КТО ДЕРЖИТ ПАМЯТЬ:
+2092, [N/A], [Insufficient Permissions]
+11460, [N/A], C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\CrossDeviceResume.exe
+11768, [N/A], C:\Windows\explorer.exe
+13528, [N/A], C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe
+15396, [N/A], C:\Program Files (x86)\Microsoft\EdgeWebView\Application\151.0.4129.101\msedgewebview2.exe
+18724, [N/A], C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TextInputHost.exe
+18132, [N/A], C:\Windows\System32\ApplicationFrameHost.exe
+18572, [N/A], [Insufficient Permissions]
+20892, [N/A], C:\Program Files\WindowsApps\28017CharlesMilette.TranslucentTB_2026.1.0.0_x64__v826wp6bftszj\TranslucentTB.exe
+4460, [N/A], C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe
+29544, [N/A], C:\Users\QWADRO\AppData\Roaming\Telegram Desktop\Telegram.exe
+10436, [N/A], [Insufficient Permissions]
+28356, [N/A], C:\Program Files\WindowsApps\RealtekSemiconductorCorp.RealtekAudioControl_1.53.385.0_x64__dt26b99r8h8gj\RtkUWP.exe
+13536, [N/A], C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe
+11444, [N/A], C:\Program Files\WindowsApps\Microsoft.Edge.GameAssist_1.0.4019.0_x64__8wekyb3d8bbwe\EdgeGameAssist.exe
+4500, [N/A], C:\Users\QWADRO\AppData\Local\Discord\app-1.0.9254\Discord.exe
+52580, [N/A], C:\Windows\ImmersiveControlPanel\SystemSettings.exe
+10584, [N/A], C:\Program Files\Google\Chrome\Application\chrome.exe
+8496, [N/A], C:\Program Files\Google\Chrome\Application\chrome.exe
+53396, [N/A], C:\Program Files (x86)\Steam\steamapps\common\DSX\Main_v3_Beta\DSX.exe
+13900, [N/A], C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe
+5600, [N/A], C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+40172, [N/A], [Insufficient Permissions]
+14528, [N/A], C:\Windows\System32\ShellHost.exe
+21528, [N/A], C:\Program Files\WindowsApps\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\app\claude.exe
+49744, [N/A], C:\Program Files\WindowsApps\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\app\claude.exe

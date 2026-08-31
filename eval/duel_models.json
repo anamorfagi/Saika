@@ -1,0 +1,19 @@
+{
+  "_": "Кандидаты очной ставки. file — точное имя в репозитории. extra — доп. флаги llama-server (например офлоад экспертов в RAM). Проверено 2026-08-26 по спискам файлов unsloth.",
+  "models": [
+    {"id": "gemma4-26b-a4b-q3xl",
+     "repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+     "file": "gemma-4-26B-A4B-it-UD-Q3_K_XL.gguf",
+     "gb": 12.9, "extra": [],
+     "note": "MoE 26B/4B активных. Влезает в 16 ГБ целиком, но TTS с карты придётся убрать."},
+    {"id": "qwen35-35b-a3b-q3s",
+     "repo": "unsloth/Qwen3.5-35B-A3B-GGUF",
+     "file": "Qwen3.5-35B-A3B-Q3_K_S.gguf",
+     "gb": 15.3, "extra": ["--n-cpu-moe", "8"],
+     "note": "MoE 35B/3B активных. В 16 ГБ целиком НЕ влезает — часть экспертов в RAM."},
+    {"id": "current",
+     "repo": "", "file": "", "gb": 0, "extra": [],
+     "path": "C:\\Users\\QWADRO\\.lmstudio\\models\\lmstudio-community\\Qwen3.5-9B-GGUF\\Qwen3.5-9B-Q4_K_M.gguf",
+     "note": "Действующий мозг — точка отсчёта."}
+  ]
+}

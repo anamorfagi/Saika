@@ -900,6 +900,27 @@ def _monitors() -> list:
     return [d["rect"] for d in _mon_info()]
 
 
+def monitor_by_side(side: str) -> int:
+    """«Правый экран», «левый монитор» — НОМЕР ПО ГЕОМЕТРИИ, а не по
+    нумерации Windows (2026-08-23, владелец объяснил вслух: «первый монитор
+    спереди от меня, справа от меня второй»). Номера Windows со сторонами
+    не связаны никак, поэтому смотрим, где мониторы стоят физически."""
+    t = (side or "").lower()
+    try:
+        info = sorted(_mon_info(), key=lambda d: d["rect"][0])
+    except Exception:
+        return 0
+    if not info:
+        return 0
+    if re.search(r"прав", t):
+        return int(info[-1]["num"])
+    if re.search(r"лев", t):
+        return int(info[0]["num"])
+    if re.search(r"средн|посередин|центральн", t) and len(info) > 2:
+        return int(info[len(info) // 2]["num"])
+    return 0
+
+
 def _monitor_of(rect, mons) -> int:
     """Номер экрана, на котором центр окна. mons — список прямоугольников
     в порядке _mon_info(); возвращается НОМЕР WINDOWS, не позиция в списке
@@ -916,6 +937,20 @@ def _monitor_of(rect, mons) -> int:
         if m[0] <= cx < m[2] and m[1] <= cy < m[3]:
             return i + 1
     return 0
+
+
+# Заголовки её собственных окон. Ядро (QML) и окно с моделью (Qt) — это
+# отдельные процессы, их не отличить по нашему pid; зато заголовки мы
+# ставим сами и знаем наверняка.
+_MY_TITLES = {"anamorf", "ядро", "сайка", "saika"}
+
+
+def _is_mine(title: str) -> bool:
+    t = (title or "").strip().lower()
+    if t in _MY_TITLES:
+        return True
+    # окно интерфейса в браузере: «ANAMORF — Chrome» и подобные
+    return t.startswith("anamorf") and (" — " in t or " - " in t)
 
 
 def windows(include_minimized=True) -> list:
@@ -951,6 +986,16 @@ def windows(include_minimized=True) -> list:
             # служебные окна оболочки — не то, что человек называет «окном»
             if title in ("Program Manager", "Windows Input Experience",
                          "Настройки", "搜索"):
+                return True
+            # СВОИ ОКНА — НЕ ЦЕЛЬ (2026-08-23, живой провал: «и она почему-то
+            # сфокусировалась на своём виджете»). В списке окон лежали её
+            # собственные: интерфейс, ядро на столе, окно с моделью. Дальше
+            # всё логично и всё неверно — «перенеси браузер» находит её же
+            # окно, подсветка внимания обводит её же виджет, а память о
+            # рабочих местах запоминает «окно на экране 2 -> python».
+            # Себя в списке своих рук быть не должно: это как хватать себя
+            # за руку вместо предмета.
+            if _is_mine(title):
                 return True
             r = wintypes.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(r))
@@ -1173,6 +1218,47 @@ def _is_coauthor_window(w: dict) -> bool:
 # проводник» не находило окно: заголовок окна проводника — имя ПАПКИ
 # («Saika», «Загрузки»), а процесс — explorer.exe; слова «проводник» нет
 # нигде. Голосом говорят по-русски — переводим на имена процессов.
+# ═══ ЕЁ СОБСТВЕННОЕ ТЕЛО (2026-08-23, владелец: «проге анаморф давай ей
+# дадим понимание, что это она или её модуль, чтобы она могла воспринимать
+# своё тело — и как прога, и как моделька») ═══
+# Живой разнос: «перенеси программу анаморф на второй экран» — окно есть,
+# стоит перед носом, а она отвечает «я не вижу запущенного окна с программой
+# анаморф», потому что её окно зовётся «Сайка — …», а слова «анаморф» не
+# знал никто. Плюс микрофон: «на морс», «анамор», «анаморт» — это всё она.
+_SELF_WORDS = ("анаморф", "анаморт", "анамор", "анаморс", "наморс",
+               "на морс", "энаморф", "anamorf", "anamorph", "anamore",
+               "сайка", "сайку", "сайки", "saika", "ядро", "ядро сайки",
+               "себя", "своё окно", "свое окно", "твоё окно", "твое окно",
+               "тебя", "твой интерфейс", "своё тело", "свое тело")
+
+
+def is_self_name(q: str) -> bool:
+    """Человек назвал ЕЁ САМУ? Со скидкой на микрофон: «на морс» = «анаморф»."""
+    t = re.sub(r"[^а-яёa-z ]+", " ", (q or "").lower()).strip()
+    t = re.sub(r"^(?:программ\w*|прогу|прога|приложени\w*|окно|окошко)\s+", "", t)
+    t = t.strip()
+    if not t:
+        return False
+    if t in _SELF_WORDS:
+        return True
+    # микрофон коверкает — сравниваем скелетами (см. _score)
+    return any(_score(w, t) >= 55 for w in ("анаморф", "сайка", "anamorf"))
+
+
+def self_window():
+    """ЕЁ окно — то самое, где живёт интерфейс. Не аватар, не консоль."""
+    best = None
+    for w in windows(include_minimized=True):
+        ttl = (w.get("title") or "").lower()
+        if "127.0.0.1:8765" in ttl or ttl.startswith("сайка") \
+                or "сайка —" in ttl or "anamorf" in ttl:
+            # окно интерфейса крупнее аватара и виджета-ядра — берём его
+            if best is None or (w.get("w", 0) * w.get("h", 0)
+                                > best.get("w", 0) * best.get("h", 0)):
+                best = w
+    return best
+
+
 _APP_ALIASES = {
     "проводник": "explorer", "папка": "explorer",
     "хром": "chrome", "гугл хром": "chrome", "браузер": "chrome",
@@ -1180,6 +1266,9 @@ _APP_ALIASES = {
     "телеграм": "telegram", "телега": "telegram",
     "диспетчер": "taskmgr", "диспетчер задач": "taskmgr",
     "корзина": "explorer",
+    "лм студио": "lm studio", "лам студио": "lm studio",
+    "лм-студио": "lm studio", "лм studio": "lm studio",
+    "ламстудио": "lm studio", "студия": "lm studio",
 }
 
 
@@ -1473,6 +1562,73 @@ def _other_places(cur: dict) -> str:
     return " Ещё открыто и уже обжито: " + txt + "."
 
 
+# ── ПРЕДМЕТ РАЗГОВОРА ≠ ПОСЛЕДНЕЕ ТРОНУТОЕ ОКНО (2026-08-23) ──────────
+#
+# Живой диалог, из-за которого это появилось:
+#
+#   — Сделай браузер слева на экране.      (двигаем Twitch — верно)
+#   — Хорошо, ты видишь папку Анаморф?
+#   — Да, вижу.
+#   — Сделай её справа на экране.
+#   — Готово! Окно «FRA3A — Twitch» теперь по центру экрана 1.
+#
+# Она поняла «её» как «то окно, которое я двигала в прошлый раз». Но
+# человек НАЗВАЛ предмет вслух двумя репликами раньше, и с тех пор
+# говорил только о нём. Местоимение указывает на последнее НАЗВАННОЕ, а
+# не на последнее тронутое — иначе разговор рассыпается ровно там, где
+# человек ведёт себя естественнее всего.
+#
+# Поэтому память две. `_last_target` — окно, с которым работали (оно
+# по-прежнему годится, когда названного нет). `_last_named` — то, о чём
+# говорили: имя ловится из реплики, даже если она ничего не просила
+# сделать («ты видишь папку Анаморф» — это не команда, но это адрес).
+_last_named = {"title": "", "ts": 0.0, "said": ""}
+
+# ЛАТИНИЦА ПРОТИВ КИРИЛЛИЦЫ. Заголовок окна — «ANAMORF-0.1.1», человек
+# говорит «Анаморф». Сравнивать их буквально бессмысленно; переводим
+# кириллицу в латиницу по звучанию и сравниваем уже так.
+_RU2LAT = {"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh",
+           "з":"z","и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o",
+           "п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"c",
+           "ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e",
+           "ю":"yu","я":"ya"}
+
+
+def _lat(s: str) -> str:
+    return "".join(_RU2LAT.get(ch, ch) for ch in (s or "").lower())
+
+
+def note_named(text: str) -> str:
+    """Запомнить, о каком окне человек говорит. Зовётся на каждую реплику.
+
+    Ищем среди ОТКРЫТЫХ окон то, чьё имя прозвучало. Ничего не выдумываем:
+    если совпадения нет, память не трогаем — прошлый предмет разговора
+    остаётся в силе, пока не назвали новый.
+    """
+    t = (text or "").strip().lower()
+    if len(t) < 3:
+        return ""
+    tl = _lat(t)
+    best = ""
+    try:
+        for w in windows():
+            title = (w.get("title") or "").strip()
+            if len(title) < 3:
+                continue
+            head = _lat(title)[:14].strip()
+            # берём заметный корень заголовка: «anamorf-0.1.1» -> «anamorf»
+            root = re.split(r"[\s\-–—_.,:;()\[\]]+", head)[0]
+            if len(root) >= 4 and root in tl:
+                if len(root) > len(_lat(best)):
+                    best = title
+        if best:
+            _last_named.update(title=best, ts=time.time(), said=t[:120])
+            log.debug("предмет разговора: «%s»", best)
+    except Exception as e:
+        log.debug("предмет разговора не определился: %s", e)
+    return best
+
+
 _ANAPHORA = re.compile(
     r"^(это|то|его|её|ее|же|обратно|сам\w*|котор\w*|окно|окна|приложени\w*|"
     r"программ\w*|верни|снова|опять|\s)+$", re.I)
@@ -1523,7 +1679,27 @@ def _match(query: str):
             q = " ".join(cut.split())
     if not q:
         return None
+    # ЕЁ СОБСТВЕННОЕ ИМЯ — ПЕРВЫМ ДЕЛОМ. «Анаморф», «Сайка», «своё окно»,
+    # и даже «на морс» из кривого микрофона — это она сама; её окно ищем
+    # отдельной веткой, потому что в заголовке слова «анаморф» нет.
+    if is_self_name(q):
+        _sw = self_window()
+        if _sw:
+            return _sw
     ws = windows()
+
+    # МЕСТОИМЕНИЕ -> СНАЧАЛА ТО, О ЧЁМ ГОВОРИЛИ (2026-08-23). Названное
+    # вслух свежее и точнее, чем «последнее, что я двигала»: человек
+    # только что произнёс имя, значит про него и речь.
+    if _ANAPHORA.fullmatch(q) and _last_named["title"] and \
+            time.time() - _last_named["ts"] < 300:
+        ln = _last_named["title"].lower()
+        for w in ws:
+            if w["title"].lower() == ln:
+                return w
+        for w in ws:
+            if w["title"].lower()[:20] == ln[:20]:
+                return w
 
     # местоимение вместо названия -> последнее окно, которое трогали
     if _last_target["title"] and time.time() - _last_target["ts"] < 600 \
@@ -1564,6 +1740,13 @@ def _match(query: str):
         if not cands:
             return None
         other = [c for c in cands if not _is_self_window(c)] or cands
+        # ОКНО НАШЕГО ЧАТА — НЕ ЦЕЛЬ, пока его не назвали по имени
+        # (2026-08-23: «хром» раз за разом двигал окно Claude). Назвал
+        # «клод»/«claude» прямо — пожалуйста, двигаем.
+        if not re.search(r"claude|клод|cowork|коворк", q):
+            _noc = [c for c in other if not _is_coauthor_window(c)]
+            if _noc:
+                other = _noc
         if _want_min:
             mins = [c for c in other if c.get("minimized")]
             if mins:
@@ -1601,7 +1784,12 @@ def _match(query: str):
     # ПО КЛАССУ ОКНА (2026-08-18). Нужен не для красоты: у окна, поднятого
     # от администратора, psutil не может прочитать имя процесса и proc
     # приходит ПУСТЫМ — искать по нему нечего. Класс WinAPI отдаёт всегда.
-    w = pick([w for w in ws if q in (w.get("cls") or "").lower()])
+    # …но ТОЛЬКО у окон с нечитаемым процессом. Класс Chrome_WidgetWin_1
+    # носит и настоящий Chrome, и каждый Electron (Claude, Discord…) —
+    # матч по классу при живом proc ловил ЧУЖИЕ приложения (2026-08-23:
+    # «хром» подвинул окно Claude, где человек со мной переписывался).
+    w = pick([w for w in ws if not (w["proc"] or "").strip()
+              and q in (w.get("cls") or "").lower()])
     if w:
         return w
     # СПЕЦ-ВЕТКИ ДО АЛИАСОВ: у алиасов «папка -> explorer» жадный захват,
@@ -1641,7 +1829,8 @@ def _match(query: str):
         w = pick([w for w in ws
                   if alias in (w["proc"] or "").lower()
                   or alias in w["title"].lower()
-                  or alias in (w.get("cls") or "").lower()
+                  or (not (w["proc"] or "").strip()
+                      and alias in (w.get("cls") or "").lower())
                   # класс проводника («проводник» -> explorer -> CabinetWClass)
                   or (alias == "explorer"
                       and (w.get("cls") or "").lower().startswith(
@@ -2166,9 +2355,25 @@ def minimize_all(keep: str = "") -> str:
         except Exception:
             return True            # не смогли узнать — считаем обычным
 
+    # СВОЁ ОКНО ИНТЕРФЕЙСА НЕ ПРЯЧЕМ (2026-08-25, владелец: «при запросе
+    # свернуть все окна свои не трогала»). Окно ядра/аватара и так защищено
+    # (у него нет кнопки в панели задач, свёрнутое его не вернуть). Но
+    # главное окно, через которое человек с ней говорит и ВИДИТ результат,
+    # раньше сворачивалось вместе со всеми — она прятала сама себя, и было
+    # неясно, что вообще произошло. Свернуть «всё» разумно понимать как
+    # «всё, кроме окна, в котором ты на меня смотришь».
+    _self_names = [n for n in ("anamorf",
+                   str(CFG.get("assistant_name", "Сайка") or "").lower())
+                   if n]
+
+    def _is_self(w) -> bool:
+        t = (w.get("title") or "").lower()
+        return any(n in t for n in _self_names)
+
     todo = [w for w in windows(include_minimized=False)
             if not (k and (k in w["title"].lower()
                            or k in (w["proc"] or "").lower()))
+            and not _is_self(w)
             and _has_taskbar_button(w["hwnd"])]
     for w in todo:
         try:
@@ -2524,6 +2729,60 @@ def _spot(title_part: str, what: str = "", wait_s: float = 0.0,
     return False
 
 
+# Клавиши самого плеера. YouTube: J/L — десять секунд, стрелки — пять,
+# 0 — в начало. Стрелки понимает и любой другой HTML5-плеер, поэтому для
+# не-ютуба берём их.
+_SEEK_KEYS = {"назад": (0x4A, 0x25), "вперёд": (0x4C, 0x27),
+              "вперед": (0x4C, 0x27), "сначала": (0x30, 0x30)}
+
+
+def _seek_foreign(action: str) -> str:
+    """Перемотать там, где реально играет: фокус на миг — и обратно."""
+    keys = _SEEK_KEYS.get((action or "").lower())
+    if not keys:
+        return ("Такой кнопки у пульта нет: умею пауза/играть, "
+                "следующий/предыдущий, громкость и перемотку.")
+    p = _playing_place() or {}
+    hwnd = int(p.get("hwnd") or 0)
+    title = (p.get("title") or "")
+    if not hwnd:
+        # Ничего обжитого не нашли — поищем окно с признаками плеера,
+        # прежде чем сдаваться: человек мог его ни разу не трогать при нас.
+        for w in windows(include_minimized=False):
+            hay = (w.get("title", "") + " " + w.get("proc", "")).lower()
+            if any(k in hay for k in _PLAYER_HINT):
+                hwnd, title = int(w["hwnd"]), w.get("title", "")
+                break
+    if not hwnd:
+        return ("Не вижу окна, где играет, — перематывать нечего. Скажи, в "
+                "какой программе, и я перемотаю там.")
+    import ctypes
+    u = ctypes.windll.user32
+    back = u.GetForegroundWindow()          # куда вернуть фокус
+    yt = "youtube" in (title or "").lower()
+    vk = keys[0] if yt else keys[1]
+    try:
+        u.SetForegroundWindow(hwnd)
+        time.sleep(0.12)                    # окну нужен кадр, чтобы принять
+        _tap_key(vk)
+        time.sleep(0.05)
+    except Exception as e:
+        return f"не смогла перемотать: {e}"
+    finally:
+        try:
+            if back and back != hwnd:
+                u.SetForegroundWindow(back)
+        except Exception:
+            pass
+    step = "10 секунд" if yt else "5 секунд"
+    what = {"назад": f"отмотала на {step} назад",
+            "вперёд": f"промотала на {step} вперёд",
+            "вперед": f"промотала на {step} вперёд",
+            "сначала": "вернула в начало"}[(action or "").lower()]
+    _spot(title, what)
+    return f"{what} в «{title[:60]}»."
+
+
 def media_key(action: str = "toggle") -> str:
     """Мультимедийная клавиша — тому, что играет в системе."""
     if not _IS_WIN:
@@ -2531,11 +2790,16 @@ def media_key(action: str = "toggle") -> str:
     a = (action or "toggle").lower()
     vk = _MEDIA_VK.get(a)
     if not vk:
-        # Перемотки и «с начала» на мультимедийных клавишах нет ни у кого —
-        # это делается в самом плеере. Честно, а не «готово».
-        return ("Такой кнопки на клавиатурном пульте нет — из чужого окна "
-                "я умею пауза/играть, следующий/предыдущий и громкость. "
-                "Перемотать можно только в её собственном окне браузера.")
+        # ПЕРЕМОТКА В ЧУЖОМ ОКНЕ (2026-08-23, владелец: «мотни назад… я
+        # уверен, что она даже не поймёт, что это нужно сделать в открытом
+        # ютубе в открытом браузере»). Он был прав: перемотки нет на
+        # мультимедийных клавишах, и мы честно отказывали. Но человек-то
+        # перематывает — он щёлкает по плееру и жмёт стрелку. Повторяем
+        # ровно это: находим окно, где играет, отдаём ему фокус на
+        # мгновение, жмём клавишу плеера и ВОЗВРАЩАЕМ фокус туда, где он
+        # был. Чужой фокус — вещь, которую нельзя занимать молча и нельзя
+        # занимать надолго.
+        return _seek_foreign(a)
     _tap_key(vk)
     # ЧТО ИМЕННО ИГРАЕТ — ЧТОБЫ НЕ ОТЧИТЫВАТЬСЯ В ПУСТОТУ. Заголовок окна
     # у YouTube начинается с названия ролика; если такого окна нет вовсе,
@@ -2749,6 +3013,42 @@ def _front_is_browser():
     return any(k in hay for k in _BROWSER_HINT), title
 
 
+def _ensure_browser_front():
+    """Перед вводом адреса впереди ОБЯЗАН стоять браузер.
+
+    2026-08-23, живой конфуз: «запусти музыку на YouTube» — впереди был
+    десктопный Клод, Ctrl+L там ничего не значит, и адрес ютуба напечатался
+    ПРЯМО В ЧАТ Клода и отправился. Со стороны — она «пульнула ссылку, не
+    думая, что делает». Путь переключения вкладок браузер проверял, путь
+    ОТКРЫТИЯ АДРЕСА — нет.
+
+    Правило: впереди не браузер — сами находим окно браузера, выводим его
+    вперёд и перепроверяем. Не нашли — честный отказ, клавиши не жмём.
+    Возвращает (ок, где/почему)."""
+    ok, title = _front_is_browser()
+    if ok:
+        return True, title
+    try:
+        for w in windows(include_minimized=True):
+            hay = ((w.get("title") or "") + " "
+                   + (w.get("proc") or "")).lower()
+            if any(k in hay for k in _BROWSER_HINT):
+                import ctypes
+                u = ctypes.windll.user32
+                if w.get("minimized"):
+                    u.ShowWindow(w["hwnd"], 9)            # SW_RESTORE
+                u.SetForegroundWindow(w["hwnd"])
+                time.sleep(0.25)
+                ok2, t2 = _front_is_browser()
+                if ok2:
+                    log.info("Адрес пойдёт в «%s» — вывела браузер вперёд",
+                             t2[:60])
+                    return True, t2
+    except Exception as e:
+        log.debug("браузер вперёд не вывелся: %s", e)
+    return False, (title or "ничего")
+
+
 def _own_tab(a: str, index: int):
     """Вкладки в СВО�ём окне браузера. None — своего окна нет."""
     try:
@@ -2868,7 +3168,40 @@ def _canon_tab_name(name: str) -> tuple:
     return word or raw, True
 
 
+# ОКНА, В КОТОРЫЕ ПЕЧАТАТЬ НЕЛЬЗЯ НИКОГДА (2026-08-23). Владелец: «сколько
+# раз мы должны на эти грабли наступить, чтобы она начала соображать, что
+# делает». Грабли всегда одни: слепая печать в то окно, что впереди. Чат
+# Клода, её собственный интерфейс, окно ядра — печать туда это либо
+# отправка мусора оператору (живой случай: адрес ютуба ушёл СООБЩЕНИЕМ в
+# Клод), либо разговор с самой собой. Проверка живёт в САМОЙ функции
+# печати: сколько бы новых путей ни появилось, через эту дверь проходят
+# все.
+_NO_TYPE = ("claude", "клод", "cowork", "anamorf", "сайка", "ядро")
+
+
+def _type_forbidden() -> str:
+    """Пусто — печатать можно; иначе — кто впереди и почему нельзя."""
+    try:
+        w = _foreground() or {}
+        hay = ((w.get("title") or "") + " "
+               + (w.get("proc") or "")).lower()
+        # Клод во вкладке Chrome — это всё же браузер, и адресная строка
+        # там настоящая; запрет только на ОТДЕЛЬНЫЕ приложения.
+        is_browser = any(k in hay for k in _BROWSER_HINT)
+        if not is_browser and any(k in hay for k in _NO_TYPE):
+            return (w.get("title") or w.get("proc") or "служебное окно")[:60]
+    except Exception:
+        pass
+    return ""
+
+
 def _type(text: str) -> bool:
+    who = _type_forbidden()
+    if who:
+        log.warning("НЕ печатаю «%s…»: впереди «%s» — туда нельзя "
+                    "(предохранитель от печати в чужой чат)",
+                    text[:30], who)
+        return False
     try:
         import keyboard
     except Exception:
@@ -2995,6 +3328,11 @@ def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
 
     # ── ОТКРЫТЬ АДРЕС ────────────────────────────────────────────────
     if site or url:
+        _bok, _bwhere = _ensure_browser_front()
+        if not _bok:
+            return (f"Впереди сейчас «{_bwhere[:50]}», а не браузер, и "
+                    "браузера на экране я не нашла — адрес печатать некуда. "
+                    "Скажи «открой хром», и я сначала запущу его.")
         target = url
         if not target:
             try:

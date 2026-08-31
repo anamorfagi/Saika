@@ -56,7 +56,17 @@ def _open(target):
         try:
             os.startfile(t)  # noqa: S606
         except Exception:
-            subprocess.Popen(t, shell=True)
+            # БЕЗ shell=True (2026-08-25, аудит). Раньше цель уходила в
+            # cmd.exe, и строка с &/|/; выполняла лишнее — а цель бинда
+            # мог завести инструмент по прочитанной веб-странице (непрямая
+            # инъекция). os.startfile выше уже открывает файлы/URL без
+            # оболочки; сюда попадаем редко (напр. exe с аргументами) —
+            # разбираем строку списком, без интерпретатора командной строки.
+            import shlex
+            try:
+                subprocess.Popen(shlex.split(t, posix=False))
+            except Exception as _e:
+                log.warning("не смогла открыть %r без оболочки: %s", t, _e)
 
 
 # vk-коды

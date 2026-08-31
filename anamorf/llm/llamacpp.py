@@ -99,10 +99,114 @@ def _health(timeout=None):
         return None
 
 
+def _running_alias() -> str:
+    """Какую модель крутит сервер, который сейчас отвечает на нашем порту.
+
+    Спрашиваем /v1/models: llama-server представляется тем самым --alias,
+    который мы ему даём при запуске, а это имя файла модели. Нужен ответ
+    на вопрос «сосед крутит то же, что нужно мне?» — чтобы взять чужой
+    сервер вместо второй копии модели в видеопамяти."""
+    import requests
+    try:
+        r = requests.get(base_url() + "/v1/models",
+                         timeout=float(_cfg().get("health_timeout_s", 2)))
+        if not r.ok:
+            return ""
+        d = (r.json() or {}).get("data") or []
+        return str((d[0] or {}).get("id") or "") if d else ""
+    except Exception:
+        return ""
+
+
 def note_alive():
     """Сервер только что ответил на настоящий запрос — значит он жив, и
     отдельная проверка ближайшее время не нужна."""
     _ALIVE["t"] = time.monotonic()
+
+
+# Урезано ли окно ради голоса — чтобы совет при нехватке контекста называл
+# НАСТОЯЩУЮ причину. Иначе человек идёт поднимать llamacpp.n_ctx, а потолок
+# всё равно срезает — совет, который не работает, хуже молчания.
+CTX_CAP = {"capped": False, "raw": 0, "cap": 0, "who": ""}
+
+
+def _eff_ctx() -> int:
+    """ОКНО, С КОТОРЫМ СЕРВЕР РЕАЛЬНО СТАРТУЕТ.
+
+    Считается в одном месте намеренно: этим же числом подписывается живой
+    процесс (см. `_sig`). Пока расчёт жил внутри `_args`, подпись брала
+    сырой ключ из конфига — и сервер, поднятый со старым окном, выглядел
+    «тем самым» и не перезапускался. То есть правка окна не доезжала
+    никогда, а по конфигу выглядела применённой.
+
+    Два правила, и оба выстраданы:
+
+    1. БОЛЬШЕЕ ИЗ ДВУХ КЛЮЧЕЙ (2026-07-28). В конфиге два места про окно:
+       locallm_gguf.n_ctx (по нему main.py считает бюджет промпта) и
+       llamacpp.n_ctx (с ним стартует движок). Разъехались — и получалась
+       худшая комбинация: бюджет верит в большое окно, движок живёт в
+       маленьком, история ужимается, Сайка «забывает нить».
+
+    2. НО ОКНО НЕ СЪЕДАЕТ ГОЛОС (2026-08-22, живой замер: 12.7 ГБ из 16.4
+       занято llama-server, клон-голосу нужно ~5, и он не поднялся весь
+       вечер). Правило (1) тянуло 32768 из настроек СОВСЕМ ДРУГОГО движка
+       (locallm_gguf — это T-lite), и за чужой ключ расплачивался голос.
+       Видеокарта одна, и делить её надо явно, а не по тому, кто первым
+       встал: выбран тяжёлый голос — оставляем ему место. Потеря меньше,
+       чем кажется: 16k токенов — десятки страниц разговора, а молчащую
+       Сайку слышно сразу.
+    """
+    g = _cfg()
+    n_ctx = int(g.get("n_ctx", 16384))
+    try:
+        other = int((CFG.get("locallm_gguf") or {}).get("n_ctx") or 0)
+        if other > n_ctx:
+            n_ctx = other
+    except Exception:
+        pass
+    heavy_voice = ("qwen3", "omni", "xtts", "f5")
+    try:
+        # берём и «погашенный» движок: разгрузка памяти могла оставить
+        # tts.engine=off, а llama-server стартует раньше, чем автопуск
+        # успеет вернуть голос. Занять всю карту в эту щель — значит не
+        # дать голосу подняться вовсе.
+        cur_tts = str(CFG.get("tts.engine", "") or "") or \
+            str(CFG.get("tts.engine_was", "") or "")
+        voice_on = bool(CFG.get("tts.enabled", True)) and \
+            any(h in cur_tts.lower() for h in heavy_voice)
+    except Exception:
+        cur_tts, voice_on = "", False
+    cap = int(g.get("n_ctx_voice_cap", 16384))
+    CTX_CAP.update(capped=bool(voice_on and cap and n_ctx > cap),
+                   raw=n_ctx, cap=cap, who=cur_tts)
+    if voice_on and cap and n_ctx > cap:
+        log.info("llamacpp: окно %d -> %d, чтобы на карте осталось место "
+                 "клон-голосу «%s» (16 ГБ на двоих)", n_ctx, cap, cur_tts)
+        n_ctx = cap
+    # ПЛАН ПАМЯТИ ВМЕСТО ДРАКИ (2026-08-23, владелец: «оптимизируй
+    # ресурсы так, чтобы выбранные компоненты запускались гарантированно»).
+    # Стоимость заказа — мозг, голос, слух, запас — считается заранее
+    # (anamorf/vramplan.py), и единственная гибкая величина, окно
+    # контекста, подгоняется под остаток. Раньше карта делилась явочным
+    # порядком, и сторож железа душил проигравшего каждые полминуты.
+    try:
+        mp = find_model()
+        if mp:
+            gb = Path(mp).stat().st_size / (1 << 30)
+            from anamorf import vramplan
+            pl = vramplan.plan(gb)
+            if pl["n_ctx"] < n_ctx:
+                log.info("llamacpp: план памяти — %s; окно %d -> %d",
+                         pl["note"], n_ctx, pl["n_ctx"])
+                n_ctx = pl["n_ctx"]
+            else:
+                log.info("llamacpp: план памяти — %s", pl["note"])
+            if not pl["fits"]:
+                log.warning("llamacpp: заказ НЕ влезает в карту: %s",
+                            pl["note"])
+    except Exception as e:
+        log.debug("план памяти не посчитался: %s", e)
+    return n_ctx
 
 
 def _sig() -> str:
@@ -120,7 +224,7 @@ def _sig() -> str:
     import json as _json
     g = _cfg()
     return _json.dumps({
-        "model": find_model(), "n_ctx": g.get("n_ctx", 16384),
+        "model": find_model(), "n_ctx": _eff_ctx(),
         "ngl": g.get("n_gpu_layers", 999), "fa": g.get("flash_attn", "on"),
         "reuse": g.get("cache_reuse", 256), "kv": g.get("kv_quant", "q8_0"),
         "swa": g.get("swa_full", True), "batch": g.get("batch_size", 2048),
@@ -195,6 +299,14 @@ def _score_gguf(path: Path, want: str) -> int:
     if hit < max(1, len(parts) - 1):
         return 0                                   # совпало слишком мало
     score = hit * 10
+    # ТОЧНОЕ ИМЯ ФАЙЛА БЬЁТ ПОХОЖЕЕ (2026-08-23: человек выбрал
+    # qwen3-14b-abliterated-q4_k_m, а по кусочкам одинаково набрал очки и
+    # файл huihui-…-Q4_K_S — тот же мозг в другом кванте; загрузился не
+    # тот файл, что он ткнул). Совпадение стема буква в букву — вне
+    # конкуренции.
+    if re.sub(r"[^a-z0-9]+", "", path.stem.lower()) == \
+            re.sub(r"[^a-z0-9]+", "", want.lower()):
+        score += 100
     # мультичастевые GGUF (…-00001-of-00003.gguf) — брать надо ПЕРВЫЙ кусок,
     # llama.cpp сама подтянет остальные; прочие куски не предлагать вовсе
     m = re.search(r"-(\d{5})-of-\d{5}\.gguf$", hay)
@@ -210,7 +322,13 @@ def find_model() -> str:
     p = _cfg().get("model_path")
     if p and Path(p).exists():
         return str(Path(p))
-    want = _cfg().get("model") or CFG.get("llm.model", "")
+    # ВЫБОР ЧЕЛОВЕКА ГЛАВНЕЕ СЛУЖЕБНОГО КЛЮЧА (2026-08-23, живой обман:
+    # клик в меню пишет llm.model, а поиск файла смотрел сперва в
+    # llamacpp.model — там лежала старая gemma. Сервер крутил gemma,
+    # подпись под ответами честно писала имя выбранной huihui, и человек
+    # разговаривал не с тем, с кем думал. «Видишь, какая модель в памяти
+    # и какая отвечает?»)
+    want = CFG.get("llm.model", "") or _cfg().get("model") or ""
     roots = [resolve("models/gguf"), resolve("models/llm")] + _lmstudio_roots()
     best, best_score = "", 0
     for root in roots:
@@ -243,15 +361,8 @@ def _args(model_path: str, tier: int) -> list:
     # всё чинится само. Берём больший из двух ключей: явно попросили
     # больше окна хоть где-то — значит, столько и даём. VRAM это
     # переживает: KV-кэш квантован в q8_0.
-    n_ctx = int(g.get("n_ctx", 16384))
-    try:
-        other = int((CFG.get("locallm_gguf") or {}).get("n_ctx") or 0)
-        if other > n_ctx:
-            log.info("llamacpp: окно %d < locallm_gguf.n_ctx=%d — беру большее",
-                     n_ctx, other)
-            n_ctx = other
-    except Exception:
-        pass
+    n_ctx = _eff_ctx()
+
     # ГЛАЗА МОДЕЛИ (2026-07-29). gemma-4 мультимодальная, но llama-server
     # видит картинки ТОЛЬКО с файлом-проектором (mmproj-*.gguf). Без него
     # любой запрос с изображением падает 500 «image input is not supported»
@@ -268,6 +379,26 @@ def _args(model_path: str, tier: int) -> list:
             cands = sorted(mdir.glob("mmproj*.gguf")) + \
                 sorted(mdir.glob("*mmproj*.gguf")) + \
                 sorted(mdir.glob("*vision*.gguf"))
+            # ПРОЕКТОР — ТОЛЬКО РОДНОЙ (2026-08-23, живой лог: к
+            # huihui-Qwen3 подключился mmproj-gemma-4 — проектор ЧУЖОЙ
+            # модели. Со стороны это «модель с глазами», по факту — мусор
+            # на входе и падения на каждой картинке. Проектор обучен под
+            # конкретную модель; чужой хуже никакого). Родство меряем по
+            # семье в имени: у модели «...Qwen3...» проектор обязан
+            # содержать «qwen», у геммы — «gemma».
+            import re as _re
+            _fam = [w for w in _re.split(r"[^a-z]+",
+                                         Path(model_path).stem.lower())
+                    if len(w) > 2 and not w.isdigit()][:4]
+            def _kin(c):
+                h = c.name.lower()
+                return any(w in h for w in _fam)
+            kin = [c for c in cands if _kin(c)]
+            if cands and not kin:
+                log.info("llamacpp: проектор рядом есть (%s), но он от "
+                         "другой модели — работаю без зрения",
+                         cands[0].name)
+            cands = kin
             if cands:
                 mmproj = str(cands[0])
                 log.info("llamacpp: нашла проектор картинок %s — подключаю "
@@ -278,6 +409,16 @@ def _args(model_path: str, tier: int) -> list:
         log.warning("llamacpp: проектор %s не найден на диске — без зрения",
                     mmproj)
         mmproj = ""
+    # ПАСПОРТ ЗРЕНИЯ — СРАЗУ ПРИ ЗАПУСКЕ (2026-08-23, живой вечер: зрение
+    # приложило кадр к huihui без проектора, сервер ответил 500, модель
+    # улетела в карантин, а разговор — к гигачату). Без mmproj глаза не
+    # подключены — записываем это в опыт, чтобы кадр слепому мозгу больше
+    # никогда не прикладывали.
+    try:
+        from anamorf import capabilities as _caps
+        _caps.note(Path(model_path).stem, "vision", bool(mmproj))
+    except Exception:
+        pass
 
     args = [str(binary()),
             "-m", model_path,
@@ -290,13 +431,24 @@ def _args(model_path: str, tier: int) -> list:
             # один слот = весь KV-кэш принадлежит одному диалогу, префикс
             # переиспользуется целиком (с несколькими слотами кэш делится)
             "--parallel", "1",
-            # алиас: в /v1/models модель назовётся привычным именем, и
-            # выбор модели в интерфейсе Сайки не поедет
-            "--alias", g.get("model") or CFG.get("llm.model", "local"),
+            # алиас: имя в /v1/models. Берём ИСТИНУ — имя файла, который
+            # реально запускаем. Раньше тут стоял g.get("model") — стылый
+            # ключ llamacpp.model с прошлой моделью: сервер крутил huihui,
+            # а представлялся gemma → интерфейс рисовал вечные песочные
+            # часы, сверки считали «не та модель» и перезапускали сервер
+            # по кругу. Имя файла не врёт никогда; сопоставление с выбором
+            # человека делает _nrm в loaded_models и keeper.
+            "--alias", Path(model_path).stem or "local",
             *(["--mmproj", mmproj] if mmproj else []),
             # шаблон из GGUF + поддержка tools/chat_template_kwargs —
             # без --jinja llama.cpp берёт свой упрощённый шаблон и теряет
             # и инструменты, и выключение размышлений
+            # МЫСЛИ — В ОТДЕЛЬНОЕ ПОЛЕ, А НЕ В ОТВЕТ (2026-08-23: шаблон
+            # Qwen3.5 сам открывает <think>, модель его закрывает — и
+            # черновик уезжал в чат и в голос («</think> Хорошо, понятно»).
+            # С этим флагом llama.cpp вынимает размышления в
+            # reasoning_content, а в content остаётся чистая речь.
+            "--reasoning-format", "deepseek",
             "--jinja"]
     if tier <= 1:
         args += [
@@ -435,6 +587,42 @@ def ensure_running() -> dict:
 
         h = _health()
         if h is not None:
+            # ══ ЧУЖОЙ СЕРВЕР НА НАШЕМ ПОРТУ — НЕ ВОЙНА, А ПОПУТЧИК ══
+            # (2026-08-25, живой разбор.) Владелец запустил собранное
+            # приложение, не закрыв Сайку из исходника. Веб-серверы у них
+            # разные (8765 и 8799) и мирно ужились, а порт llama-server в
+            # обоих конфигах ОДИН — 8771. Дальше начиналась война: каждая
+            # сторона видела живой /health с ЧУЖИМ отпечатком настроек,
+            # решала «настройки изменились», убивала соседа и поднимала
+            # свой сервер. В логе это видно как два запуска подряд с
+            # разницей в 0.4 секунды, а в диспетчере — два llama-server.exe
+            # по 5 ГБ видеопамяти каждый. Клон-голосу (ещё 5 ГБ) на карте
+            # места уже не оставалось НИКОГДА — отсюда «в проге голос не
+            # поднимается, хотя из исходника при той же нагрузке работал».
+            #
+            # Отпечаток настроек отвечает на вопрос «мои ли это флаги», а
+            # нужен ответ на другой: «мой ли это процесс». Его мы знаем
+            # точно — по _proc. Чужой сервер не трогаем: если он крутит ту
+            # же модель, просто берём его (одна модель на карте вместо
+            # двух); если другую — говорим об этом словами, а не убиваем
+            # чужую работу молча.
+            ours = _proc is not None and _proc.poll() is None
+            if not ours:
+                want = Path(find_model() or "").stem
+                got = _running_alias()
+                if want and got and want == got:
+                    log.info("llamacpp: на порту %s уже работает сервер с той "
+                             "же моделью «%s» — беру его, второй не поднимаю "
+                             "(иначе две копии модели в видеопамяти)",
+                             port(), got)
+                    note_alive()
+                    return {"ok": True, "port": port(), "shared": True}
+                return {"error": "на порту %s уже работает чужой llama-server"
+                                 " с моделью «%s», а мне нужна «%s». Скорее "
+                                 "всего запущены две Сайки разом (исходник и "
+                                 "собранное приложение) — закрой лишнюю, либо "
+                                 "разведи их по портам: llamacpp.port."
+                                 % (port(), got or "неизвестной", want or "?")}
             try:
                 stale = _sig_path().read_text(encoding="utf-8") != _sig()
             except Exception:

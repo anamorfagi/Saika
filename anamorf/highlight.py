@@ -54,7 +54,11 @@ log = logging.getLogger("saika.highlight")
 _Q = queue.Queue()
 _T = {"thread": None, "dead": False}
 
-GLOW_PX = 16              # толщина контура по умолчанию, пиксели
+GLOW_PX = 10              # толщина контура по умолчанию, пиксели
+# 16 -> 10 (2026-08-23, владелец: «но сделать чуть тоньше»). Контур
+# показывает, ГДЕ она работает; тонкая светящаяся линия читается как
+# внимание, толстая — как выделение предмета, то есть как действие
+# над ним. Значение перекрывается настройкой pc.highlight_glow.
 
 
 def enabled() -> bool:
@@ -255,7 +259,13 @@ def _paint(hwnd: int, x: int, y: int, w: int, h: int, bits: bytes) -> bool:
     try:
         import ctypes
         from ctypes import wintypes
-        user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+        # СВОИ ЭКЗЕМПЛЯРЫ, А НЕ ОБЩИЕ (2026-08-23). Ниже объявляются argtypes, а
+        # ctypes.windll.user32 — один объект на весь процесс: объявишь типы
+        # «под себя» — сломаешь чужой вызов той же функции в другом модуле.
+        # Ровно так у pc_control развалился GetWindowRect, и Сайка «разучилась»
+        # двигать окна между мониторами.
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 
         class BITMAPINFOHEADER(ctypes.Structure):
             _fields_ = [("biSize", wintypes.DWORD), ("biWidth", ctypes.c_long),
@@ -360,9 +370,23 @@ def _loop():
     try:
         import tkinter as tk
     except Exception as e:
+        # НЕТ TKINTER — РИСУЕМ САМИ (2026-08-23, владелец: «почему она не
+        # подсвечивает окно, в каком работает»). В клиентской сборке стоит
+        # встраиваемый интерпретатор, а в нём tkinter нет вовсе — и
+        # свечение выключалось навсегда. Молчание было честным, но
+        # бесполезным: возможности просто не было. Запасной рисовщик
+        # (anamorf/highlight_win.py) делает то же самое голым Win32 —
+        # окно-слой поверх всех, — и зависимостей не требует.
+        try:
+            from anamorf import highlight_win
+            highlight_win.loop(_Q, _T)
+            return
+        except Exception as e2:
+            log.debug("запасное свечение тоже не пошло: %s", e2)
         _T["dead"] = True
-        log.warning("Свечение выключено: нет tkinter (%s). Действия видны "
-                    "в интерфейсе, в блоке «Где я работаю».", e)
+        log.warning("Свечение выключено: нет tkinter (%s) и Win32-слой не "
+                    "поднялся. Действия видны в интерфейсе, в блоке «Где я "
+                    "работаю».", e)
         return
     try:
         root = tk.Tk()

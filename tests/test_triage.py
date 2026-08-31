@@ -39,14 +39,31 @@ def run():
             return {"vram_mb": 160.0 * pct, "vram_total_mb": 16000.0,
                     "temp": temp}
 
+        # ВЫБОР ЧЕЛОВЕКА НЕ РАЗМЕННАЯ МОНЕТА (2026-08-23): автоматика
+        # доходит только до ступени 2 (лишнее + лёгкий голос). Глубже —
+        # ступени, ВЫКЛЮЧАЮЩИЕ выбранное человеком, — только если он сам
+        # включил guard.hard_ladder.
         last = triage.LAST
         levels_down = []
         for pct in [85] + [97] * last:
             triage.tick(g(pct))
             levels_down.append(triage.ST["level"])
-        rows.append(("порядок гашения",
-                     levels_down == list(range(0, last + 1)),
+        rows.append(("автоматика останавливается на ступени 2 — выбранное "
+                     "человеком не трогается",
+                     levels_down == [0, 1] + [2] * (last - 1),
                      f"ступени: {levels_down}"))
+
+        CFG.set("guard.hard_ladder", True)
+        triage.ST.update(level=0, ts=0.0, calm_since=0.0)
+        triage.ST.pop("said_full", None)
+        levels_hard = []
+        for pct in [85] + [97] * last:
+            triage.tick(g(pct))
+            levels_hard.append(triage.ST["level"])
+        CFG.set("guard.hard_ladder", False)
+        rows.append(("с явным guard.hard_ladder лестница полная (как было)",
+                     levels_hard == list(range(0, last + 1)),
+                     f"ступени: {levels_hard}"))
 
         # ступень «лёгкий голос» идёт РАНЬШЕ полного молчания: голос —
         # последнее, что человек готов потерять (19.08.2026)

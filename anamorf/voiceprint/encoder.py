@@ -203,9 +203,50 @@ class Encoder:
                         _dev = "cuda" if torch.cuda.is_available() else "cpu"
                     except Exception:
                         _dev = "cpu"
+                # WinError 1314 (2026-08-25): speechbrain СИМЛИНКает веса из
+                # hf-кэша в savedir, а Windows без прав/dev-mode симлинки не
+                # даёт → загрузка обрывалась на первом файле (hyperparams), а
+                # веса (embedding_model.ckpt ~80МБ) не докачивались, и ECAPA
+                # молча падала на лёгкие 68 признаков. Качаем КОПИЕЙ прямо в
+                # savedir и грузим из локальной папки — тогда speechbrain
+                # ничего не линкует.
+                _src = "speechbrain/spkrec-ecapa-voxceleb"
+                try:
+                    from huggingface_hub import snapshot_download
+                    try:
+                        snapshot_download(_src, local_dir=str(savedir),
+                                          local_dir_use_symlinks=False)
+                    except TypeError:   # новые hf_hub: аргумент убрали, копия по умолчанию
+                        snapshot_download(_src, local_dir=str(savedir))
+                    _src = str(savedir)
+                    log.info("Отпечаток голоса: ECAPA скопирована в %s (без симлинков)",
+                             savedir)
+                except Exception as _dl:
+                    log.warning("ECAPA: копия в savedir не удалась (%s) — обычным путём",
+                                str(_dl)[:120])
+                # WinError 1314 добивает и на шаге from_hparams: speechbrain
+                # 1.1 симлинкает файлы из hf-кэша в savedir (link_with_strategy,
+                # дефолт SYMLINK), а Windows без прав симлинк не даёт. Заставляем
+                # speechbrain КОПИРОВАТЬ вместо симлинка — глобально и стабильно.
+                try:
+                    import speechbrain.utils.fetching as _sbf
+                    from speechbrain.utils.fetching import LocalStrategy as _LS
+                    if not getattr(_sbf, "_saika_copy_patch", False):
+                        _orig_link = _sbf.link_with_strategy
+                        def _copy_link(src, dst, local_strategy,
+                                       _o=_orig_link, _L=_LS):
+                            if local_strategy == _L.SYMLINK:
+                                local_strategy = _L.COPY
+                            return _o(src, dst, local_strategy)
+                        _sbf.link_with_strategy = _copy_link
+                        _sbf._saika_copy_patch = True
+                        log.info("ECAPA: speechbrain переведён на копирование "
+                                 "вместо симлинков")
+                except Exception as _mp:
+                    log.debug("ECAPA: патч копирования не встал: %s", _mp)
                 try:
                     self._sb = EncoderClassifier.from_hparams(
-                        source="speechbrain/spkrec-ecapa-voxceleb",
+                        source=_src,
                         savedir=str(savedir), run_opts={"device": _dev})
                 except Exception as _e:
                     if _dev == "cpu":
@@ -214,7 +255,7 @@ class Encoder:
                              "(%s) — считаю на процессоре", _e)
                     _dev = "cpu"
                     self._sb = EncoderClassifier.from_hparams(
-                        source="speechbrain/spkrec-ecapa-voxceleb",
+                        source=_src,
                         savedir=str(savedir), run_opts={"device": "cpu"})
                 self._dev = _dev
             self._torch = torch

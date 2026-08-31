@@ -1,0 +1,17 @@
+free=2438 total=16376
+процессов на карте: 29
+  [Insufficient Permissions] | pid 2092 | 0 МБ
+  C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\CrossDeviceResume.exe | pid 11460 | 0 МБ
+  C:\Windows\explorer.exe | pid 11768 | 0 МБ
+  C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe | pid 13528 | 0 МБ
+  C:\Program Files (x86)\Microsoft\EdgeWebView\Application\151.0.4129.101\msedgewebview2.exe | pid 15396 | 0 МБ
+  C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TextInputHost.exe | pid 18724 | 0 МБ
+  C:\Windows\System32\ApplicationFrameHost.exe | pid 18132 | 0 МБ
+  [Insufficient Permissions] | pid 18572 | 0 МБ
+  C:\Program Files\WindowsApps\28017CharlesMilette.TranslucentTB_2026.1.0.0_x64__v826wp6bftszj\TranslucentTB.exe | pid 20892 | 0 МБ
+  C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe | pid 4460 | 0 МБ
+  C:\Users\QWADRO\AppData\Roaming\Telegram Desktop\Telegram.exe | pid 29544 | 0 МБ
+  [Insufficient Permissions] | pid 10436 | 0 МБ
+own_est(5.2) = 11.86 ГБ
+total_gb(5.2) = 14.24 ГБ
+plan(5.2) = {'fits': True, 'n_ctx': 16384, 'note': 'мозг 5.2 + голос 5.0 + слух 1.2 + запас 1.0 + окно 16384 (0.9) = 13.3 из 14.2 ГБ — влезает', 'parts': {'weights': 5.2, 'voice': 5.0, 'stt': 1.2, 'reserve': 1.0, 'total': 14.238459375000001}}

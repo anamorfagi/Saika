@@ -212,3 +212,83 @@ def make(who: str) -> str:
     cid = save(card)
     return (f"карточка «{card.get('name', cid)}» готова (сочинил {model}). "
             f"Надеть: костюм {cid}")
+
+
+# ── ЖИВАЯ ИНЪЕКЦИЯ (2026-08-23, владелец: «я должен видеть изменения
+# вживую, без долбаных ручных перезапусков»). Этот блок — дверь, через
+# которую живое обновление кода попадает в УЖЕ РАБОТАЮЩИЙ процесс, где
+# сторож кода не был запущен (моя же ошибка: срезал строку запуска).
+# Механика: модуль лениво импортируется ручкой API при первом обращении —
+# страница интерфейса после своей автоперезагрузки дёргает ручку, и этот
+# код исполняется ВНУТРИ живого процесса. Никаких перезапусков.
+# Блок безвреден при любом повторе (_saika_live_boot на sys) и остаётся
+# на будущее как страховка: если сторож когда-нибудь снова умрёт, первый
+# же заход в эту ручку его поднимет.
+def _live_boot():
+    import sys as _s
+    if getattr(_s, "_saika_live_boot", False):
+        return
+    _s._saika_live_boot = True
+    import logging
+    import threading
+    _lg = logging.getLogger("saika.live")
+    try:
+        from anamorf import live as _lv        # свежий, прямо с диска
+        # 1) перечитать модули, менявшиеся, пока сторож был мёртв.
+        #    Список явный: у config и ему подобных перечитывание раздваивает
+        #    живое состояние, их не трогаем.
+        for _n in ("anamorf.persona", "anamorf.reflex", "anamorf.pc_control",
+                   "anamorf.highlight", "anamorf.highlight_win",
+                   "anamorf.llm.manager", "anamorf.llm.llamacpp",
+                   "anamorf.llm.tools", "anamorf.llm.brains",
+                   "anamorf.tts.manager", "anamorf.self_control",
+                   "anamorf.trust", "anamorf.orb", "anamorf.desk_avatar",
+                   "anamorf.diagnostics"):
+            try:
+                ok, note = _lv.reload_module(_n)
+                if ok and _n in _s.modules:
+                    _lg.warning("Живая инъекция: %s — %s", _n, note)
+            except Exception as _e:
+                _lg.warning("Живая инъекция: %s не перечитался: %s", _n, _e)
+        # 2) главный модуль — хирургией по определениям. Снимка «как было»
+        #    нет, значит live применит все определения заново: объекты те
+        #    же, маршруты пересаживаются, состояние не трогается.
+        _mn = None
+        for _cand in ("anamorf.main", "main", "__main__"):
+            _m = _s.modules.get(_cand)
+            if _m is not None and hasattr(_m, "_code_watch"):
+                _mn, _mm = _cand, _m
+                break
+        if _mn:
+            try:
+                if hasattr(_mm, "__live_src__"):
+                    del _mm.__live_src__
+                done, bad = _lv.patch_module(_mn, _mm.__file__)
+                _lg.warning("Живая инъекция: main — применено %d определений"
+                            ", не доехало: %s", len(done),
+                            "; ".join(bad)[:160] or "ничего")
+            except Exception as _e:
+                _lg.warning("Живая инъекция: main не пропатчился: %s", _e)
+            # 3) поднять сторожа кода — дальше он живёт сам
+            try:
+                if not getattr(_s, "_saika_once_code_watch", False):
+                    _s._saika_once_code_watch = True
+                    threading.Thread(target=_mm._code_watch, daemon=True,
+                                     name="code-live").start()
+                    _lg.warning("Живая инъекция: сторож кода ЗАПУЩЕН — "
+                                "дальше правки едут сами")
+            except Exception as _e:
+                _lg.warning("Живая инъекция: сторож не поднялся: %s", _e)
+        try:
+            _mm.broadcast_event({"type": "baymax", "mood": "ok",
+                                 "text": "Живое обновление кода въехало без "
+                                         "перезапуска — дальше правки "
+                                         "подхватываются сами."})
+        except Exception:
+            pass
+    except Exception as _e:
+        _lg.warning("Живая инъекция сорвалась: %s", _e)
+
+
+_live_boot()
+

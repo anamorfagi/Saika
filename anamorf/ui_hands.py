@@ -494,12 +494,28 @@ _PLATFORM_WORDS = {
 }
 
 
+_EMPTYISH = ("", "none", "null", "nil", "undefined", "не указано",
+             "no query", "n/a", "-")
+
+
+def _clean(v) -> str:
+    """Отсеять пустоту, включая ту, что модель пишет СЛОВОМ (2026-08-23).
+
+    Живой промах: на «можешь открыть браузер?» модель вызвала
+    web_open({'site': None, 'query': None}), и None доехал до адреса
+    строкой — открылся поиск по слову «none». Пустой аргумент и аргумент
+    со значением «none» для нас одно и то же: человек ничего не назвал.
+    """
+    t = str(v or "").strip()
+    return "" if t.lower() in _EMPTYISH else t
+
+
 def site_url(site: str, query: str = "") -> str:
     """Название площадки словами -> адрес. Вынесено из web_open (2026-08-19),
     потому что тот же перевод нужен вкладкам в ЧУЖОМ окне браузера
     (pc_control.tab): «включи Пинтерест» — это адрес, а не пустая вкладка."""
-    s = (site or "").strip().lower().rstrip("/")
-    q = (query or "").strip()
+    s = _clean(site).lower().rstrip("/")
+    q = _clean(query)
     if not s:
         return ""
     if q and s in _SITES:
@@ -542,10 +558,29 @@ def web_open(site: str, query: str = "", browser: str = "") -> str:
     «включи на ютубе музыкальный канал» — это web_open("ютуб",
     "музыкальный канал"): один шаг, страница результатов уже на экране,
     дальше человек говорит «какой клип» — и это уже click()."""
-    s = (site or "").strip().lower().rstrip("/")
-    q = (query or "").strip()
+    s = _clean(site).lower().rstrip("/")
+    q = _clean(query)
     if not s:
-        return "какой сайт открыть?"
+        # Пустой вызов — обычное дело, когда человек сказал «открой
+        # браузер» без адреса. Раньше это молча возвращало вопрос в
+        # никуда, а модель шла выдумывать следующий шаг. Открываем то,
+        # что человек и просил: пустое окно браузера.
+        try:
+            from anamorf import pc_control as _pc
+            wins = _pc.browser_windows()
+            if wins:
+                w = wins[0]
+                _pc._force_front(int(w.get("hwnd") or 0))
+                try:
+                    from anamorf import highlight
+                    highlight.show_window(w, "браузер")
+                except Exception:
+                    pass
+                return ("браузер уже открыт — подняла его: "
+                        + str(w.get("title") or "")[:60])
+        except Exception as e:
+            log.debug("пустой web_open: %s", e)
+        return "какой сайт открыть? Скажи адрес — открою сразу на нём"
     # ИСКЛЮЧЕНИЕ ВЛАДЕЛЬЦА (2026-08-20): «единственная механика, где не
     # нужны подтверждения, — когда явно просят открыть ту или иную инфу в
     # браузере: там она относительно запроса простраивает цикл работы и

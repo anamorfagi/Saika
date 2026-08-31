@@ -5,11 +5,12 @@
 """
 import json
 import logging
+import re
 import time
 
 import requests
 
-from anamorf.config import CFG, ROOT
+from anamorf.config import CFG, ROOT, DATA_ROOT
 
 log = logging.getLogger("saika.llm")
 
@@ -47,12 +48,20 @@ def _locallm_url():
 def _secrets() -> dict:
     """secrets.json (в .gitignore) — тут храним API-ключ облака, чтобы он не
     улетел в git при пуше."""
-    p = ROOT / "secrets.json"
-    if p.exists():
+    # ДВА МЕСТА, А НЕ ОДНО (2026-08-22, живой вечер: «не задан API-ключ
+    # облачной модели» при том, что ключ у владельца есть — он лежал в
+    # `secrets.json` основного проекта, а в сборку не поехал вовсе).
+    # ROOT в сборке — это `app\`, папка КОДА: её сносит любое обновление.
+    # Ключи там жить не могут по определению, поэтому смотрим и рядом со
+    # сборкой (DATA_ROOT), где живут данные, модели и настройки.
+    for p in (ROOT / "secrets.json", DATA_ROOT / "secrets.json"):
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
+            if p.exists():
+                d = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(d, dict) and d:
+                    return d
         except Exception:
-            pass
+            continue
     return {}
 
 
@@ -253,6 +262,88 @@ def save_cloud_key(key: str, provider: str | None = None):
     llm_s.setdefault("cloud_keys", {})[prov] = key or ""
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+# ── ЕДИНАЯ ТОЧКА ДЛЯ КЛЮЧЕЙ (2026-08-25) ──
+# Ключи задаются клиентом через интерфейс, а не приезжают в сборке. Здесь —
+# бэкенд для будущей панели «Ключи»: что вообще можно задать, что уже задано
+# (без значений — их наружу не отдаём), куда писать. Всё пишется в
+# secrets.json РЯДОМ со сборкой (DATA_ROOT), а не в app\, который сносит
+# обновление; на машине автора это тот же secrets.json проекта.
+KEY_SLOTS = [
+    {"id": "openrouter", "title": "OpenRouter", "where": "llm.cloud_keys",
+     "hint": "sk-or-... — один ключ, много моделей"},
+    {"id": "mistral",    "title": "Mistral",    "where": "llm.cloud_keys",
+     "hint": "ключ из console.mistral.ai"},
+    {"id": "gigachat",   "title": "GigaChat",   "where": "llm.cloud_keys",
+     "hint": "Authorization key из кабинета Сбера"},
+    {"id": "kimi",       "title": "Kimi (Moonshot)", "where": "llm.cloud_keys",
+     "hint": "ключ platform.moonshot"},
+    {"id": "cloudflare", "title": "Cloudflare Workers AI",
+     "where": "llm.cloud_keys", "hint": "API-токен"},
+    {"id": "custom",     "title": "Свой OpenAI-совместимый",
+     "where": "llm.cloud_keys", "hint": "любой ключ к своему base_url"},
+    {"id": "telegram",   "title": "Telegram-бот", "where": "messengers",
+     "hint": "токен от @BotFather"},
+    {"id": "vk",         "title": "VK-бот", "where": "messengers",
+     "hint": "ключ группы VK"},
+    {"id": "github",     "title": "GitHub", "where": "github",
+     "hint": "personal access token (для обновлений)"},
+]
+
+
+def _secrets_path():
+    """Куда писать secrets.json: рядом со сборкой (DATA_ROOT), а на машине
+    автора — в корне проекта. Читаем-то из обоих (см. _secrets), но пишем в
+    одно предсказуемое место, чтобы ключ не потерялся при обновлении app\."""
+    if (ROOT / "secrets.json").exists():
+        return ROOT / "secrets.json"
+    return DATA_ROOT / "secrets.json"
+
+
+def keys_status() -> dict:
+    """Какие ключи заданы — БЕЗ значений (для панели «Ключи»)."""
+    sec = _secrets()
+    llm_ck = (sec.get("llm", {}) or {}).get("cloud_keys", {}) or {}
+    msg = sec.get("messengers", {}) or {}
+    gh = sec.get("github", {}) or {}
+    out = []
+    for slot in KEY_SLOTS:
+        i = slot["id"]
+        if slot["where"] == "llm.cloud_keys":
+            has = bool(llm_ck.get(i))
+        elif slot["where"] == "messengers":
+            has = bool(((msg.get(i) or {}) or {}).get("token"))
+        elif slot["where"] == "github":
+            has = bool(gh.get("token"))
+        else:
+            has = False
+        out.append({**slot, "set": has})
+    return {"slots": out}
+
+
+def set_key(slot_id: str, value: str) -> dict:
+    """Задать/очистить один ключ. Пустое значение — стереть слот."""
+    slots = {s["id"]: s for s in KEY_SLOTS}
+    slot = slots.get(slot_id)
+    if not slot:
+        return {"error": "неизвестный слот ключа: %s" % slot_id}
+    path = _secrets_path()
+    data = _secrets()
+    val = (value or "").strip()
+    if slot["where"] == "llm.cloud_keys":
+        data.setdefault("llm", {}).setdefault("cloud_keys", {})[slot_id] = val
+    elif slot["where"] == "messengers":
+        m = data.setdefault("messengers", {}).setdefault(slot_id, {})
+        m["token"] = val
+    elif slot["where"] == "github":
+        data.setdefault("github", {})["token"] = val
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    except Exception as e:
+        return {"error": "не смогла записать ключ: %s" % e}
+    return {"ok": True, "set": bool(val), "slot": slot_id}
+
 
 # СПИСОК МОДЕЛЕЙ — В КЭШ (2026-07-27). list_models() опрашивает по сети ВСЕ
 # бэкенды: Ollama, два эндпоинта LM Studio, свой воркер. На каждую реплику
@@ -275,6 +366,35 @@ _DOWN: dict = {}
 
 
 def _down(key: str) -> bool:
+    """Молчит ли бэкенд. Плюс ЖЁСТКОЕ ОТКЛЮЧЕНИЕ LM STUDIO (2026-08-22,
+    владелец: «нах лм студио запускает такую же модель синхронно?»).
+
+    LM Studio поднимает модель в память по ЛЮБОМУ запросу к себе — даже по
+    безобидному «покажи список». Сайка опрашивает его регулярно, чтобы
+    знать, что доступно, и этим сама заставляла его держать вторую копию
+    той же gemma. На карте в 16 ГБ это ровно та половина памяти, которой
+    потом не хватало клон-голосу.
+
+    Выключатель llm.use_lmstudio закрывает ВСЕ опросы разом: здесь
+    единственная точка, через которую они проходят.
+
+    УМОЛЧАНИЕ ПЕРЕВЁРНУТО (2026-08-23, владелец: «найди, из-за чего наша
+    модель на C++ запускалась вместе с моделью из ЛМ с похожим названием»).
+    Выключатель был, но по умолчанию стоял ВКЛ, а строчка «выключить» так
+    и не доехала до конфига — починка, которая требует правки файла руками,
+    это не починка. Теперь правило само собой разумеющееся: когда мозги
+    живут в НАШЕМ llama-server (backend=llamacpp), опрашивать LM Studio
+    незачем вовсе — GGUF-файл из его каталога мы читаем напрямую, без его
+    участия, а каждый опрос заставлял его держать в видеопамяти ВТОРУЮ
+    копию модели с похожим именем. Кто реально работает через LM Studio
+    (backend=lmstudio) — у того опросы живут как жили. Явно заданный
+    llm.use_lmstudio в конфиге главнее любых умолчаний."""
+    if key == "lmstudio":
+        use = CFG.get("llm.use_lmstudio", None)
+        if use is None:
+            use = str(CFG.get("llm.backend", "")) == "lmstudio"
+        if not use:
+            return True
     return time.time() < _DOWN.get(key, 0)
 
 
@@ -367,16 +487,64 @@ def list_models() -> list[dict]:
     except Exception as e:
         log.debug("locallm unavailable: %s", e)
     # свой llama-server: показываем, если бинарь скачан ИЛИ он выбран
-    # основным бэкендом (тогда спавнер поставит его при первом запросе)
+    # основным бэкендом (тогда спавнер поставит его при первом запросе).
+    # МОДЕЛИ — С ДИСКА, А НЕ ЧЕРЕЗ LM STUDIO (2026-08-23, владелец: «модели
+    # от ЛМ не отображаются, порт при этом открыт»). Порт и правда открыт —
+    # но каждый вопрос к нему заставлял LM Studio держать в видеопамяти
+    # СВОЮ копию модели рядом с нашей (см. _down). А спрашивать его и не
+    # за чем: скачанные им GGUF лежат обычными файлами, наш llama-server
+    # их и так запускает напрямую. Читаем каталоги — файлам от чтения
+    # ничего не делается, и список полон без единого запроса к ЛМ.
     try:
         from anamorf.llm import llamacpp
         if llamacpp.installed() or CFG.get("llm.backend") == "llamacpp":
-            out.append({"backend": "llamacpp",
-                        "name": (CFG.get("llamacpp.model")
-                                 or CFG.get("llm.model", "local")),
-                        "size": None,
-                        "caps": {"vision": False, "tools": True,
-                                 "reasoning": True}})
+            cur = (CFG.get("llamacpp.model")
+                   or CFG.get("llm.model", "local"))
+            seen_gguf = set()
+            try:
+                from anamorf.config import resolve as _res
+                roots = [_res("models/gguf"), _res("models/llm")]
+            except Exception:
+                roots = []
+            roots += llamacpp._lmstudio_roots()
+            for root in roots:
+                try:
+                    from pathlib import Path as _P
+                    for f in _P(root).rglob("*.gguf"):
+                        nm = f.stem
+                        low = nm.lower()
+                        if "mmproj" in low or "vision" in low:
+                            continue          # проектор — не модель
+                        import re as _re
+                        mpart = _re.search(r"-(\d{5})-of-\d{5}$", nm)
+                        if mpart and mpart.group(1) != "00001":
+                            continue          # куски мультичастевого — один раз
+                        if low in seen_gguf:
+                            continue
+                        seen_gguf.add(low)
+                        try:
+                            sz = f.stat().st_size
+                        except OSError:
+                            sz = None
+                        out.append({"backend": "llamacpp", "name": nm,
+                                    "size": sz,
+                                    "current": low in str(cur).lower()
+                                    or str(cur).lower() in low,
+                                    "caps": {"vision": any(h in low
+                                                           for h in vhint),
+                                             "tools": True,
+                                             "reasoning": any(h in low
+                                                              for h in rhint)}})
+                except Exception as e:
+                    log.debug("скан GGUF в %s: %s", root, e)
+            # выбранная модель обязана быть в списке, даже если файл не нашли
+            if not any(o["backend"] == "llamacpp"
+                       and str(cur).lower() in o["name"].lower()
+                       for o in out):
+                out.append({"backend": "llamacpp", "name": cur,
+                            "size": None, "current": True,
+                            "caps": {"vision": False, "tools": True,
+                                     "reasoning": True}})
     except Exception as e:
         log.debug("llamacpp unavailable: %s", e)
     # ОБЛАЧНЫЕ: показываем ВСЕ настроенные, а не только активную. Раньше в
@@ -445,7 +613,34 @@ def loaded_models() -> list[str]:
         if llamacpp.installed():
             r = requests.get(_llamacpp_url() + "/v1/models", timeout=2)
             if r.ok:
-                out.append(CFG.get("llamacpp.model")
+                # ЧТО РЕАЛЬНО НА ПОРТУ, А НЕ ЧТО В КОНФИГЕ (2026-08-23,
+                # живой обман: «в памяти» горело у gemma, отвечала подпись
+                # huihui, а правды не знал никто). Сервер сам говорит,
+                # какой файл он крутит, — ему и верим.
+                nm = ""
+                try:
+                    data = (r.json() or {}).get("data") or []
+                    if data:
+                        from pathlib import Path as _P
+                        nm = _P(str(data[0].get("id") or "")).stem
+                except Exception:
+                    nm = ""
+                # ИМЯ — ТО, ЧТО ВИДИТ ЧЕЛОВЕК В СПИСКЕ (2026-08-23,
+                # значок «в памяти» пропал вовсе: сервер называет ФАЙЛ,
+                # строка в меню — каталожное имя, и они не совпали буква в
+                # букву). Правда остаётся серверной: если файл на порту —
+                # это та модель, что выбрана, отдаём её ИМЯ ИЗ СПИСКА,
+                # чтобы значок нашёл свою строку. Чужой файл — отдаём как
+                # есть, пусть расхождение будет видно.
+                def _nrm(x):
+                    return re.sub(r"[^a-z0-9]+", "", str(x).lower())
+                for cand in (CFG.get("llm.model", ""),
+                             CFG.get("llamacpp.model", "")):
+                    if cand and nm and (_nrm(nm) in _nrm(cand)
+                                        or _nrm(cand) in _nrm(nm)):
+                        nm = cand
+                        break
+                out.append(nm or CFG.get("llamacpp.model")
                            or CFG.get("llm.model", "local"))
     except Exception:
         pass
@@ -748,6 +943,16 @@ def warmup(backend: str, model: str) -> bool:
                                 "messages": [{"role": "user", "content": "hi"}]},
                           timeout=900)
         log.info("Модель %s/%s прогрета", backend, model)
+        # ЖИВОЙ ОТВЕТ = ЗДОРОВА. Прогрев только что реально получил ответ
+        # от модели — держать её после этого в карантине бессмысленно и
+        # жестоко: живой вечер 23.08 — huihui уже прогрета и крутится, а
+        # разговор ещё десять минут вёл GigaChat, потому что карантин от
+        # старой ошибки не истёк. Выздоровление по факту, не по таймеру.
+        try:
+            from anamorf.llm import brains as _brv
+            _brv.revive(backend, model)
+        except Exception:
+            pass
         try:
             from anamorf.llm import passport
             passport.ensure_async(backend, model)  # паспорт: пробы в фоне
@@ -783,8 +988,58 @@ def _lms_cli() -> str:
     return shutil.which("lms") or ""
 
 
+def _lm_loaded() -> set:
+    """Кто РЕАЛЬНО сейчас в памяти LM Studio. Единственный источник правды
+    при выгрузке: код возврата `lms` о содержимом памяти не говорит."""
+    try:
+        r = requests.get(_lmstudio_url() + "/api/v0/models", timeout=3)
+        return {m["id"] for m in (r.json().get("data") or [])
+                if m.get("state") == "loaded" and m.get("id")}
+    except Exception:
+        return set()
+
+
+def _lm_gone(model: str) -> bool:
+    """Ушла ли модель из памяти. Даём LM Studio полсекунды: выгрузка
+    асинхронная, и сразу после команды список ещё показывает старое."""
+    import time as _t
+    for _ in range(6):
+        _t.sleep(0.5)
+        cur = _lm_loaded()
+        if not cur:
+            # список пуст: либо памяти правда ничего нет, либо порт молчит.
+            # Молчащий порт за успех не считаем — иначе снова соврём.
+            return bool(_lm_probe_ok())
+        if model not in cur:
+            return True
+    return False
+
+
+def _lm_probe_ok() -> bool:
+    try:
+        return requests.get(_lmstudio_url() + "/api/v0/models",
+                            timeout=3).ok
+    except Exception:
+        return False
+
+
 def _lmstudio_unload(model: str) -> bool:
+    """ВЫГРУЗКА С ПРОВЕРКОЙ (2026-08-22, владелец: «300 раз нажал, не
+    выгружается»).
+
+    Было: доверяли коду возврата `lms`. А `lms unload <имя>` выходит с
+    нулём и когда НИЧЕГО не выгрузил — имя ключа модели в lms не всегда
+    совпадает с именем в OpenAI-совместимом списке. Получалось худшее:
+    в лог писалось «Модель выгружена», интерфейс верил, а модель висела
+    в видеопамяти. Пять нажатий — пять бодрых записей об успехе и ноль
+    освобождённых гигабайт.
+
+    Стало: после каждой попытки СМОТРИМ, что реально в памяти. Не ушла —
+    честно идём дальше, к `--all` и к HTTP. Не ушла нигде — возвращаем
+    False и говорим человеку, почему."""
     import subprocess
+    if model not in _lm_loaded() and _lm_probe_ok():
+        return True                     # её и так нет — чинить нечего
     cli = _lms_cli()
     if cli:
         # сначала точечно, потом «всё» — имя ключа модели в lms может
@@ -799,24 +1054,38 @@ def _lmstudio_unload(model: str) -> bool:
                     errors="replace", timeout=60,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if r.returncode == 0:
-                    log.info("Модель %s выгружена (%s)", model,
-                             " ".join(args[1:]))
-                    _LMS_MISS["logged"] = False
-                    return True
-                log.debug("lms %s: %s", " ".join(args[1:]),
-                          ((r.stderr or "") or (r.stdout or ""))[:200])
+                    # НОЛЬ — ЕЩЁ НЕ УСПЕХ. Проверяем память.
+                    if _lm_gone(model):
+                        log.info("Модель %s выгружена (%s)", model,
+                                 " ".join(args[1:]))
+                        _LMS_MISS["logged"] = False
+                        return True
+                    log.warning(
+                        "lms %s отчитался успехом, но %s ОСТАЛАСЬ в памяти "
+                        "— пробую дальше", " ".join(args[1:]), model)
+                else:
+                    log.debug("lms %s: %s", " ".join(args[1:]),
+                              ((r.stderr or "") or (r.stdout or ""))[:200])
             except Exception as e:
                 log.debug("lms %s не отработал: %s", " ".join(args[1:]), e)
     for path, payload in (("/api/v1/models/unload", {"instance_id": model}),
                           ("/api/v0/models/unload", {"model": model})):
         try:
             r = requests.post(_lmstudio_url() + path, json=payload, timeout=30)
-            if r.ok:
+            if r.ok and _lm_gone(model):
                 log.info("Модель %s выгружена (LM Studio %s)", model, path)
                 _LMS_MISS["logged"] = False
                 return True
         except Exception:
             pass
+    if model in _lm_loaded():
+        # самое частое и самое обидное: инструмент есть, команда проходит,
+        # а память не пустеет. Говорим именно это, а не «нет консоли».
+        log.warning(
+            "LM Studio: %s не выгружается — команда проходит, но модель "
+            "остаётся в памяти. Скорее всего имя в lms отличается от "
+            "имени в списке. Выгрузи её в самом LM Studio.", model)
+        return False
     if not _LMS_MISS["logged"]:
         _LMS_MISS["logged"] = True
         log.warning(
@@ -1316,6 +1585,31 @@ _HTTP.trust_env = False
 
 _API_QUIRKS: dict = {}
 
+
+def _persist_quirks(base_url, model, fields):
+    """Запомнить причуды провайдера В КОНФИГ. Память в процессе умирает с
+    ним, и каждый запуск заново платил холостым 4xx за то, что мы уже
+    выясняли вчера."""
+    try:
+        d = dict(CFG.get("llm.api_quirks", {}) or {})
+        key = f"{base_url}|{model}"
+        d[key] = sorted(set(d.get(key, [])) | set(fields))
+        CFG.set("llm.api_quirks", d)
+    except Exception as e:
+        log.debug("причуды не сохранились: %s", e)
+
+
+def _load_quirks(base_url, model):
+    """Слить сохранённые причуды в память процесса (зовётся перед сборкой
+    запроса — дёшево, это чтение словаря из уже загруженного конфига)."""
+    try:
+        d = CFG.get("llm.api_quirks", {}) or {}
+        saved = d.get(f"{base_url}|{model}")
+        if saved:
+            _API_QUIRKS.setdefault((base_url, model), set()).update(saved)
+    except Exception:
+        pass
+
 # отсечки одного вызова: выбор моделей -> сборка запроса -> ответ сервера ->
 # первый токен. Живут между chat_stream и _stream_openai, поэтому модульные.
 _T: dict = {}
@@ -1337,7 +1631,12 @@ _MSG_QUIRKS: dict = {}
 _MID_SYSTEM_HINTS = ("system message must be the first",
                      "system message must be first",
                      "only one system message",
-                     "system role must be the first")
+                     "system role must be the first",
+                     # шаблон Qwen3.5 (2026-08-23): её jinja кидает
+                     # raise_exception('System message must be at the
+                     # beginning') — та же болезнь, другие слова
+                     "system message must be at the beginning",
+                     "must be at the beginning")
 
 
 def _fold_mid_system(messages):
@@ -1467,8 +1766,21 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         image = None            # уже выяснили: этот бэкенд картинок не ест
     messages = _attach_image_openai(messages, image)
     # GigaChat известен заранее, остальных выучиваем по первому 422 (ниже)
-    if _is_gigachat(base_url) or "mid_system" in _MSG_QUIRKS.get(
-            (base_url, model), ()):
+    # ═══ СИСТЕМНОЕ СООБЩЕНИЕ — ТОЛЬКО ПЕРВЫМ (27.08.2026) ═══
+    # Живой отказ её собственного llama.cpp на Qwen3.5-9B:
+    #   Unable to generate parser for this template …
+    #   raise_exception('System message must be at the beginning')
+    # Шаблоны Qwen/Llama в llama.cpp это требование проверяют жёстко и
+    # роняют ВЕСЬ запрос, а системные вставки у нас добавляются по ходу
+    # (предупреждения, восстановление, повтор без инструментов — там
+    # десяток мест вида msgs + [{"role":"system"...}]). Чинить каждое
+    # место бессмысленно: сворачиваем здесь, у самой отправки, для всех
+    # локальных движков — они все на openai-совместимом протоколе, но с
+    # настоящим Jinja-шаблоном модели внутри.
+    _local = any(h in str(base_url or "") for h in
+                 ("127.0.0.1", "localhost", "0.0.0.0"))
+    if (_local or _is_gigachat(base_url)
+            or "mid_system" in _MSG_QUIRKS.get((base_url, model), ())):
         messages = _fold_mid_system(messages)
     payload = {
         "model": model,
@@ -1559,6 +1871,7 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
     # поля не знает — сработает _API_QUIRKS и уберёт его навсегда.
     payload["stream_options"] = {"include_usage": True}
     # выученные причуды этого API: неугодные поля не кладём с самого начала
+    _load_quirks(base_url, model)
     for f in _API_QUIRKS.get((base_url, model), ()):
         payload.pop(f, None)
     _T["t_build"] = time.monotonic()
@@ -1604,6 +1917,35 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         # запрос сразу правильно, без холостых заходов.
         recovered, last = False, e0
         _txt0 = str(e0).lower()
+        # ФАЗА «ПО ИМЕНАМ» (2026-08-23, живой вечер: mistral на КАЖДУЮ
+        # фразу отвечал 422 extra_forbidden, Сайка сваливалась в GigaChat
+        # и говорила канцеляритом — «че она как ботяра отвечает»).
+        # Перебор по одному не лечил: запрещённых полей у mistral
+        # НЕСКОЛЬКО сразу (typical_p, repeat_penalty, xtc_*…), и каждая
+        # одиночная проба падала об остальные. А ведь провайдер САМ
+        # перечисляет виновников — pydantic-ошибка содержит
+        # "loc":["body","<поле>"] на каждое. Читаем имена и снимаем все
+        # разом: одна повторная проба вместо шестнадцати холостых.
+        if not recovered:
+            _bad_fields = set(re.findall(
+                r'"loc"\s*:\s*\[\s*"body"\s*,\s*"([a-z_]+)"', str(e0)))
+            _bad_fields &= set(payload.keys())
+            _bad_fields -= {"messages", "model", "stream"}   # святое не трогаем
+            if _bad_fields:
+                trial = {k: v for k, v in payload.items()
+                         if k not in _bad_fields}
+                try:
+                    r = _do_request(trial)
+                    recovered = True
+                    payload = trial
+                    _API_QUIRKS.setdefault((base_url, model),
+                                           set()).update(_bad_fields)
+                    _persist_quirks(base_url, model, _bad_fields)
+                    log.warning("API %s сам назвал запрещённые поля (%s) — "
+                                "сняла их разом и запомнила насовсем",
+                                model, ", ".join(sorted(_bad_fields)))
+                except requests.exceptions.HTTPError as e1:
+                    last = e1
         # ФАЗА «МИНУС ОДИН» — БЭКЕНД НЕ УМЕЕТ КАРТИНКИ (2026-07-29).
         # llama-server, запущенный без --mmproj, на любой запрос с
         # изображением отвечает 500 «image input is not supported». Модель
@@ -1616,7 +1958,103 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         # Текст важнее вложения: человек спросил про проводник, а не про
         # скриншот. Запоминаем неумение за (адрес, модель), чтобы следующие
         # ходы шли сразу правильно и без холостого захода.
-        if image is not None and any(h in _txt0 for h in (
+        # ТЕСНОЕ ОКНО — НЕ БОЛЕЗНЬ (2026-08-23, живой вечер: прикидка
+        # «3 символа = токен» насчитала 7700, а токенизатор сервера — 8570
+        # при окне 8192; за этот 400 модель уводили в карантин, и разговор
+        # забирал гигачат). Лечение по месту: срезаем старую историю
+        # (система и последняя реплика неприкосновенны) и пробуем ещё раз.
+        if any(h in _txt0 for h in ("exceed", "context size",
+                                    "context length", "too many tokens")):
+            try:
+                _msgs = list(payload.get("messages") or [])
+                _sys = [m for m in _msgs if m.get("role") == "system"]
+                _rest = [m for m in _msgs if m.get("role") != "system"]
+
+                def _try(trial, said):
+                    nonlocal r, payload, recovered, last
+                    try:
+                        r = _do_request(trial)
+                        payload = trial
+                        recovered = True
+                        log.warning("Окно контекста тесное — %s — и "
+                                    "ответила", said)
+                        return True
+                    except requests.exceptions.HTTPError as e1:
+                        last = e1
+                        return False
+
+                # ступень 1: история половинами, от старого к новому
+                while not recovered and len(_rest) > 2:
+                    _rest = _rest[max(1, len(_rest) // 2):]
+                    if _try(dict(payload, messages=_sys + _rest),
+                            "срезала историю до %d сообщений" % len(_rest)):
+                        break
+                    _et = str(getattr(last.response, "text", "") or last
+                              ).lower()
+                    if not any(h in _et for h in ("exceed", "context")):
+                        break
+                # ступень 2: УЖАТЬ СИСТЕМУ, А НЕ ОТНИМАТЬ РУКИ (2026-08-23,
+                # живой разнос: первая версия этой лесенки выбрасывала
+                # схемы инструментов — и Сайка, оставшись без рук, начала
+                # ГОВОРИТЬ, что свернула окна, вместо того чтобы свернуть.
+                # «Алгоритмы врут о своём действительном намерении» —
+                # ровно отсюда. Руки отнимаем последними, характер и
+                # болтовню режем первыми.)
+                def _squeeze_sys(limit=7000, head=5000, tail=2000):
+                    out = []
+                    for m in _sys:
+                        c = str(m.get("content") or "")
+                        if len(c) > limit:
+                            c = c[:head] + "\n…\n" + c[-tail:]
+                        out.append(dict(m, content=c))
+                    return out
+                if not recovered and _sys:
+                    _try(dict(payload, messages=_squeeze_sys() + _rest[-2:]),
+                         "ужала системный промпт, руки оставила")
+                if not recovered and _sys:
+                    _try(dict(payload,
+                              messages=_squeeze_sys(3000, 2000, 800)
+                              + _rest[-1:]),
+                         "ужала систему до костяка, руки оставила")
+                # ступень 3: рук слишком много — оставляем ЯДРО (окна,
+                # запуск, громкость, плеер), а не выбрасываем все
+                if not recovered and payload.get("tools"):
+                    try:
+                        from anamorf.llm.tools import _CORE_TOOLS as _CT
+                        _keep = set(_CT) | {"media_control", "window_minimize",
+                                            "window_list", "avatar_action",
+                                            "orb_mode", "type_text"}
+                        _few = [t for t in payload["tools"]
+                                if ((t.get("function") or {}).get("name")
+                                    in _keep)]
+                    except Exception:
+                        _few = payload["tools"][:20]
+                    if _few and len(_few) < len(payload["tools"]):
+                        _try(dict(payload, tools=_few,
+                                  messages=_squeeze_sys(3000, 2000, 800)
+                                  + _rest[-1:]),
+                             "оставила только основные руки (%d из %d)"
+                             % (len(_few), len(payload["tools"])))
+                # ступень 4, последняя: рук нет совсем — и модели об этом
+                # говорим ПРЯМО, чтобы она не выдумывала, будто сделала
+                if not recovered and payload.get("tools"):
+                    _warn = {"role": "system", "content":
+                             "ВНИМАНИЕ: в этот ход инструменты недоступны — "
+                             "рук у тебя сейчас НЕТ. Никогда не пиши, что "
+                             "ты что-то сделала, свернула, закрыла или "
+                             "перенесла: ты этого не делала. Честно скажи "
+                             "одной фразой, что руки отвалились на секунду, "
+                             "и попроси повторить."}
+                    t4 = dict(payload,
+                              messages=_squeeze_sys(3000, 2000, 800)
+                              + [_warn] + _rest[-1:])
+                    t4.pop("tools", None)
+                    _try(t4, "рук не осталось — предупредила её об этом")
+            except Exception as e2:
+                log.debug("обрезка истории не спасла: %s", e2)
+        # картинка может лежать и внутри messages (кадр зрения), а не в
+        # параметре image — лечим по ТЕКСТУ ошибки, не по параметру
+        if any(h in _txt0 for h in (
                 "image input is not supported", "mmproj",
                 "does not support image", "vision is not supported")):
             trial = dict(payload, messages=_strip_images(payload["messages"]))
@@ -1678,7 +2116,13 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             except requests.exceptions.HTTPError as e1:
                 last = e1
         if not recovered and len(suspects) > 1:  # фаза 2: все разом
-            trial = {k: v for k, v in payload.items() if k not in suspects}
+            # «sampling» — имя ГРУППЫ, а не поля: раскрываем в настоящие
+            # ключи, иначе фаза 2 снимала всё, кроме как раз сэмплинга
+            # (2026-08-23, тот самый вечер с mistral)
+            _drop = set(suspects) - {"sampling"}
+            if "sampling" in suspects:
+                _drop |= set(_SAMPLING_OPENAI)
+            trial = {k: v for k, v in payload.items() if k not in _drop}
             try:
                 r = _do_request(trial)
                 recovered = True
@@ -1693,6 +2137,7 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
             raise last
 
     calls = {}  # index -> {"id": str, "name": str, "arguments": str}
+    _tgate: dict = {}          # состояние резака <think> между чанками
     for line in r.iter_lines():
         if not line:
             continue
@@ -1754,6 +2199,8 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
         except Exception:
             continue
         token = str(delta.get("content") or "")
+        if token and not CFG.get("llm.think", False):
+            token = _think_gate(_tgate, token)
         if token:
             if not _T.get("logged"):
                 _T["logged"] = True
@@ -1802,6 +2249,50 @@ def _stream_openai(base_url, api_key, messages, model, temperature, tools=None,
 _FNS = {"ollama": _stream_ollama, "lmstudio": _stream_lmstudio,
         "locallm": _stream_locallm, "llamacpp": _stream_llamacpp,
         "cloud": _stream_cloud}
+
+
+def _think_gate(st: dict, tok: str) -> str:
+    """Вырезать <think>…</think> ИЗ ПОТОКА, тег может быть разрезан чанками.
+
+    2026-08-23, живой вечер: тумблер «размышления выкл» стоит, а близнец
+    qwen3-14b-abliterated-q4_k_m шлёт <think> прямо в текст — его шаблон
+    не понимает enable_thinking. Черновик уходил в чат и в ГОЛОС. Режем на
+    уровне потока: между <think> и </think> наружу не выходит ничего."""
+    st["buf"] = st.get("buf", "") + tok
+    out = []
+    while True:
+        b = st["buf"]
+        if st.get("in"):
+            i = b.find("</think>")
+            if i < 0:
+                st["buf"] = b[-9:]            # хвост на случай разреза тега
+                break
+            st["in"] = False
+            st["buf"] = b[i + 8:]
+            continue
+        # ОДИНОКИЙ ЗАКРЫВАЮЩИЙ ТЕГ (2026-08-23): шаблон открыл <think> сам,
+        # до нас дошёл только «</think>». Всё, что перед ним, — черновик:
+        # выбрасываем и его, и тег.
+        j = b.find("</think>")
+        if j >= 0 and (b.find("<think>") < 0 or b.find("<think>") > j):
+            out = []                       # уже накопленное — тоже черновик
+            st["buf"] = b[j + 8:]
+            st["stray"] = True
+            continue
+        i = b.find("<think>")
+        if i < 0:
+            keep = 0
+            for k in range(min(7, len(b)), 0, -1):
+                if "<think>"[:k] == b[-k:]:
+                    keep = k
+                    break
+            out.append(b[:len(b) - keep])
+            st["buf"] = b[len(b) - keep:]
+            break
+        out.append(b[:i])
+        st["in"] = True
+        st["buf"] = b[i + 7:]
+    return "".join(out)
 
 
 def _flatten_content(messages):
@@ -1887,9 +2378,14 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     # локальные модели по убыванию оценки (лучшая — первой запаской). Так при
     # ошибке подхватывается хороший вариант, а не случайная мелкая модель.
     try:
-        scores = ratings.llm_scores()
+        # ДЕЙСТВУЮЩИЕ оценки: ручной выбор владельца ГЛАВНЕЕ замера скорости,
+        # имена сведены к общему виду (см. ratings.effective_scores).
+        scores = ratings.effective_scores()
     except Exception:
-        scores = {}
+        try:
+            scores = ratings.llm_scores()
+        except Exception:
+            scores = {}
     candidates = []
     # prefer=(backend, model) — выбор «быстрого мышления» НА ЭТОТ ход
     # (anamorf/llm/router.py): облако для настоящей задачи, локальная для
@@ -1920,8 +2416,20 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
         if (_lastok and _lastok not in candidates[:1]
                 and candidates and _br.is_sick(*candidates[0])):
             candidates.insert(0, _lastok)
-        candidates = ([bm for bm in candidates if not _br.is_sick(*bm)]
-                      + [bm for bm in candidates if _br.is_sick(*bm)])
+        # БОЛЬНОГО НЕ ЗОВЁМ ПЕРВЫМ, ЕСЛИ ЕСТЬ ЗДОРОВЫЙ (2026-08-23, живой
+        # лог: mistral отваливался по таймауту КАЖДЫЙ раз, и каждый ответ
+        # начинался с десяти секунд ожидания в закрытую дверь — «думала
+        # 17.8с» на «включи музыку». Раньше больные просто съезжали в
+        # хвост списка, но выбор человека вставлялся в начало заново, и
+        # хвост не спасал. Пока есть хоть один здоровый — больные из
+        # очереди убираются совсем; здоровых нет — зовём как раньше, это
+        # лучше, чем не ответить.)
+        _ok = [bm for bm in candidates if not _br.is_sick(*bm)]
+        _ill = [bm for bm in candidates if _br.is_sick(*bm)]
+        if _ok and _ill:
+            log.info("Пропускаю отложенные мозги: %s",
+                     ", ".join(f"{b}/{m}" for b, m in _ill)[:120])
+        candidates = _ok + (_ill if not _ok else [])
     except Exception as e:
         log.debug("сортировка по здоровью не вышла: %s", e)
     locals_ = []
@@ -1942,8 +2450,35 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     except Exception:
         loaded = set()
     _T["t_loaded"] = time.monotonic()
-    locals_.sort(key=lambda bm: (bm[1] not in loaded, -scores.get(bm[1], 0)))
+    # ═══ ПОРЯДОК — ПО РЕЙТИНГУ, А НЕ ПО ТОМУ, ЧТО СЛУЧАЙНО В ПАМЯТИ ═══
+    # (27.08.2026, владелец: «нахуй мы систему рейтинга писали, если модели
+    # произвольно вырубаются из середины, а не логично по рейтингу».)
+    #
+    # Было: ПЕРВЫМ ключом стояло «уже загружена», рейтинг — только при
+    # равенстве. То есть побеждала та модель, которую движок держал в
+    # памяти, независимо от оценки. Живой случай: mistral-7b-grok вообще
+    # БЕЗ оценки отвечал вместо Qwen3.5-9B с ручной десяткой — просто
+    # потому, что висел резидентом.
+    #
+    # Стало: первым ключом рейтинг. «Уже в памяти» осталось, но лишь как
+    # решение спора между равными — грузить лишние гигабайты по-прежнему
+    # не хотим, а вот подменять выбор владельца больше не будем.
+    def _sc(nm):
+        try:
+            return ratings.score_for(nm, scores)
+        except Exception:
+            return int(scores.get(nm, 0) or 0)
+    locals_.sort(key=lambda bm: (-_sc(bm[1]), bm[1] not in loaded))
+    # ЗАПАСКА НЕ ГРУЗИТ ЧУЖИЕ ГИГАБАЙТЫ (2026-08-23, владелец: «заебал он
+    # запускать то, что не просят»). Фолбэк на ДРУГУЮ локальную модель —
+    # это молчаливая загрузка гигабайтов в видеопамять, которую человек не
+    # заказывал, и война за карту с тем, что он заказал. Локальная запаска
+    # разрешена только если она УЖЕ в памяти (ничего не грузим); всё
+    # остальное — облако: у него видеопамять не своя, а выбранной модели
+    # оно не мешает.
     for bm in locals_:
+        if bm[1] not in loaded:
+            continue
         if bm not in candidates:
             candidates.append(bm)
     # ЗАПАСНОЙ МОЗГ ПОСИЛЬНЕЕ (2026-08-13, просьба владельца: «если не
@@ -1963,12 +2498,65 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
             candidates = head + [bm for bm in strong if bm not in head] + tail
         except Exception as e:
             log.debug("лестница мозгов недоступна: %s", e)
+    # НОЛЬ — ЭТО ЗАПРЕТ, А НЕ ОЦЕНКА (2026-08-23, владелец: «все модели,
+    # которые снижены до 0 по рейтингу, не должны вообще никак работать»).
+    # Ручной ноль означает «выключена насовсем»: не выбранная, не запаска,
+    # не лестница — никак. Если человек занулил всех, кроме одной, и она
+    # упала — честнее промолчать с объяснением, чем позвать запрещённую.
+    try:
+        from anamorf import ratings as _rt0
+        # запрет тоже по СВЕДЁННОМУ имени: иначе занулённая модель спокойно
+        # проходила под своим вторым именем (та же беда с именами)
+        _ban = {_rt0.norm_name(n)
+                for n, v in (_rt0.manual_scores() or {}).items() if not v}
+        if _ban:
+            def _banned(m):
+                nn = _rt0.norm_name(m)
+                return nn in _ban or any(
+                    b and nn and (b in nn or nn in b) and min(len(b), len(nn)) >= 6
+                    for b in _ban)
+            _kept = [bm for bm in candidates if not _banned(bm[1])]
+            _cut = [m for _, m in candidates if _banned(m)]
+            if _cut:
+                log.info("Оценка 0 = запрет: не зову %s",
+                         ", ".join(_cut)[:160])
+            candidates = _kept
+    except Exception as e:
+        log.debug("фильтр нулевых оценок не сработал: %s", e)
+    # КАДР ЭКРАНА НЕ УХОДИТ В ОБЛАКО САМ (2026-08-25, аудит). Слежка за
+    # экраном шлёт скриншоты в LLM без спроса, а автоэскалация при сбое
+    # локальной модели ставит облако первым в очередь — и кадр (с чужими
+    # окнами, перепиской, документами) уходил стороннему провайдеру без
+    # разового согласия. Пока vision.cloud_ok не включён явно, запросы с
+    # картинкой обслуживают только локальные модели; облака из очереди
+    # убираем. Нет локальной зрячей модели — честнее промолчать, чем
+    # отправить экран на сторону.
+    if image and not CFG.get("vision.cloud_ok", False):
+        _before = len(candidates)
+        candidates = [bm for bm in candidates if bm[0] != "cloud"]
+        if _before > len(candidates):
+            log.info("Кадр экрана: облачные модели исключены из ответа "
+                     "(vision.cloud_ok выключен) — экран в облако не шлём")
     # максимум выбранная + 3 запасные: перебирать весь зоопарк моделей —
     # это минуты загрузок и непредсказуемое поведение
     candidates = candidates[:4]
 
     yielded_any = False
     for idx, (backend, model) in enumerate(candidates):
+        # ПОЯС И ПОДТЯЖКИ (2026-08-23): карантин проверяем ещё раз у
+        # самой двери. Сортировка выше могла отработать до того, как
+        # мозг заболел (карантин ставится ВНУТРИ этого же цикла на
+        # прошлой итерации знаний не имеет), и больной снова оказывался
+        # первым — человек платил таймаутом за каждый ответ.
+        try:
+            from anamorf.llm import brains as _br2
+            if _br2.is_sick(backend, model) and any(
+                    not _br2.is_sick(*bm) for bm in candidates[idx + 1:]):
+                log.info("Пропускаю %s/%s — в карантине, есть здоровый "
+                         "дальше по списку", backend, model)
+                continue
+        except Exception:
+            pass
         # если уже начали писать ответ этой моделью и она вдруг споткнулась
         # (например контекст переполнился на 2-3 раунде инструментов) —
         # НЕ подхватываем чужой моделью посреди фразы: две разные "личности"
@@ -2138,6 +2726,36 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                                   + f"\n…[обрезано, всего {len(result)} симв.]")
                     log.info("tool %s(%s) -> %s символов",
                              name, args, len(result))
+                    # ЖУРНАЛ ПРОМАХОВ РЕФЛЕКСА (2026-08-23, владелец:
+                    # «нужно, чтобы она правильно фокусировалась на том,
+                    # что сказали, а не выдумывала — просто моментально
+                    # запускала команды»). Каждая команда, дошедшая до
+                    # действия ЧЕРЕЗ размышления, — это фраза, которую
+                    # рефлекс мог бы исполнить мгновенно и без выдумок.
+                    # Записываем такие фразы: расширять рефлексы надо по
+                    # тому, что человек говорит на самом деле, а не по
+                    # тому, что мы придумали за столом.
+                    try:
+                        _rec_reflex_miss(name, args)
+                        # …и та же фраза идёт в обучение: повторится с тем
+                        # же вызовом — станет мгновенной. Успехом считаем
+                        # результат без слов отказа: инструменты в этом
+                        # проекте при провале говорят «не нашла/не вышло/
+                        # не смогла», а не бросают исключения.
+                        _res_l = str(result or "").lower()
+                        _ok = not any(w in _res_l[:80] for w in
+                                      ("не нашла", "не вышло", "не смогла",
+                                       "не понял", "нет такого", "ошибк",
+                                       "не удалось", "недоступ"))
+                        from anamorf import reflex_learn as _rl
+                        from anamorf.llm import tools as _tls2
+                        _born = _rl.consider(_tls2.LAST_USER.get("text", ""),
+                                             name, args, _ok)
+                        if _born:
+                            result = (result or "") + "\n[скажи человеку: "
+                            result += _born + "]"
+                    except Exception:
+                        pass
                     # РАБОЧИЙ СТОЛ НА СЛЕДУЮЩИЙ ХОД (2026-08-15): результат
                     # инструмента жил ровно один запрос и умирал вместе с
                     # msgs — поэтому на «какие?» она честно не знала, о чём
@@ -2183,6 +2801,33 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     raise LLMError(f"Ни одна LLM не ответила: {last_err}")
 
 
+def _rec_reflex_miss(name, args):
+    """Фраза человека, которая доехала до инструмента через LLM.
+
+    Пишем только то, что рефлекс НЕ узнал: узнанное и так мгновенно.
+    Файл — простой jsonl, по строке на промах, без ротации: за вечер там
+    десятки строк, и читать их будет человек, а не программа."""
+    from anamorf.llm import tools as _tls
+    text = (_tls.LAST_USER.get("text") or "").strip()
+    if not text or len(text) > 200:
+        return
+    try:
+        from anamorf import reflex as _rx
+        if _rx.match(text):
+            return                      # рефлекс её знает — не промах
+    except Exception:
+        pass
+    import json as _json
+    import time as _time
+    from anamorf.config import resolve
+    p = resolve("data") / "reflex_misses.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(_json.dumps({"ts": _time.strftime("%Y-%m-%d %H:%M:%S"),
+                             "text": text, "tool": name,
+                             "args": args}, ensure_ascii=False) + "\n")
+
+
 def chat_once(messages, max_len=4000) -> str:
     """Нестриминговый вызов — для СЛУЖЕБНЫХ дел: суммаризация памяти,
     осмотр Беймакса, сводки диалога, решения агентного цикла.
@@ -2200,8 +2845,20 @@ def chat_once(messages, max_len=4000) -> str:
     try:
         from anamorf.llm import brains
         cur_m = CFG.get("llm.model", "")
+        # НОЛЬ — ЗАПРЕТ И ДЛЯ СЛУЖБЫ (2026-08-23: человек занулил облака,
+        # разговор держит локальная — а служебные сводки продолжали бегать
+        # к GigaChat боковой дверью. «Не должны вообще никак работать» —
+        # значит и посуду мыть не зовём.)
+        try:
+            from anamorf import ratings as _rt1
+            _ban1 = {n for n, v in (_rt1.manual_scores() or {}).items()
+                     if not v}
+        except Exception:
+            _ban1 = set()
         for c in brains.ladder():
             if c["backend"] != "cloud" or c["model"] == cur_m:
+                continue
+            if c["model"] in _ban1:
                 continue
             if brains.is_sick(c["backend"], c["model"]):
                 continue

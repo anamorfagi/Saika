@@ -10,17 +10,33 @@
 
 Запуск:  tools\\make_package.bat
 """
+import sys
 import zipfile
 from pathlib import Path
+
+KEEP_PRIVATE = False
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT.parent / "Saika_portable.zip"
 EXCLUDE_DIRS = {"__pycache__", ".pip_tmp", ".pip_cache", "logs", ".locks",
                 ".git"}
 EXCLUDE_SUFFIXES = {".lock", ".pyc"}
+# ЛИЧНОЕ В ПЕРЕНОСНОЙ АРХИВ НЕ КЛАДЁМ (2026-08-25, аудит). Архив задуман как
+# перенос между машинами автора, но его легко передать другому человеку —
+# и тогда secrets.json (ключи, токены ботов) и голосовые отпечатки уехали
+# бы вместе с ним. Секреты исключаем всегда; личные данные (память, база
+# голосов) — по флагу, чтобы «перенос к себе» их всё же захватывал.
+EXCLUDE_FILES = {"secrets.json"}
+PRIVATE_DIRS = {"voiceprint", "webview", "browser_profile"}  # внутри data/
 
 
 def main():
+    global KEEP_PRIVATE
+    KEEP_PRIVATE = "--keep-private" in sys.argv   # для переноса к себе
+    print("secrets.json и" if not KEEP_PRIVATE else "секреты; но",
+          "личные данные" + (" и голоса — В АРХИВ НЕ ИДУТ (безопасно для "
+          "передачи)" if not KEEP_PRIVATE else " СОХРАНЕНЫ (--keep-private): "
+          "не передавай архив чужим"))
     if OUT.exists():
         OUT.unlink()
     n, total, skipped = 0, 0, []
@@ -29,9 +45,14 @@ def main():
         for f in ROOT.rglob("*"):
             try:
                 rel = f.relative_to(ROOT)
+                parts = set(rel.parts)
                 if (not f.is_file()
-                        or any(p in EXCLUDE_DIRS for p in rel.parts)
-                        or f.suffix.lower() in EXCLUDE_SUFFIXES):
+                        or parts & EXCLUDE_DIRS
+                        or f.suffix.lower() in EXCLUDE_SUFFIXES
+                        or f.name in EXCLUDE_FILES
+                        or (KEEP_PRIVATE is False
+                            and "data" in rel.parts
+                            and parts & PRIVATE_DIRS)):
                     continue
                 z.write(f, Path(ROOT.name) / rel)
                 n += 1

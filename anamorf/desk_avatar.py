@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 from anamorf import desk_slots as slots
 from anamorf import runtime_env
@@ -188,10 +189,14 @@ def start() -> str:
 
 def _install_then_start():
     try:
+        log.info("Окно с моделью: ставлю PySide6 (~150 МБ), это минуты")
         ok, why = ensure_pyside()
         _STEP["note"] = why or ("PySide6 поставлен" if ok else "не вышло")
+        log.info("Окно с моделью: установка %s — %s",
+                 "удалась" if ok else "НЕ удалась", why or "без подробностей")
         if ok:
             _STEP["note"] = _start_now()
+            log.info("Окно с моделью: %s", _STEP["note"])
     except Exception as e:
         _STEP["note"] = f"установка сорвалась: {e}"
         log.exception("установка PySide6")
@@ -232,6 +237,14 @@ def _start_now() -> str:
                      "видимое состояние, иначе его не найти")
         sc = _script()
         if not sc.exists():
+            # МОЛЧАЛИВЫЙ ОТКАЗ (2026-08-23, владелец: «ничего не
+            # происходит… а почему я в логах этого не вижу»). Причина
+            # возвращалась строкой в подсказку кнопки и там умирала: в
+            # журнале — ни слова, в логе — ни строки. Отказ, которого не
+            # видно, неотличим от «кнопка не работает».
+            log.error("Окно с моделью не открылось: нет файла %s. В сборку "
+                      "не приехала папка tools — положи туда desk_avatar.py "
+                      "или пересобери клиент.", sc)
             return f"нет файла окна ({sc.name})"
         try:
             flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -245,6 +258,12 @@ def _start_now() -> str:
             out = open(logdir / "desk_avatar.log", "a", encoding="utf-8",
                        errors="replace")
             env = dict(os.environ)
+            # Порт передаём явно: у окна свой взгляд на конфиги, и он
+            # оказался неверным (см. комментарий в tools/desk_avatar.py).
+            try:
+                env["ANAMORF_PORT"] = str(int(CFG.get("server.port", 8765)))
+            except Exception:
+                pass
             # прозрачность QtWebEngine на Windows надёжнее без GPU-композитора
             env["QTWEBENGINE_CHROMIUM_FLAGS"] = (
                 env.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
@@ -364,6 +383,126 @@ def state() -> dict:
             "step": _STEP["note"] if _STEP["busy"] else ""}
 
 
+def place_smart(where: str = "auto") -> str:
+    """ВСТАТЬ ТАК, ЧТОБЫ НЕ МЕШАТЬ (2026-08-23, владелец: «чтобы она
+    понимала, с какой стороны встать, чтобы не мешать основному просмотру;
+    быстро глянула на экран, увидела свободное место; если ничего нет —
+    может сделать себя побольше, крупным планом по плечи»).
+
+    Смотрим на живые окна ТОГО экрана, где человек сейчас работает, и
+    занимаем самую свободную вертикальную полосу. Пустой стол — значит
+    можно во весь рост и крупно.
+    """
+    try:
+        from anamorf import pc_control as _pc
+    except Exception:
+        return "не вижу окон — встану как стояла"
+    # 1. ЭКРАН, ГДЕ ЧЕЛОВЕК. Смотрим, где сейчас переднее окно.
+    try:
+        mons = [d for d in _pc._mon_info()]
+    except Exception:
+        mons = []
+    if not mons:
+        return "экранов не вижу"
+    fg = None
+    try:
+        fg = _pc._foreground()
+    except Exception:
+        pass
+    mon = mons[0]
+    if fg and fg.get("rect"):
+        n = _pc._monitor_of(fg["rect"], [d["rect"] for d in mons])
+        for d in mons:
+            if d["num"] == n:
+                mon = d
+                break
+    # человек назвал сторону сам — уважаем
+    side_num = _pc.monitor_by_side(where) if where in (
+        "прав", "лев", "правый", "левый", "справа", "слева") else 0
+    if side_num:
+        for d in mons:
+            if d["num"] == side_num:
+                mon = d
+                break
+    L, T, R, B = mon["rect"]
+    W, H = R - L, B - T
+    # 2. ЧТО ЗАНЯТО. Свои окна не считаем — себе не мешают.
+    busy = []
+    try:
+        for w in _pc.windows(include_minimized=False):
+            r = w.get("rect")
+            if not r or _pc._is_self_window(w):
+                continue
+            if (w.get("title") or "").lower().startswith("сайка"):
+                continue
+            if r[2] <= L or r[0] >= R or r[3] <= T or r[1] >= B:
+                continue                      # окно на другом экране
+            busy.append((max(r[0], L), max(r[1], T),
+                         min(r[2], R), min(r[3], B)))
+    except Exception:
+        pass
+    # 3. НАСКОЛЬКО ЗАНЯТЫ КРАЯ. Делим экран на три полосы и считаем,
+    #    сколько площади каждой перекрыто чужими окнами.
+    def _cover(x0, x1):
+        area = 0
+        for (a, b, c, d) in busy:
+            ox = max(0, min(c, x1) - max(a, x0))
+            oy = max(0, d - b)
+            area += ox * oy
+        return area / float(max(1, (x1 - x0) * H))
+
+    left_busy = _cover(L, L + int(W * 0.30))
+    right_busy = _cover(R - int(W * 0.30), R)
+    empty = not busy or (left_busy < 0.05 and right_busy < 0.05)
+    # 4. РАЗМЕР И МЕСТО.
+    if empty:
+        # стол пустой — во весь рост и крупно, ближе к правому краю
+        w_px, h_px = int(W * 0.42), int(H * 0.94)
+        x = L + int(W * 0.55)
+        zoom = 1.0
+        said = "стол пустой — встала во весь рост"
+    else:
+        w_px, h_px = int(W * 0.24), int(H * 0.70)
+        if right_busy <= left_busy:
+            x = R - w_px - int(W * 0.01)
+            said = "справа, где свободнее"
+        else:
+            x = L + int(W * 0.01)
+            said = "слева, где свободнее"
+        # обе стороны забиты — жмёмся в угол и берём крупный план по плечи
+        if min(left_busy, right_busy) > 0.55:
+            w_px, h_px = int(W * 0.16), int(H * 0.34)
+            zoom = 1.8
+            said = "места мало — встала в угол крупным планом"
+        else:
+            zoom = 1.0
+    y = B - h_px - int(H * 0.02)              # ногами на панель задач
+    x = max(L, min(x, R - w_px))
+    try:
+        CFG.set("avatar.desk.x", int(x))
+        CFG.set("avatar.desk.y", int(y))
+        CFG.set("avatar.desk.w", int(w_px))
+        CFG.set("avatar.desk.h", int(h_px))
+        CFG.set("avatar.desk.span", False)
+        if zoom != 1.0:
+            d = _desk_fresh()
+            v = dict(slots.view_for(d, model_key()) or {})
+            v["zoom"] = zoom
+            slots.remember(d, model_key(), view=v)
+            CFG.set("avatar.desk", d)
+    except Exception as e:
+        log.debug("место для окна не записалось: %s", e)
+        return "не смогла посчитать место"
+    if is_running():                          # уже стоит — переставляем живьём
+        try:
+            stop()
+            time.sleep(0.4)
+            start()
+        except Exception:
+            pass
+    return said
+
+
 def apply(patch: dict) -> dict:
     """Применить то, что нажали в интерфейсе."""
     p = patch or {}
@@ -435,10 +574,44 @@ def apply(patch: dict) -> dict:
     return st
 
 
+def _alive_window() -> bool:
+    """Живо ли окно модели ПРЯМО СЕЙЧАС — своим процессом, а не нашим.
+
+    Окно переживает сервер намеренно: оно отдельный процесс и опрашивает
+    нас само. После перезапуска сервера оно просто продолжит опрашивать —
+    ничего чинить не надо."""
+    try:
+        import psutil
+    except Exception:
+        return False
+    me = os.getpid()
+    for pr in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            if pr.info["pid"] == me:
+                continue
+            if "desk_avatar" in " ".join(pr.info.get("cmdline") or []):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def autostart():
-    """Окно было открыто, когда систему выключали — открыть снова."""
-    # Сперва подметаем всё, что осталось с прошлого раза: такие окна нельзя
-    # закрыть ни крестиком, ни с панели задач — только отсюда.
+    """Окно было открыто, когда систему выключали — открыть снова.
+
+    ОКНА ДРУГ ОТ ДРУГА НЕ ЗАВИСЯТ (2026-08-23, владелец: «сделай окна не
+    привязанные друг к другу»). Раньше каждый запуск сервера начинался с
+    того, что мы убивали ВСЕ окна модели и открывали новое. А сервер
+    перезапускается на каждом обновлении кода — и стоящая на столе модель
+    моргала и сбрасывалась из-за правки, к ней не относящейся. Между тем
+    окно самодостаточно: оно живёт своим процессом, само опрашивает
+    сервер и само переподключается. Живое окно не трогаем вовсе."""
+    if _alive_window():
+        log.info("Окно с моделью уже стоит на столе — не трогаю его "
+                 "(оно живёт само по себе)")
+        return
+    # Живого нет — тогда подметаем следы прошлого раза: осиротевшее окно
+    # нельзя закрыть ни крестиком, ни с панели задач, только отсюда.
     kill_all()
     kill_stale()
     if (CFG.get("avatar.desk", {}) or {}).get("on"):

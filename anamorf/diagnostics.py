@@ -104,8 +104,51 @@ _NO_MODULE = ("no module named", "modulenotfounderror",
               "не в этой сборке")
 
 
+# СТАРЫЙ ПАКЕТ В RUNTIME (2026-08-22). Два живых случая за вечер, и оба
+# разбор ошибок называл чужими словами:
+#
+#   «Model 'v3_e2e_rnnt' not found. Available model names: [...v2_rnnt]»
+#      — в сборке стоял gigaam с pypi (0.1.0), который про v3 не знает.
+#      Категория была «сеть»: человек пошёл проверять VPN, хотя интернет
+#      был ни при чём.
+#   «'Qwen3TTSModel' object has no attribute
+#    'stream_generate_voice_clone'» — потоковый форк лежал на диске, но
+#      программа держала в памяти пакет, импортированный ДО подмены.
+#
+# У обоих одна природа: код, который зовут, старее того, что от него
+# хотят. И одно лечение — положить наш пакет и выкинуть его из памяти.
+_OLD_PKG = ("available model names", "has no attribute "
+            "'stream_generate_voice_clone'",
+            "has no attribute 'enable_streaming_optimizations'",
+            "has no attribute 'generate_voice_clone'")
+
+
 def _has(text, sigs):
     return any(s in text for s in sigs)
+
+
+def _weights_missing(name: str) -> str:
+    """Путь к весам движка, если их на диске НЕТ. Иначе пустая строка.
+
+    Знание про кэш живёт здесь намеренно: разбор ошибок — единственное
+    место, где встречаются текст сбоя и вопрос «а есть ли вообще чему
+    работать». Проверка дешёвая (один stat), список — только те движки,
+    чьи веса лежат отдельным файлом и чьё отсутствие мы умеем назвать.
+    """
+    from pathlib import Path
+    try:
+        if name == "gigaam":
+            from anamorf.config import CFG
+            model = str(CFG.get("stt.engines.gigaam.model", "v3_e2e_rnnt"))
+            p = Path.home() / ".cache" / "gigaam" / f"{model}.ckpt"
+            return "" if p.exists() else str(p)
+        if name == "vosk":
+            from anamorf.config import CFG, resolve
+            p = resolve(str(CFG.get("stt.engines.vosk.model_dir", "")))
+            return "" if (p and Path(p).exists()) else str(p)
+    except Exception:
+        return ""
+    return ""
 
 
 def classify(component: str, error: str) -> dict:
@@ -151,18 +194,91 @@ def classify(component: str, error: str) -> dict:
                        "поднимется; пока говорю запасным движком"),
             "fix": "switch"}
 
+    # ВНЕШНЕЙ ПРОГРАММЫ НЕТ (2026-08-22, живой лог: «STT gigaam сломался:
+    # [WinError 2] Не удается найти указанный файл»). Так Windows отвечает,
+    # когда запускают программу, которой нет в PATH: у gigaam это ffmpeg,
+    # которого в сборке нет. Формулировка «не удается найти указанный
+    # файл» звучит как «нет модели» и уводит искать веса — а искать надо
+    # программу.
+    if ("winerror 2" in t) or ("filenotfounderror" in t and "ffmpeg" in t) \
+            or ("ffmpeg" in t and "not found" in t):
+        return {
+            "category": "notool",
+            "human": (f"«{name}» зовёт внешнюю программу (обычно ffmpeg), "
+                      "а её нет рядом со сборкой. Это не веса и не сеть."),
+            "action": ("читаю звук сама, без внешнего перекодировщика — "
+                       "жми «Починить», и я перезагружу движок"),
+            "fix": "switch"}
+
+    # КОМПИЛЯТОР ЯДЕР (2026-08-22, живой лог: «Cannot find a working triton
+    # installation»). На Windows официального Triton нет, и torch.compile
+    # без него не живёт. Движок при этом ЦЕЛ — падает только ускорение,
+    # поэтому называть это поломкой голоса нельзя.
+    if "triton" in t or "torch.compile" in t or "inductor" in t:
+        return {
+            "category": "nocompile",
+            "human": (f"«{name}» споткнулся о компилятор ядер (Triton) — на "
+                      "Windows его обычно нет. Сам движок цел, не заводится "
+                      "только ускорение."),
+            "action": ("говорю без компиляции: первые слова придут чуть "
+                       "позже, зато своим голосом"),
+            "fix": "switch"}
+
+    if _has(t, _OLD_PKG):
+        m = re.search(r"available model names: \[([^\]]*)\]", t)
+        knows = (m.group(1).replace("'", "") if m else "")
+        return {
+            "category": "oldpkg",
+            "human": (f"Пакет, на котором работает «{name}», старее, чем то, "
+                      "что я у него прошу"
+                      + (f" — он знает только: {knows}." if knows else ".")
+                      + " Дело не в сети и не в весах: нужного кода просто "
+                      "нет в той версии, что стоит в сборке."),
+            "action": ("подложу свой пакет из third_party и перечитаю его "
+                       "заново — перезапуск не нужен"),
+            "fix": "pkg"}
+
+    # БЕЗ ФАЙЛА МОДЕЛИ СЕТЬ — ВТОРИЧНА (2026-08-22). Живой случай: у
+    # GigaAM нет весов, попытка их скачать упирается в таймаут, и разбор
+    # честно видит сетевую сигнатуру — а человеку показывается «проверь
+    # интернет или VPN» и кнопка «Починить», которая уводит на запасной
+    # движок. Но корень не в сети: файла нет, и пока он не приедет, движок
+    # не поднимется НИКОГДА. Правильное действие ровно одно — скачать, и
+    # называть его надо первым. Сеть в этом случае — лишь причина, по
+    # которой закачка не удалась, и repair скажет это своими словами.
+    _miss = _weights_missing(name)
+    if _miss:
+        return {
+            "category": "nomodel",
+            "human": (f"У «{name}» нет файла модели — жду его тут: {_miss}."
+                      + (" Веса берутся с CDN Сбера, не с huggingface."
+                         if name == "gigaam" else "")),
+            "action": "могу скачать сама — жми «Скачать веса»",
+            "fix": "download"}
+
     if _has(t, _NETWORK):
         # У КАЖДОГО ДВИЖКА СВОЙ АДРЕС (2026-08-14). Здесь во всех сетевых
         # бедах винился huggingface.co — и владелец справедливо не понимал,
         # при чём тут HF, когда «не заводится edge»: Edge-TTS ходит вообще
         # не туда, это сервис Microsoft. Неверный диагноз хуже отсутствия
         # диагноза: человек идёт чинить то, что не сломано.
+        # ПРОДОЛЖЕНИЕ ТОЙ ЖЕ ИСТОРИИ (2026-08-22). Таблица завелась ради
+        # edge, а остальные движки по-прежнему валили вину на HF — и
+        # владелец получил «gigaam не работает: huggingface.co не
+        # отвечает», хотя GigaAM в сторону HF даже не смотрит: его веса
+        # лежат на CDN Сбера. Неверный адрес хуже отсутствия адреса:
+        # человек идёт проверять VPN до HF, а сломано совсем другое.
+        _edge = ("сервис Microsoft (speech.platform.bing.com) недоступен — "
+                 "он неофициальный и режется провайдерами чаще всего")
         _where = {
-            "edge": "сервис Microsoft (speech.platform.bing.com) недоступен "
-                    "— он неофициальный и режется провайдерами чаще всего",
-            "tts.edge": "сервис Microsoft (speech.platform.bing.com) "
-                        "недоступен — он неофициальный и режется "
-                        "провайдерами чаще всего",
+            "edge": _edge,
+            "tts.edge": _edge,
+            "gigaam": "CDN Сбера (cdn.chatwm.opensmodel.sberdevices.ru) "
+                      "не отвечает — веса GigaAM лежат там, а не на "
+                      "huggingface",
+            "vosk": "alphacephei.com не отвечает — модели Vosk лежат там",
+            "groq_whisper": "api.groq.com не отвечает",
+            "piper": "huggingface.co не отвечает (голоса Piper лежат там)",
         }.get(str(name), "huggingface.co не отвечает")
         return {
             "category": "network",

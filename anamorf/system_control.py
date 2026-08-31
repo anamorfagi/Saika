@@ -95,9 +95,18 @@ def gpu_top_processes(n=5):
         out = []
         for line in r.stdout.strip().splitlines():
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 3 and parts[1].isdigit():
-                name = ",".join(parts[2:])
-                out.append((name, parts[0], int(parts[1])))
+            if len(parts) < 3 or not parts[0].isdigit():
+                continue
+            # ПАМЯТЬ ПО ПРОЦЕССАМ WINDOWS НЕ ОТДАЁТ (27.08.2026). На WDDM
+            # nvidia-smi пишет в этой колонке «[N/A]» или «Insufficient
+            # Permissions» — и строка целиком отбрасывалась. Список
+            # становился ПУСТЫМ, хотя на карте сидели и llama-server, и наш
+            # же python. Планировщик памяти делал из пустого списка вывод
+            # «своего на карте нет» и считал занятое чужим. Имя процесса
+            # нам известно всегда — сохраняем строку с нулём вместо цифры.
+            name = ",".join(parts[2:])
+            mb = int(parts[1]) if parts[1].isdigit() else 0
+            out.append((name, parts[0], mb))
         out.sort(key=lambda x: -x[2])
         return out[:n]
     except Exception:

@@ -167,6 +167,52 @@ class VoxtralEngine(ExternalEngine):
     name = "voxtral"
 
 
+def _gigaam_no_ffmpeg(gigaam):
+    """ЧИТАТЬ ЗВУК САМИМ, БЕЗ ВНЕШНЕГО FFMPEG (2026-08-22, живой лог:
+    «STT gigaam сломался: [WinError 2] Не удается найти указанный файл»).
+
+    Пакет всегда загружает звук ОДНИМ способом: запускает `ffmpeg` как
+    внешнюю программу (`gigaam/preprocess.py: load_audio`). В сборке
+    ffmpeg нет — 138 МБ ради пересчёта частоты дискретизации в билд не
+    едут, — и на первой же фразе движок падал с «не найден файл».
+    Причём падал ПОСЛЕ успешной загрузки модели, поэтому автопуск честно
+    рапортовал «слух готов»: готов-то он был, а говорить с ним было
+    нельзя.
+
+    Мы отдаём движку СВОЙ временный wav, который сами же и записали:
+    моно, 16 кГц, PCM. Гонять его через внешний перекодировщик незачем —
+    читаем soundfile'ом, а частоту, если вдруг разойдётся, правит
+    torchaudio уже в памяти.
+    """
+    import numpy as _np
+    import soundfile as _sf
+    import torch as _t
+
+    def load_audio(audio_path: str, sample_rate: int = 16000):
+        data, sr = _sf.read(audio_path, dtype="float32", always_2d=True)
+        wav = _t.from_numpy(_np.ascontiguousarray(data.mean(axis=1)))
+        if sr != sample_rate:
+            import torchaudio
+            wav = torchaudio.functional.resample(wav, sr, sample_rate)
+        return wav
+
+    n = 0
+    for mod in ("gigaam.preprocess", "gigaam.model", "gigaam.decoding"):
+        try:
+            import importlib
+            m = importlib.import_module(mod)
+        except Exception:
+            continue
+        # имя импортировано в модуль по значению (from .preprocess import
+        # load_audio), поэтому подменять надо В КАЖДОМ, кто его держит
+        if hasattr(m, "load_audio"):
+            m.load_audio = load_audio
+            n += 1
+    log.info("GigaAM: читаю звук сам, без внешнего ffmpeg (подменено "
+             "мест: %s)", n)
+    return n
+
+
 class GigaAMEngine(STTEngine):
     name = "gigaam"
     kind = "buffered"
@@ -180,7 +226,50 @@ class GigaAMEngine(STTEngine):
         import gigaam
 
         model_name = CFG.get("stt.engines.gigaam.model", "v3_e2e_rnnt")
+        # ВЕСОВ МОЖЕТ ПРОСТО НЕ БЫТЬ (2026-08-22). Пакет gigaam тянет их с
+        # CDN Сбера сам, но своей качалке он не сообщает ни причины, ни
+        # адреса: наружу вылезал сетевой таймаут, и разбор ошибок винил в
+        # нём huggingface — которого GigaAM в глаза не видел. Проверяем
+        # файл ДО загрузки и, если его нет, качаем своей качалкой: она
+        # знает адрес, сверяет md5 и объясняет человеческим языком, почему
+        # не вышло.
+        # ЗНАЕТ ЛИ ПАКЕТ ЭТУ МОДЕЛЬ (2026-08-22, живой лог: «Model
+        # 'v3_e2e_rnnt' not found. Available model names: [...v2_rnnt]»).
+        # В сборке стоял gigaam 0.1.0 с pypi — про v3 он не знает вовсе,
+        # и никакая закачка весов этого не изменит. Свежий пакет лежит в
+        # third_party: подкладываем его и перечитываем, не выходя из
+        # программы. Врать про сеть при этом нельзя — сеть ни при чём.
+        _known = set(getattr(gigaam, "_MODEL_HASHES", {}) or {}) | {
+            "ctc", "rnnt", "e2e_ctc", "e2e_rnnt", "ssl"}
+        if _known and model_name not in _known:
+            log.warning("GigaAM: пакет не знает модель %s (знает: %s) — "
+                        "подкладываю свой из third_party",
+                        model_name, ", ".join(sorted(_known)))
+            from anamorf import repair
+            r = repair.refresh_package("gigaam")
+            if r.get("ok"):
+                import importlib
+                gigaam = importlib.import_module("gigaam")
+                _known = set(getattr(gigaam, "_MODEL_HASHES", {}) or {})
+            if model_name not in _known:
+                raise RuntimeError(
+                    f"Model '{model_name}' not found. Available model "
+                    f"names: {sorted(_known)}. "
+                    + str(r.get("why", "")))
+
+        from pathlib import Path
+        _ckpt = Path.home() / ".cache" / "gigaam" / f"{model_name}.ckpt"
+        if not _ckpt.exists():
+            log.warning("GigaAM: весов нет (%s) — качаю с CDN Сбера", _ckpt)
+            from anamorf import repair
+            r = repair.gigaam_weights()
+            if not r.get("ok"):
+                raise RuntimeError(
+                    f"Модель GigaAM не скачана: нет файла {_ckpt}. "
+                    "Веса берутся с CDN Сбера (cdn.chatwm.opensmodel."
+                    "sberdevices.ru), не с huggingface. " + r.get("why", ""))
         try:
+            _gigaam_no_ffmpeg(gigaam)
             self.model = gigaam.load_model(model_name)
         except Exception as e:
             # частично скачанный чекпоинт бьётся по контрольной сумме
@@ -196,6 +285,7 @@ class GigaAMEngine(STTEngine):
                 ckpt.unlink(missing_ok=True)
             except Exception as del_err:
                 log.warning("GigaAM: не смог удалить %s: %s", ckpt, del_err)
+            _gigaam_no_ffmpeg(gigaam)
             self.model = gigaam.load_model(model_name)
 
     def transcribe(self, pcm16, sample_rate):

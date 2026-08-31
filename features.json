@@ -41,6 +41,9 @@
       "workflow.py",
       "agent.py",
       "reflex.py",
+      "orb.py",
+      "live.py",
+      "reflex_learn.py",
       "toolbuf.py",
       "capabilities.py",
       "model_dossier.py",
@@ -81,9 +84,13 @@
      "mods": [
       "baymax.py",
       "diagnostics.py",
+      "repair.py",
+      "bringup.py",
       "self_heal.py",
       "repairs.py",
       "triage.py",
+      "vramplan.py",
+      "keeper.py",
       "fallbacks.py",
       "guard.py",
       "stage.py",
@@ -602,7 +609,8 @@
      "tier": "free",
      "blurb": "Светящийся контур вокруг того, с чем она сейчас работает.",
      "mods": [
-      "highlight.py"
+      "highlight.py",
+      "highlight_win.py"
      ],
      "pip": [],
      "mb": 3

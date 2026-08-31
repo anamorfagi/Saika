@@ -1,0 +1,5 @@
+до: выбрана={'backends': {'ollama': False, 'lmstudio': False, 'locallm': False, 'llamacpp': True, 'cloud': True}, 'loaded': ['gemma-4-E4B-it-Q4_K_M'], 'active': {'backend': '', 'model': ''}, 'backend': 'llamacpp', 'model': 'gemma-4-E4B-it-Q4_K_M', 'off': False, 'think': False} загружены=['gemma-4-E4B-it-Q4_K_M']
+клик: {"ok":true}
++ 10с выбрана={'backends': {'ollama': False, 'lmstudio': False, 'locallm': False, 'llamacpp': False, 'cloud': True}, 'loaded': [], 'active': {'backend': '', 'model': ''}, 'backend': 'llamacpp', 'model': 'Qwen3.5-9B-Q4_K_M', 'off': False, 'think': False} загружены=[]
++ 20с выбрана={'backends': {'ollama': False, 'lmstudio': False, 'locallm': False, 'llamacpp': False, 'cloud': True}, 'loaded': ['Qwen3.5-9B-Q4_K_M'], 'active': {'backend': '', 'model': ''}, 'backend': 'llamacpp', 'model': 'Qwen3.5-9B-Q4_K_M', 'off': False, 'think': False} загружены=['Qwen3.5-9B-Q4_K_M']
+ЗАГРУЗИЛАСЬ

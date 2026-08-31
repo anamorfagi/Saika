@@ -303,6 +303,23 @@ def note_fail(backend: str, model: str, why: str = ""):
     """Мозг не ответил — уводим его из лестницы. Насколько — по причине:
     перебор запросов это «занят», всё остальное — «сломан»."""
     text = str(why or "")
+    # КАРТИНКА БЕЗ ПРОЕКТОРА — НЕ БОЛЕЗНЬ МОДЕЛИ (2026-08-23, живой вечер:
+    # huihui отвечала весь агентный цикл, а на последнем ходе к промпту
+    # прицепился кадр зрения, сервер без mmproj ответил 500 — и здоровую
+    # модель увели в карантин на 10 минут, разговор забрал GigaChat).
+    # Это ошибка СБОРКИ ЗАПРОСА, чинится отбрасыванием картинки, а не
+    # карантином собеседника.
+    if ("exceed" in text and "context" in text) or \
+            "context length" in text or "too many tokens" in text:
+        log.info("Мозг %s/%s не виноват: промпт не влез в окно — это наша "
+                 "арифметика, в карантин не увожу", backend, model)
+        return
+    if ("image input is not supported" in text or "mmproj" in text
+            or "does not support image" in text
+            or "vision is not supported" in text):
+        log.info("Мозг %s/%s не виноват: запрос с картинкой без проектора — "
+                 "в карантин не увожу", backend, model)
+        return
     if _GONE_RE.search(text):
         wait, human = _GONE_S, "выключен насовсем — больше не зову"
     elif _RATE_RE.search(text):

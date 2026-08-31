@@ -141,6 +141,44 @@ def _compress(x, sr, thr_db=-24.0, ratio=2.0, atk_ms=5.0, rel_ms=80.0):
     return x * g
 
 
+def _limiter(x, sr, ceiling=0.97, rel_ms=60.0):
+    """Look-ahead лимитер. Прежний «ограничитель» делил ВСЮ фразу, если
+    один сэмпл вылез за потолок: единичный щелчок (плевок в микрофон,
+    взрывной согласный) ронял громкость всей реплики и сводил на нет
+    усиление, которое только что поставил AGC. Здесь коэффициент считается
+    поблочно (1мс): тише становится только ВОКРУГ пика, а ровная речь
+    остаётся на целевом уровне. Атака мгновенная (чтобы пик не пролез),
+    отпуск плавный (чтобы не «дышало»), плюс на блок вперёд — начать
+    придавливать ДО пика, а не на нём."""
+    n = x.size
+    if n < 64:
+        p = float(np.max(np.abs(x))) if n else 0.0
+        return x * (ceiling / p) if p > ceiling else x
+    blk = max(8, int(sr * 0.001))
+    m = n // blk
+    if m < 3:
+        p = float(np.max(np.abs(x)))
+        return x * (ceiling / p) if p > ceiling else x
+    peak = np.abs(x[:m * blk].reshape(m, blk)).max(1)
+    target = np.minimum(1.0, ceiling / np.maximum(peak, 1e-9))
+    look = np.minimum(target, np.roll(target, 1))
+    look[0] = target[0]
+    a_rel = float(np.exp(-blk / (sr * max(rel_ms, 1.0) / 1000.0)))
+    g = np.empty(m, np.float32)
+    cur = 1.0
+    for i in range(m):
+        t = float(look[i])
+        cur = t if t < cur else cur * a_rel + t * (1.0 - a_rel)
+        g[i] = cur
+    idx = (np.arange(n) / blk).clip(0, m - 1)
+    gs = np.interp(idx, np.arange(m), g).astype(np.float32)
+    y = x[:n] * gs
+    pk = float(np.max(np.abs(y))) if y.size else 0.0
+    if pk > 0.999:                       # страховка от выбросов интерполяции
+        y = y * (0.999 / pk)
+    return y
+
+
 def prepare(pcm16, sr: int = SR, cfg=None) -> np.ndarray:
     """Фраза -> фраза, приведённая к виду, привычному для движка."""
     c = cfg or {}
@@ -171,16 +209,71 @@ def prepare(pcm16, sr: int = SR, cfg=None) -> np.ndarray:
         need = tgt_db - 20.0 * np.log10(rms)
         need = float(np.clip(need, -12.0, max_gain_db))
         x = x * (10.0 ** (need / 20.0))
-    # 5. ограничитель
-    peak = float(np.max(np.abs(x))) if x.size else 0.0
-    if peak > 0.95:
-        x = x * (0.95 / peak)
+    # 5. ограничитель — look-ahead лимитером, а не делением всей фразы:
+    #    тише только ВОКРУГ пика, ровная речь держит целевую громкость,
+    #    поэтому усиление из шага 4 доезжает до движка, а не срезается
+    #    первым же щелчком.
+    try:
+        x = _limiter(x, sr, float(c.get("limit_ceiling", 0.97)),
+                     float(c.get("limit_rel_ms", 60.0)))
+    except Exception as e:
+        log.debug("лимитер пропущен: %s", e)
+        peak = float(np.max(np.abs(x))) if x.size else 0.0
+        if peak > 0.97:
+            x = x * (0.97 / peak)
     # 6. подушки тишины
     pad = int(sr * float(c.get("pad_ms", 100.0)) / 1000.0)
     if pad > 0:
         x = np.concatenate([np.zeros(pad, np.float32), x,
                             np.zeros(pad, np.float32)])
     return np.clip(x * 32768.0, -32768, 32767).astype(np.int16)
+
+
+def condition(pcm16, sr: int = SR, ch: str = "mic", cfg=None):
+    """СТУПЕНЬ 0 — кондиционирование ЗАХВАТА на потоке (кусок ~100мс).
+
+    Зачем: выравнивание громкости в prepare() стоит ПЕРЕД движком STT, а
+    ворота VAD и кодировщик голоса ECAPA видят СЫРОЙ звук. На тихом входе
+    (−46 dBFS) ворота бракуют речь, а эмбеддинги «плывут» и люди не
+    разделяются. Поднимаем уровень ЗДЕСЬ, единожды, до всех потребителей.
+
+    Дёшево: DC + однополюсный HPF + медленный AGC по речевому RMS с
+    потолком усиления. Состояние (бегущее усиление) — на самой функции, по
+    каналу, поэтому переживает живую перепрошивку. Только БУСТ тихого и
+    лёгкий поджим громкого; шум в тишине не разгоняем — AGC адаптируется
+    лишь когда в куске есть энергия."""
+    c = cfg or {}
+    if not c.get("enabled", True):
+        return pcm16
+    x = np.asarray(pcm16, dtype=np.float32).ravel()
+    if x.size < 8:
+        return pcm16
+    x = x / 32768.0
+    x = x - float(np.mean(x))
+    try:
+        fc = float(c.get("hp_hz", 70.0))
+        if fc > 0:
+            x = _highpass_fft(x, sr, fc)
+    except Exception:
+        pass
+    st = condition.__dict__.setdefault("state", {})
+    g = float(st.get(ch, 1.0))
+    raw = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
+    floor = float(c.get("floor", 0.0012))
+    if raw > floor:
+        rms = _speech_rms(x, sr)
+        if rms > 1e-6:
+            tgt = 10.0 ** (float(c.get("target_dbfs", -22.0)) / 20.0)
+            maxg = 10.0 ** (float(c.get("max_gain_db", 20.0)) / 20.0)
+            want = float(np.clip(tgt / rms, 0.7, maxg))
+            a = 0.35 if want < g else 0.12      # атака быстрее отпуска
+            g = g * (1.0 - a) + want * a
+            st[ch] = g
+    y = x * g
+    pk = float(np.max(np.abs(y))) if y.size else 0.0
+    if pk > 0.97:                                # мягкий потолок от всплеска
+        y = y * (0.97 / pk)
+    return np.clip(y * 32768.0, -32768, 32767).astype(np.int16)
 
 
 def report(pcm16, sr: int = SR) -> dict:

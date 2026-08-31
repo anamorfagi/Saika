@@ -164,7 +164,12 @@ SCHEMAS += [
         "parameters": {"type": "object", "properties": {
             "open": {"type": "boolean"},
             "top": {"type": "boolean"},
-            "lock": {"type": "boolean"}},
+            "lock": {"type": "boolean"},
+            "place": {"type": "string", "description":
+                      ("Куда встать: auto — сама посмотри на экран и займи "
+                       "свободное место, не заслоняя работу; прав/лев — "
+                       "на правый или левый монитор. Ставь place=auto на "
+                       "«покажи себя», «встань рядом», «покажи своё тело».")}},
             "required": []}}},
 ]
 
@@ -178,12 +183,45 @@ def avatar_window(args) -> str:
     for k in ("top", "lock"):
         if k in a:
             patch[k] = bool(a[k])
+    place = str(a.get("place") or "").strip().lower()
+    if place:
+        # СНАЧАЛА МЕСТО, ПОТОМ ПОКАЗ: посчитать угол надо ДО открытия, иначе
+        # окно моргнёт на старом месте и переедет уже на глазах
+        said = _da.place_smart(place if place != "auto" else "auto")
+        if a.get("open", True):
+            patch["on"] = True
+        st = _da.apply(patch)
+        return ((st.get("note") or "показалась") + " — " + said)
     if not patch:
         st = _da.state()
         return (f"окно {'открыто' if st['on'] else 'закрыто'}, "
                 f"поверх всех: {'да' if st['top'] else 'нет'}, "
                 f"замок: {'на месте' if st['lock'] else 'снят'}")
     return _da.apply(patch).get("note") or "готово"
+
+
+SCHEMAS += [
+    {"type": "function", "function": {
+        "name": "orb_mode",
+        "description": ("Режим исчезновения: большое окно программы "
+                        "прячется, на рабочем столе остаётся одно твоё ядро "
+                        "— маленькое, поверх всех окон, его можно таскать "
+                        "мышью. Слух, голос и разговор при этом работают "
+                        "как работали. on=true включить («исчезни», "
+                        "«сожмись», «оставь только ядро», «уйди в угол»), "
+                        "false выключить («вернись в окно», «разожмись», "
+                        "«верни интерфейс»)."),
+        "parameters": {"type": "object", "properties": {
+            "on": {"type": "boolean"}}, "required": []}}},
+]
+
+
+def orb_mode(args) -> str:
+    from anamorf import orb as _orb
+    a = args or {}
+    if "on" not in a:
+        return _orb.toggle()
+    return _orb.start() if bool(a["on"]) else _orb.stop()
 
 
 NAMES = {s["function"]["name"] for s in SCHEMAS}
@@ -227,6 +265,29 @@ def remember_my_voice(args) -> str:
 
 
 def unload_memory(args=None) -> str:
+    # ЖЁСТКАЯ РАЗГРУЗКА — ТОЛЬКО ПО ПРОСЬБЕ ЧЕЛОВЕКА (2026-08-23, живой
+    # вечер: модель ТРИЖДЫ сама вызвала выгрузку и снесла всё выбранное —
+    # слух, клон-голос, мозги. Владелец: «какого чёрта он выгружает всё»,
+    # «что я поставил, то и должно быть выбрано»). Этот инструмент
+    # сносит ЯВНЫЙ выбор человека, значит и звать его можно только когда
+    # человек этого явно захотел. Давление по памяти — не повод: для него
+    # есть сторож с лестницей, и та выбор человека не трогает. Кнопка в
+    # интерфейсе (/api/panic_unload) остаётся безусловной — её жмёт сам
+    # человек.
+    import re as _re
+    try:
+        from anamorf.llm import tools as _tls
+        asked = str(_tls.LAST_USER.get("text", "") or "")
+    except Exception:
+        asked = ""
+    if not _re.search(r"выгруз|разгруз|освобод|очист\w*\s+памя|"
+                      r"сн[ие]ми\s+вс[её]|убери\s+вс[её]\s+из\s+памя",
+                      asked, _re.I):
+        log.warning("unload_memory отклонён: человек не просил "
+                    "(его фраза: %r)", asked[:60])
+        return ("НЕ выгружаю: человек об этом не просил, а разгрузка "
+                "снесла бы выбранные им модель и голос. Если тебе тесно "
+                "в памяти — просто скажи ему об этом словами.")
     try:
         from anamorf.main import do_panic_unload
         r = do_panic_unload()
@@ -346,4 +407,4 @@ CALLS = {"unload_memory": unload_memory, "usage_report": usage_report,
          "remember_my_voice": remember_my_voice,
          "card_list": card_list, "card_wear": card_wear,
          "card_off": card_off, "card_make": card_make,
-         "avatar_window": avatar_window}
+         "avatar_window": avatar_window, "orb_mode": orb_mode}

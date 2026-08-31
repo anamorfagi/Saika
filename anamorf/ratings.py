@@ -6,6 +6,7 @@
 статистика под своё железо.
 """
 import json
+import re
 import threading
 
 from anamorf.config import ROOT, DATA_ROOT
@@ -60,6 +61,75 @@ def llm_scores() -> dict:
             if not m.startswith("tts:") and not m.startswith("manual:")}
 
 
+# ═══ ОДНА МОДЕЛЬ — ОДНО ИМЯ (27.08.2026) ═══
+# Владелец: «нахуй мы систему рейтинга писали, если модели произвольно
+# вырубаются из середины, а не логично по рейтингу».
+#
+# Первая причина была в именах. Оценки он ставит по тому, что видит в
+# списке («huihui-ai_Qwen3-14B-abliterated-Q4_K_M»), а движки отдают свои
+# идентификаторы («qwen3-14b-abliterated», «qwen/qwen3.5-9b»). Сравнение
+# шло строка-в-строку, совпадений не было НИ ОДНОГО: выставленная девятка
+# просто не находилась, модель получала ноль и уезжала в хвост. Ровно та
+# жалоба, что записана выше про Huihui, — её тогда починили только для
+# автопуска, а для фолбэка нет.
+#
+# Сводим имена к общему виду: убираем вендора до косой черты, хвост
+# квантизации (-Q4_K_M, -MXFP4, .gguf), пометки сборки (-it, -instruct,
+# -abliterated, -QAT) и имя упаковщика (huihui-ai, TheBloke, bartowski).
+_QUANT_TAIL = re.compile(
+    r"[-_.](i?q\d+(_[a-z0-9]+)*|mxfp\d+|fp\d+|bf16|f16|f32|gguf)$", re.I)
+
+
+def norm_name(name) -> str:
+    s = str(name or "").strip().lower()
+    if "/" in s:
+        s = s.rsplit("/", 1)[1]
+    s = re.sub(r"\.gguf$", "", s)
+    for _ in range(4):
+        s2 = _QUANT_TAIL.sub("", s)
+        if s2 == s:
+            break
+        s = s2
+    s = re.sub(r"[\s_.]+", "-", s)
+    s = re.sub(r"-(it|instruct|chat|abliterated|qat|base)(?=-|$)", "", s)
+    s = re.sub(r"^(huihui-ai|huihui|thebloke|bartowski|mradermacher)-", "", s)
+    return re.sub(r"-+", "-", s).strip("-")
+
+
+def effective_scores() -> dict:
+    """{нормализованное имя: оценка} — РУЧНАЯ ОЦЕНКА ГЛАВНЕЕ ЗАМЕРА.
+
+    Вторая причина той же жалобы: сортировка фолбэка брала llm_scores(),
+    а он ручные оценки ОТБРАСЫВАЕТ (см. фильтр manual: выше) и меряет
+    только скорость. То есть выбор владельца в порядок не входил вообще.
+    Здесь он входит и перебивает замер: человек знает, какая модель ему
+    нужна, лучше, чем секундомер.
+    """
+    out = {}
+    for m, e in _load().items():
+        if m.startswith("tts:") or m.startswith("manual:"):
+            continue
+        out[norm_name(m)] = _score(e.get("tps", 0))
+    for m, v in (manual_scores() or {}).items():
+        try:
+            out[norm_name(m)] = int(v)
+        except Exception:
+            pass
+    return out
+
+
+def score_for(name, table=None) -> int:
+    """Оценка модели по её ЛЮБОМУ имени (точное совпадение, потом вхождение)."""
+    t = table if table is not None else effective_scores()
+    n = norm_name(name)
+    if n in t:
+        return int(t[n] or 0)
+    for k, v in t.items():
+        if k and n and (k in n or n in k) and min(len(k), len(n)) >= 6:
+            return int(v or 0)
+    return 0
+
+
 # ---------------- ручные оценки владельца ----------------
 # Раньше жили ТОЛЬКО в localStorage браузера (ui/index.html, manualScores) —
 # пользователь тянет палочки, список в UI пересортировывается… а сервер про
@@ -80,7 +150,7 @@ def set_manual(name: str, score):
         if score is None:
             d.pop(key, None)
         else:
-            d[key] = {"score": max(1, min(10, int(score)))}
+            d[key] = {"score": max(0, min(10, int(score)))}
         _save(d)
 
 
@@ -94,7 +164,7 @@ def merge_manual(scores: dict) -> dict:
             if not name:
                 continue
             try:
-                d["manual:" + name] = {"score": max(1, min(10, int(sc)))}
+                d["manual:" + name] = {"score": max(0, min(10, int(sc)))}
             except (TypeError, ValueError):
                 continue
         _save(d)

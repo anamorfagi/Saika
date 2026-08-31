@@ -251,7 +251,13 @@ def resolve(rel_path: str) -> Path:
     if p.is_absolute():
         return p
     first = p.parts[0] if p.parts else ""
-    return (DATA_ROOT if first in ("data", "logs", "models") else ROOT) / p
+    # 2026-08-22: "voice" добавлен к данным. Образец голоса — нажитое
+    # пользователем, а не код: в сборке он лежал бы в app\\, который
+    # обновление заменяет ЦЕЛИКОМ, и клон-голос терял бы образец на
+    # каждом апдейте. В рабочей копии ROOT и DATA_ROOT совпадают —
+    # там ничего не меняется.
+    return (DATA_ROOT if first in ("data", "logs", "models", "voice")
+            else ROOT) / p
 
 
 # Локальный ffmpeg (tools/ffmpeg/bin) добавляем в PATH процесса —

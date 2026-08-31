@@ -1,0 +1,2 @@
+нашёл сторожа: pid 20280 | runtime\pythonw.exe watchdog_saika.pyw
+снято сторожей: 1 [20280]

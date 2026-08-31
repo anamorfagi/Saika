@@ -97,6 +97,26 @@ def _release_vram() -> float:
         return 0.0
 
 
+def _triton_ok() -> bool:
+    """Есть ли рабочий Triton — компилятор ядер, без которого
+    torch.compile на этой машине не живёт (2026-08-22, живой лог:
+    «Cannot find a working triton installation»).
+
+    На Windows официального Triton нет вовсе, а без него `use_compile`
+    не ускоряет, а РОНЯЕТ движок: клон-голос падал «с незнакомой мне
+    ошибкой» уже после того, как честно загрузился. Ускорение, которое
+    отнимает голос целиком, — не ускорение. Спрашиваем заранее.
+    """
+    try:
+        import triton                                  # noqa: F401
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        return True
+    except Exception:
+        return False
+
+
 class Qwen3Engine:
     name = "qwen3"
 
@@ -175,6 +195,31 @@ class Qwen3Engine:
                 log.debug("обезвреживание speechbrain: %s", _e)
             import torch
             from qwen_tts import Qwen3TTSModel
+
+            # ПАКЕТ В ПАМЯТИ МОЖЕТ БЫТЬ СТАРЕЕ ПАКЕТА НА ДИСКЕ
+            # (2026-08-22, живой лог: «'Qwen3TTSModel' object has no
+            # attribute 'stream_generate_voice_clone'» ×5 подряд). Клон
+            # голоса живёт в потоковом форке, форк был подложен в
+            # site-packages — но ПОСЛЕ старта программы. Python держит
+            # импортированный модуль в sys.modules и на диск больше не
+            # смотрит: снаружи это выглядит как «подменили, а не
+            # помогло». Проверяем сам класс, а не файл, и если метода
+            # нет — кладём свой пакет, выкидываем его из памяти и
+            # импортируем заново. Перезапускать программу ради этого не
+            # нужно, о чём владелец просил дословно.
+            if not hasattr(Qwen3TTSModel, "stream_generate_voice_clone"):
+                log.warning("Qwen3-TTS: в памяти пакет без клон-голоса — "
+                            "подкладываю потоковый форк и перечитываю")
+                from anamorf import repair
+                r = repair.refresh_package("qwen_tts")
+                import importlib
+                Qwen3TTSModel = importlib.import_module(
+                    "qwen_tts").Qwen3TTSModel
+                if not hasattr(Qwen3TTSModel, "stream_generate_voice_clone"):
+                    raise RuntimeError(
+                        "Пакет qwen_tts без stream_generate_voice_clone: "
+                        "нужен потоковый форк из third_party/"
+                        "Qwen3-TTS-streaming. " + str(r.get("why", "")))
 
             # ГЛОБАЛЬНЫЙ DTYPE — НЕ ТРОГАТЬ СОСЕДЕЙ (2026-08-15, живой лог
             # 13:19:26: GigaAM упал с «RNN input dtype (torch.bfloat16)
@@ -313,12 +358,37 @@ class Qwen3Engine:
                             log.info("Qwen3-TTS: пауза в разговоре — начинаю "
                                      "прогрев (ждал %.0fс)",
                                      time.time() - _t0)
-                    self.model.enable_streaming_optimizations(
-                        decode_window_frames=cfg.get("decode_window_frames", 80),
-                        use_compile=True, use_cuda_graphs=False,
-                        compile_mode=_mode,
-                        use_fast_codebook=True,
-                        compile_codebook_predictor=True, compile_talker=True)
+                    _compile = _triton_ok()
+                    if not _compile:
+                        log.warning("Qwen3-TTS: Triton на этой машине нет — "
+                                    "включаю потоковый режим БЕЗ компиляции. "
+                                    "Первые слова придут чуть позже, зато "
+                                    "голос мой, а не времянка.")
+
+                    def _opts(use_compile: bool):
+                        self.model.enable_streaming_optimizations(
+                            decode_window_frames=cfg.get(
+                                "decode_window_frames", 80),
+                            use_compile=use_compile, use_cuda_graphs=False,
+                            compile_mode=_mode,
+                            use_fast_codebook=True,
+                            compile_codebook_predictor=use_compile,
+                            compile_talker=use_compile)
+
+                    try:
+                        _opts(_compile)
+                    except Exception as _ce:
+                        # ЛУЧШЕ МЕДЛЕННО, ЧЕМ ЧУЖИМ ГОЛОСОМ. Любая беда
+                        # компиляции (нет Triton, старый, не та карта) не
+                        # повод отдавать голос времянке: повторяем без неё.
+                        if _compile:
+                            log.warning("Qwen3-TTS: компиляция не завелась "
+                                        "(%s) — повторяю без неё", _ce)
+                            _opts(False)
+                        else:
+                            log.warning("Qwen3-TTS: потоковые оптимизации не "
+                                        "включились (%s) — говорю без них",
+                                        _ce)
                     # прогрев компиляции — под замком синтеза, чтобы
                     # параллельный speak не влез в середину
                     #
@@ -380,8 +450,61 @@ class Qwen3Engine:
     def speak(self, text):
         self.load()
         with self.lock:
-            for chunk, sr in self._stream(text):
-                yield np.asarray(chunk, dtype=np.float32).tobytes(), sr
+            # РОВНО ЛУЧШЕ, ЧЕМ БЫСТРО (2026-08-22, владелец: «голос
+            # прерывисто звучит»).
+            #
+            # Потоковый режим начинает говорить, не дожидаясь конца
+            # синтеза, — и это правильно, пока модель обгоняет речь. На
+            # этой машине она её НЕ обгоняет: без Triton компиляция ядер
+            # не работает, и клон выдаёт около 0.4 секунды звука за
+            # секунду работы. Тогда поток превращается в рванину: кусок,
+            # тишина, кусок — потому что играть уже нечего, а следующий
+            # ещё не готов. Никакой буфер этого не лечит: дыра растёт с
+            # каждой секундой фразы.
+            #
+            # Поэтому при заведомо медленном движке синтезируем фразу
+            # ЦЕЛИКОМ и отдаём одним куском. Первое слово приходит позже,
+            # зато речь звучит непрерывно — а рваный голос человек
+            # замечает мгновенно, в отличие от лишней секунды паузы.
+            if not _triton_ok() and CFG.get("tts.qwen3.smooth", True):
+                cfg = CFG.get("tts.qwen3", {})
+                try:
+                    wavs, sr = self.model.generate_voice_clone(
+                        text=text, language=cfg.get("language", "Russian"),
+                        voice_clone_prompt=self.prompt,
+                        non_streaming_mode=True)
+                    for w in (wavs if isinstance(wavs, (list, tuple))
+                              else [wavs]):
+                        yield np.asarray(w, dtype=np.float32).tobytes(), sr
+                    return
+                except Exception as e:
+                    log.warning("Qwen3-TTS: цельный синтез не удался (%s) — "
+                                "пробую потоком", e)
+            try:
+                for chunk, sr in self._stream(text):
+                    yield np.asarray(chunk, dtype=np.float32).tobytes(), sr
+                return
+            except Exception as e:
+                # ПОТОК УПАЛ — ЭТО ЕЩЁ НЕ ПОВОД МОЛЧАТЬ СВОИМ ГОЛОСОМ
+                # (2026-08-22). Потоковый путь тянет за собой компиляцию
+                # ядер (Triton), которой на Windows может не быть вовсе.
+                # Раньше здесь движок помечался сломанным и голос уходил
+                # времянке — при том что обычный, непотоковый клон на той
+                # же модели работает. Разница только в том, что первые
+                # слова придут не через полсекунды, а когда фраза
+                # синтезируется целиком. Это несравнимо меньшая потеря,
+                # чем чужой голос.
+                if "triton" not in str(e).lower() and \
+                        "compile" not in str(e).lower():
+                    raise
+                log.warning("Qwen3-TTS: потоковый режим не пошёл (%s) — "
+                            "говорю целой фразой, без потока", e)
+            cfg = CFG.get("tts.qwen3", {})
+            wavs, sr = self.model.generate_voice_clone(
+                text=text, language=cfg.get("language", "Russian"),
+                voice_clone_prompt=self.prompt, non_streaming_mode=True)
+            for w in (wavs if isinstance(wavs, (list, tuple)) else [wavs]):
+                yield np.asarray(w, dtype=np.float32).tobytes(), sr
 
     def unload(self):
         with self.load_lock:
@@ -799,6 +922,19 @@ class TTSManager:
         self.on_problem = on_problem
         self._last_space_report = 0.0  # троттлинг совета «мало памяти»
 
+    def stop_workers(self):
+        """При выходе Сайки погасить движки-воркеры (2026-08-25, аудит):
+        omni/f5/voxtral живут отдельными процессами и переживают закрытие
+        окна, вися в памяти. Зовём unload() у всех — у кого есть свой
+        процесс, тот его и терминирует (см. OmniVoiceEngine.unload)."""
+        for _n, _eng in (self.engines or {}).items():
+            try:
+                u = getattr(_eng, "unload", None)
+                if callable(u):
+                    u()
+            except Exception:
+                pass
+
     def engine_meta(self, name=None):
         """Название, лицензия, умеет ли клонировать голос, примечание.
         Лицензия тут не формальность: у Silero она запрещает коммерческое
@@ -943,6 +1079,21 @@ class TTSManager:
         if name not in self.engines:
             raise ValueError(name)
         CFG.set("tts.engine", name)
+        # ВЫБОР ЧЕЛОВЕКА ОТМЕНЯЕТ ЗАПИСКУ РАЗГРУЗКИ (2026-08-22): если он
+        # сам поставил «Без озвучки», автопуск не имеет права воскрешать
+        # голос на следующем запуске.
+        try:
+            CFG.set("tts.engine_was", "")
+        except Exception:
+            pass
+        # ...и обнуляет счётчик неудач: выбрал руками — значит хочет
+        # попробовать снова, и мы не тычем ему прошлыми провалами
+        try:
+            if getattr(self, "_slow_hist", None):
+                self._slow_hist.pop(name, None)
+            self._slow = 0
+        except Exception:
+            pass
         # ВЫБОР ЧЕЛОВЕКА ГЛАВНЕЕ ВРЕМЯНКИ (2026-08-15, живой гнев: «я
         # нажимаю на квен, он всё равно ебёт этот эдж»). Автопуск ставит
         # boot_override=edge на время прогрева тяжёлого движка, и пока
@@ -1054,11 +1205,13 @@ class TTSManager:
                     # рейтинг голоса: скорость синтеза на ЭТОМ железе
                     wall = time.time() - t0
                     if wall > 0.05 and audio_s > 0.2:
+                        rtf = audio_s / wall
                         try:
                             from anamorf import ratings
-                            ratings.record_tts(name, audio_s / wall)
+                            ratings.record_tts(name, rtf)
                         except Exception:
                             pass
+                        self._note_speed(name, rtf, audio_s, wall)
                     return
             except Exception as e:
                 diag = diagnostics.classify("tts." + name, str(e))
@@ -1117,6 +1270,190 @@ class TTSManager:
                 threading.Thread(target=self._repair, args=(name, diag),
                                  daemon=True).start()
         log.error("Все TTS-движки недоступны")
+
+    def begin_answer(self):
+        """Начинается новый ответ — самое время сменить голос, если мы
+        решили его сменить. Между ответами это незаметно, посреди ответа —
+        катастрофа (см. _note_speed)."""
+        nxt = getattr(self, "_pending", "")
+        if not nxt:
+            return
+        self._pending = ""
+        try:
+            if str(CFG.get("tts.engine", "")) != nxt:
+                CFG.set("tts.engine", nxt)
+                log.info("Голос: перешла на «%s» (решение принято на "
+                         "прошлом ответе)", nxt)
+        except Exception as e:
+            log.debug("смена голоса не применилась: %s", e)
+
+    def _note_speed(self, name, rtf, audio_s, wall):
+        """ГОЛОС ЗАИКАЕТСЯ, КОГДА НЕ УСПЕВАЕТ (2026-08-22, владелец: «голос
+        зависает так, когда сильная нагрузка происходит»).
+
+        Цифра, которая всё объясняет, — отношение «секунд звука» к
+        «секундам работы» (RTF). Больше единицы — синтез обгоняет речь, и
+        человек слышит ровный поток. Меньше единицы — модель физически не
+        успевает наговаривать, и пауза посреди фразы неизбежна: это не
+        сбой, это арифметика. На одной видеокарте с распознаванием и LLM
+        тяжёлый клон-голос проседает именно так.
+
+        Раньше это число уходило только в рейтинг движков — то есть было
+        известно программе и невидимо человеку. Теперь: называем вслух и,
+        если проседание повторяется, снимаем нагрузку сами — уходим на
+        лёгкий голос и возвращаем свой, когда отпустит. Молчаливое
+        заикание хуже честной подмены на пару минут.
+        """
+        heavy = any(h in name.lower() for h in _HEAVY)
+        # ЧЕМ МЕРИТЬ ОТСТАВАНИЕ (2026-08-23, владелец: «какого хера она
+        # переключается, если движок квен нормально стоит»). Мерили
+        # отношение «секунд звука к секундам работы» на КАЖДОЙ фразе, а
+        # порогом ставили единицу — то есть требовали, чтобы синтез был
+        # быстрее речи всегда. Живой лог: x0.99, x0.95, x0.91 — движок
+        # идёт вровень с речью, человек не слышит ни одной паузы, а мы
+        # объявляем аварию и меняем голос. Порог был не про слышимое, а
+        # про арифметику.
+        #
+        # Слышно другое — НАКОПЛЕННОЕ отставание. Пока синтез идёт вровень,
+        # долг колеблется около нуля и его съедает буфер; настоящий разрыв
+        # речи начинается, когда долг перевалил за пару секунд. Быстрая
+        # фраза долг гасит — как и в жизни: нагнал, значит нагнал.
+        debt = getattr(self, "_debt", 0.0) + (wall - audio_s)
+        self._debt = max(0.0, min(debt, 12.0))
+        if rtf >= float(CFG.get("tts.rtf_min", 1.0)):
+            self._slow = 0
+        else:
+            self._slow = getattr(self, "_slow", 0) + 1
+            log.info("Голос «%s»: %.1fс звука за %.1fс работы (x%.2f), "
+                     "накопленное отставание %.1fс", name, audio_s, wall,
+                     rtf, self._debt)
+        limit = float(CFG.get("tts.rtf_debt_s", 2.5))
+        if not heavy or self._debt < limit:
+            return
+        # ВЫБОР ГОЛОСА — НЕ НАШЕ ДЕЛО (2026-08-23, третий заход; владелец:
+        # «она опять произвольно переключает ттс»). Мы починили ЧЕМ мерить,
+        # КОГО ставить взамен и КОГДА менять — и всё равно получили
+        # маятник: на этом железе клон-голос идёт вровень с речью, изредка
+        # отставая на пару секунд, значит подмена и возврат будут ходить
+        # туда-сюда вечно. Любая наша замена — сюрприз: человек СЛЫШИТ
+        # чужой голос там, где выбрал свой. Он выбрал qwen3 сознательно и
+        # знает, что тот тяжёлый.
+        # Поэтому сами больше не меняем. Наше дело — сказать, что не
+        # успеваем; решение остаётся за ним (tts.rtf_guard: true вернёт
+        # автоподмену тем, кому она нужна).
+        if not CFG.get("tts.rtf_guard", False):
+            now = time.time()
+            if now - getattr(self, "_said_slow", 0.0) > 900:
+                self._said_slow = now
+                log.warning("Голос «%s» отстаёт на %.1fс — речь может "
+                            "рваться. Голос не меняю: это твой выбор",
+                            name, self._debt)
+                if self.on_problem:
+                    self.on_problem(
+                        "tts." + name,
+                        f"«{name}» отстаёт от речи на {self._debt:.1f}с "
+                        "под нагрузкой",
+                        "голос не меняю — он твой выбор. Если рвётся, "
+                        "выбери другой сам или включи tts.rtf_guard")
+            self._debt = 0.0     # сказали — счётчик заново, иначе будет ныть
+            return
+        log.warning("Голос «%s» отстал на %.1fс — при таком отставании паузы "
+                    "посреди речи уже слышны", name, self._debt)
+        # ЗАПАСНОЙ — ПО ТОМУ ЖЕ ПОРЯДКУ, ЧТО И ВЕЗДЕ (2026-08-23, владелец:
+        # «какого хера она переключается на силеро, на самую низкую в
+        # рейтинге»). Здесь стоял свой список из трёх имён, где silero был
+        # первым, — второй источник правды, прямо спорящий с _priority(),
+        # где владелец сам расставил порядок и где silero нарочно в хвосте.
+        # Спрашиваем ту же очередь, что и обычный фолбэк.
+        light = [n for n in self._chain()
+                 if n != name and n not in ("off",)
+                 and not any(h in n.lower() for h in _HEAVY)]
+        if not light:
+            log.warning("Заменить «%s» некем — оставляю как есть", name)
+            return
+        self._slow = 0
+        self._debt = 0.0
+        # СКОЛЬКО РАЗ УЖЕ ПАДАЛИ ЗДЕСЬ (2026-08-22, владелец: «он постоянно
+        # переключается»). Первая версия возвращала свой голос строго через
+        # три минуты — и если движок медленный не случайно, а всегда (на
+        # этой машине нет Triton, и клон идёт вчетверо медленнее речи),
+        # получался вечный маятник: упал -> лёгкий -> вернули -> упал.
+        # Дёрганый голос хуже честного чужого. Поэтому каждая следующая
+        # попытка ждёт дольше, а после третьей мы перестаём возвращать сами
+        # и говорим об этом прямо: решение за человеком.
+        hist = getattr(self, "_slow_hist", None)
+        if hist is None:
+            hist = self._slow_hist = {}
+        downs = hist.get(name, 0) + 1
+        hist[name] = downs
+        try:
+            CFG.set("tts.engine_was", name)     # чем вернуться
+            # НЕ ПОСРЕДИ ОТВЕТА (2026-08-23, владелец: «я не понимаю, какого
+            # чёрта она сейчас аж двумя озвучками говорит»). Ответ читается
+            # по предложениям, и смена движка между ними означала, что
+            # первую половину фразы человек слышит её голосом, а вторую —
+            # чужим. Две озвучки в одном ответе — худшее, что можно было
+            # сделать: это читается как поломка, а не как забота.
+            # Решение принимаем сейчас, применяем на следующем ответе.
+            self._pending = light[0]
+            log.info("Голос сменю на «%s» со следующего ответа — посреди "
+                     "этого менять нельзя", light[0])
+            # МОДЕЛЬ ИЗ ПАМЯТИ НЕ ВЫГРУЖАЕМ (2026-08-22, живой лог: «0.7с
+            # звука за 11.8с работы, x0.06»). Первая версия при понижении
+            # снимала клон с видеокарты, а через три минуты возвращала —
+            # и каждый возврат означал загрузку двух гигабайт заново.
+            # Со стороны это и есть «звук зависает»: не медленный синтез,
+            # а прогрев с нуля посреди разговора. Память сейчас свободна
+            # (замер показывал 7 ГБ из 16), выгонять с неё нечего:
+            # переключаем голос, а модель оставляем греться на месте —
+            # тогда возврат бесплатный. Снимет её сторож железа, если
+            # памяти реально не хватит: у него для этого своя лестница.
+        except Exception as e:
+            log.debug("понижение голоса не удалось: %s", e)
+            return
+        tries = int(CFG.get("tts.rtf_tries", 3))
+        if downs >= tries:
+            log.warning("Голос «%s» не тянет на этом железе (%d раза подряд) "
+                        "— больше сам возвращать не буду", name, downs)
+            if self.on_problem:
+                self.on_problem(
+                    "tts." + name,
+                    f"«{name}» не успевает на этом железе — пробовала "
+                    f"{downs} раза, каждый раз речь рвалась",
+                    f"осталась на «{light[0]}». Свой голос включу, когда "
+                    "выберешь его сам — маятник туда-сюда хуже чужого "
+                    "голоса")
+            return
+        if self.on_problem:
+            self.on_problem(
+                "tts." + name,
+                f"«{name}» не успевает синтезировать — речь начала рваться",
+                f"перешла на лёгкий «{light[0]}»; свой голос верну, когда "
+                "железо освободится")
+        # выдержка растёт: 3 минуты, 6, 12 — но не дольше получаса
+        back = min(float(CFG.get("tts.rtf_back_s", 180)) * (2 ** (downs - 1)),
+                   float(CFG.get("tts.rtf_back_max_s", 1800)))
+
+        def _back():
+            # возвращаем ТОЛЬКО если человек сам ничего не выбрал за это
+            # время: его выбор всегда главнее нашей заботы
+            if str(CFG.get("tts.engine", "")) != light[0]:
+                return
+            was = str(CFG.get("tts.engine_was", "") or "")
+            if not was:
+                return
+            CFG.set("tts.engine", was)
+            CFG.set("tts.engine_was", "")
+            log.info("Голос: железо отпустило — возвращаю «%s»", was)
+            if self.on_problem:
+                self.on_problem("tts." + was, "", "вернула свой голос")
+
+        # ДЕМОН, ИНАЧЕ ОН ДЕРЖИТ ВЫХОД. Обычный Timer не даёт процессу
+        # завершиться, пока не истечёт — три минуты «программа не
+        # закрывается» на ровном месте (и вечность в тестах).
+        _t = threading.Timer(back, _back)
+        _t.daemon = True
+        _t.start()
 
     def benchmark_missing(self):
         """Разовый бенч незамеренных запасных голосов: синтезируем короткую

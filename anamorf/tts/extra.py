@@ -482,6 +482,19 @@ class OmniVoiceEngine:
             requests.post(self._url("/admin/unload"), timeout=5)
         except Exception:
             pass
+        # ПРОЦЕСС ТОЖЕ ГАСИМ (2026-08-25, аудит). /admin/unload лишь
+        # освобождает модель в памяти воркера, а сам процесс висит гигабайтами
+        # ОЗУ до следующего старта. При выходе Сайки его надо убить.
+        try:
+            if self.proc is not None and self.proc.poll() is None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=3)
+                except Exception:
+                    self.proc.kill()
+        except Exception:
+            pass
+        self.proc = None
 
     def is_loaded(self):
         h = self._health()

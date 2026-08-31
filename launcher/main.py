@@ -35,6 +35,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import sys
 import time
 import webbrowser
@@ -142,6 +143,36 @@ def alive(p: int) -> bool:
         return s.connect_ex(("127.0.0.1", p)) == 0
 
 
+# ═══ ОДНО ОКНО — А НЕ ДВА (30.08.2026) ═══
+# Живой случай: сторож раз в 4-5 минут решал, что Сайка зависла (порт
+# отвечает, а logs\saika.log какое-то время не растёт — это бывает и
+# на пустом месте, когда просто нет новых событий для лога), и поднимал
+# ANAMORF.exe заново. Новый процесс видел, что порт жив, НЕ трогал
+# сервер — но безусловно рисовал СВОЁ окно поверх уже открытого. Человек
+# видел вторую полупрозрачную копию программы у себя на экране.
+#
+# Проверка «жив ли сервер» и проверка «есть ли уже окно» — разные вещи,
+# а раньше окно опиралось только на первую. Правим это отдельным
+# замком: как и сторож (порт 8759), окно занимает свой порт на время
+# жизни. Если он уже занят — окно уже где-то открыто, и рисовать второе
+# незачем: тихо выходим, ничего не трогая и ничего не показывая.
+_WINDOW_LOCK_PORT = 8760
+_window_lock_sock: socket.socket | None = None
+
+
+def _acquire_window_lock() -> bool:
+    global _window_lock_sock
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", _WINDOW_LOCK_PORT))
+        s.listen(1)
+    except OSError:
+        s.close()
+        return False
+    _window_lock_sock = s  # держать открытым весь срок жизни процесса
+    return True
+
+
 _JOB = None            # держать глобально: закроется хэндл — умрёт вся ветка
 
 
@@ -247,6 +278,11 @@ def stop(proc) -> None:
         pass
 
 
+# Код выхода, которым сервер просит поднять его заново (см. _hot_restart
+# в anamorf/main.py). Всё остальное — обычная смерть, окно закрывается.
+RESTART_CODE = 7
+
+
 def start_server() -> subprocess.Popen | None:
     py = python_exe()
     if py is None:
@@ -262,6 +298,13 @@ def start_server() -> subprocess.Popen | None:
     # и вкладка поверх него, оба живые и оба слушают один сервер.
     env["SAIKA_AUTO_OPEN"] = "0"
     env["ANAMORF_AUTO_OPEN"] = "0"
+    # РУКОПОЖАТИЕ ПРО ПЕРЕЗАПУСК (2026-08-23). Сервер сам не знает, какой
+    # лаунчер его поднял: exe у человека может быть собран до того, как мы
+    # научились ловить код 7, и тогда «переехать» означало бы тихо убить
+    # приложение (так уже было). Поэтому не гадаем — говорим прямо: этот
+    # лаунчер умеет поднимать сервер обратно. Нет переменной — сервер
+    # честно попросит человека нажать «⟳ Перезапустить».
+    env["ANAMORF_RESTART_CODE"] = str(RESTART_CODE)
     env.setdefault("HF_HOME", str(ROOT / "models" / "hf"))
     env.setdefault("TORCH_HOME", str(ROOT / "models" / "torch"))
     say(f"запускаю сервер, версия {version()}")
@@ -301,6 +344,111 @@ def wait_ready(proc: subprocess.Popen, p: int) -> bool:
     return False
 
 
+def _patch_webview_media_flag():
+    """Флаг браузера --auto-accept-camera-and-microphone-capture должен
+    выдавать разрешение на микрофон сразу, без диалога — от него зависит
+    и сам звук, и то, видит ли браузер настоящий список устройств вывода,
+    а не одно безымянное «по умолчанию» (без разрешения Chromium из
+    приватности схлопывает список выходов до одной записи).
+
+    Раньше флаг клали в переменную окружения WEBVIEW2_ADDITIONAL_BROWSER_
+    ARGUMENTS. Она не работала НИКОГДА: pywebview сам строит свою строку
+    AdditionalBrowserArguments и передаёт её WebView2 явно через
+    CoreWebView2CreationProperties — а спецификация WebView2 однозначна:
+    явно переданное значение полностью перекрывает переменную окружения,
+    та просто не читается.
+
+    Чиним не переменную окружения, а сам pywebview: дописываем наш флаг
+    в ту же строку, что строит он сам. Идемпотентно и при каждом
+    запуске — переустановка pywebview или пересборка exe когда-нибудь
+    сотрёт правку, и тогда она просто наложится заново, никто не заметит.
+
+    Флаг официально документирован Microsoft как штатный способ (см.
+    webview-features-flags), но на практике после починки список устройств
+    так и не ожил — подозрение, что WebView2 у этой версии рантайма его
+    по каким-то причинам не слушает. Поэтому вдобавок, а не вместо,
+    ниже включена вторая, уже не флаговая, а событийная выдача разрешения
+    — через официальное событие PermissionRequested. Два независимых пути
+    к одному результату надёжнее одного непроверяемого."""
+    # Импортируем ТОЛЬКО верхний пакет: конкретный backend (edgechromium)
+    # pywebview подгружает лениво, изнутри webview.start(), и если
+    # затронуть его сейчас — правка в файл на диске на этот же запуск
+    # уже не подействует, модуль в памяти останется старым. Путь и так
+    # известен: platforms/edgechromium.py рядом с самим пакетом.
+    try:
+        import webview
+    except Exception as e:
+        say(f"не смог проверить pywebview для микрофона: {e}")
+        return
+    pkg_dir = os.path.dirname(getattr(webview, "__file__", "") or "")
+    if pkg_dir:
+        path = os.path.join(pkg_dir, "platforms", "edgechromium.py")
+        needle = "'--disable-features=ElasticOverscroll'"
+        fix = "--auto-accept-camera-and-microphone-capture"
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    src = f.read()
+                if fix not in src:
+                    if needle in src:
+                        src = src.replace(
+                            needle,
+                            "'--disable-features=ElasticOverscroll " + fix + "'", 1)
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(src)
+                        say("починил pywebview: флаг микрофона теперь доходит до WebView2")
+                    else:
+                        say("pywebview изменился — автопочинка флага микрофона больше не подходит по тексту")
+            except Exception as e:
+                say(f"не смог поправить флаг pywebview для микрофона: {e}")
+
+    # ВТОРОЙ ПУТЬ: выдаём разрешение сами через PermissionRequested,
+    # штатное событие CoreWebView2 для хост-приложений (см. WebView2
+    # security docs, «программная выдача разрешений»). Оно не зависит от
+    # того, слушает ли рантайм флаг командной строки, — мы отвечаем на
+    # запрос напрямую. Разрешаем ТОЛЬКО микрофон и камеру: экран (для
+    # зрения Сайки) как спрашивал, так и должен спрашивать.
+    try:
+        import webview.platforms.edgechromium as _ec
+    except Exception as e:
+        say(f"не смог подключить прямую выдачу разрешений: {e}")
+        return
+    if getattr(_ec.EdgeChrome, "_saika_permission_patched", False):
+        return
+    try:
+        import clr
+        clr.AddReference(_ec.interop_dll_path('Microsoft.Web.WebView2.Core.dll'))
+        from Microsoft.Web.WebView2.Core import (
+            CoreWebView2PermissionKind, CoreWebView2PermissionState)
+    except Exception as e:
+        say(f"не смог подключить прямую выдачу разрешений: {e}")
+        return
+
+    _ALLOWED = (CoreWebView2PermissionKind.Microphone, CoreWebView2PermissionKind.Camera)
+
+    def _on_permission_requested(sender, args):
+        try:
+            if args.PermissionKind in _ALLOWED:
+                args.State = CoreWebView2PermissionState.Allow
+                args.Handled = True
+        except Exception as e:
+            say(f"не смог ответить на запрос разрешения: {e}")
+
+    _orig_ready = _ec.EdgeChrome.on_webview_ready
+
+    def _patched_ready(self, sender, args):
+        _orig_ready(self, sender, args)
+        try:
+            if args.IsSuccess:
+                self.webview.CoreWebView2.PermissionRequested += _on_permission_requested
+        except Exception as e:
+            say(f"не смог подписаться на запросы разрешений: {e}")
+
+    _ec.EdgeChrome.on_webview_ready = _patched_ready
+    _ec.EdgeChrome._saika_permission_patched = True
+    say("подключил прямую выдачу разрешений на микрофон/камеру")
+
+
 def open_window(url: str) -> bool:
     """Своё окно, если есть чем. Нет — обычная вкладка браузера.
 
@@ -310,7 +458,8 @@ def open_window(url: str) -> bool:
     Окно приятнее, но падать из-за его отсутствия было бы глупо: человеку
     нужна Сайка, а не именно окно.
 
-    МИКРОФОН СПРАШИВАЕТСЯ ОДИН РАЗ, А НЕ КАЖДЫЙ ЗАПУСК.
+    МИКРОФОН СПРАШИВАЕТСЯ ОДИН РАЗ, А НЕ КАЖДЫЙ ЗАПУСК — И ВООБЩЕ НЕ
+    СПРАШИВАЕТСЯ.
 
     Окно рисует WebView2, и для него наше приложение — обычный сайт. По
     умолчанию pywebview открывает его в приватном режиме: ничего не
@@ -318,21 +467,26 @@ def open_window(url: str) -> bool:
     брало «Сайт 127.0.0.1:8765 хочет использовать микрофон» при каждом
     старте — а человек этот микрофон уже разрешил, и не раз.
 
-    Закрываем это с двух сторон.
+    Постоянный профиль окна в data\webview закрывает это наполовину:
+    разрешение, выданное однажды, переживает перезапуск. Но диалог в
+    этом безрамочном окне почти не виден, и без него профиль остаётся
+    пустым — тогда браузер из соображений приватности схлопывает список
+    устройств вывода звука до одного безымянного «по умолчанию» (ровно
+    это увидел человек: «Устройство 1» вместо настоящих наушников/
+    колонок/кабеля).
 
-    Первое: постоянный профиль окна в data\webview. Разрешение, выданное
-    однажды, переживает перезапуск, как в обычном браузере.
+    Второй половиной — авто-выдачей разрешения флагом
+    --auto-accept-camera-and-microphone-capture — раньше занималась
+    переменная окружения WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS. Она не
+    работала НИКОГДА: pywebview сам строит свою строку
+    AdditionalBrowserArguments и передаёт её WebView2 явно, а явно
+    переданное значение полностью перекрывает переменную окружения по
+    спецификации. Теперь флаг дописывается прямо в pywebview —
+    см. _patch_webview_media_flag() выше — и правда работает.
 
-    Второе: флаг --auto-accept-camera-and-microphone-capture. Микрофоном
-    в приложении управляет кнопка «Слушать», и переспрашивать поверх неё
-    системным окном — значит спрашивать дважды об одном и том же.
     Именно этот флаг, а НЕ --use-fake-ui-for-media-stream: второй заодно
     проглатывает запрос на захват экрана, а зрение Сайки работает через
     него, и мы бы молча разрешили ещё и это.
-
-    Оговорка: если приложение запущено от администратора, WebView2
-    игнорирует флаги из переменных окружения. Тогда работает первый
-    способ — спросит один раз и запомнит.
     """
     store = ROOT / "data" / "webview"
     try:
@@ -340,10 +494,7 @@ def open_window(url: str) -> bool:
     except Exception:
         pass
 
-    flags = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
-    if "auto-accept-camera-and-microphone-capture" not in flags:
-        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
-            flags + " --auto-accept-camera-and-microphone-capture").strip()
+    _patch_webview_media_flag()
 
     try:
         import webview
@@ -378,6 +529,12 @@ def main() -> int:
         say("нет папки app\\ — установка повреждена, переустанови приложение")
         return 1
 
+    if not _acquire_window_lock():
+        # Окно уже открыто в другом процессе (см. комментарий у
+        # _acquire_window_lock) — новое не рисуем, сервер не трогаем.
+        say("окно уже открыто в другом экземпляре — выхожу")
+        return 0
+
     p = port()
     if alive(p):
         say("уже запущено — открываю окно")
@@ -411,6 +568,32 @@ def main() -> int:
         return 1
 
     started = time.time()
+
+    # ПЕРЕЗАПУСК СЕРВЕРА БЕЗ ЗАКРЫТИЯ ОКНА (2026-08-22). Сервер живёт
+    # дочерним процессом и привязан к окну, поэтому сам он себя заменить
+    # не может: подмена образа (os.execv) рвёт эту связь, и приложение
+    # исчезает наполовину — окно есть, сервера нет. Пусть просит нас:
+    # выход с кодом 7 значит «подними меня заново, окно не трогай». Так
+    # обновление кода перестаёт стоить человеку закрытия программы.
+    holder = {"proc": proc}
+
+    def _watch_restart():
+        while True:
+            try:
+                code = holder["proc"].wait()
+            except Exception:
+                return
+            if code != RESTART_CODE:
+                return
+            say("сервер попросил перезапуск — поднимаю заново")
+            new_proc = start_server()
+            if not new_proc or not wait_ready(new_proc, p):
+                say("перезапуск не удался — окно осталось без сервера")
+                return
+            holder["proc"] = new_proc
+            say("сервер вернулся, окно не трогали")
+
+    threading.Thread(target=_watch_restart, daemon=True).start()
     windowed = open_window(f"http://127.0.0.1:{p}")
 
     # Окна не случилось — значит, единственный интерфейс сейчас это вкладка
@@ -422,7 +605,15 @@ def main() -> int:
         say("работаю во вкладке браузера; закрыть — сняв ANAMORF.exe в "
             "диспетчере задач или остановив сервер")
         try:
-            proc.wait()
+            while True:
+                code = holder["proc"].wait()
+                if code != RESTART_CODE:
+                    break
+                say("сервер попросил перезапуск — поднимаю заново")
+                np = start_server()
+                if not np or not wait_ready(np, p):
+                    break
+                holder["proc"] = np
         except KeyboardInterrupt:
             pass
         return 0
@@ -431,7 +622,30 @@ def main() -> int:
     # версию удачной и убираем страховку, чтобы не копить старые копии.
     if time.time() - started > HEALTHY_AFTER and APP_PREV.is_dir():
         shutil.rmtree(APP_PREV, ignore_errors=True)
-    stop(proc)
+    # МЕТКА «ЗАКРЫЛИ РУКАМИ» — ЗДЕСЬ, А НЕ В СЕРВЕРЕ (30.08.2026, живой
+    # случай: закрыл оба окна крестиком, ничего не трогал — через
+    # несколько секунд появилось новое окно само по себе).
+    #
+    # Сервер сам умеет класть эту метку на выходе (anamorf/main.py,
+    # atexit, _mark_quit_by_human) — но ниже, в stop(), мы гасим его
+    # ПРИНУДИТЕЛЬНО (taskkill /F/T), намеренно и по веской причине (см.
+    # докстринг stop() — иначе осиротевшие процессы и запертые DLL). А
+    # принудительное убийство atexit не запускает НИКОГДА — метка
+    # физически не успевала лечь. Сторож видел мёртвый порт без метки,
+    # не отличал обычное закрытие от падения и поднимал программу заново
+    # после КАЖДОГО закрытия крестиком — не только после сбоя.
+    #
+    # Лаунчер сам точно знает, что окно закрыли руками (мы буквально
+    # только что вышли из webview.start()) — кладём метку сами, не
+    # полагаясь на то, что успеет сделать уже приговорённый дочерний
+    # процесс.
+    try:
+        qf = ROOT / "data" / "quit.flag"
+        qf.parent.mkdir(parents=True, exist_ok=True)
+        qf.write_text(str(time.time()), encoding="utf-8")
+    except Exception:
+        pass
+    stop(holder.get("proc", proc))
     return 0
 
 

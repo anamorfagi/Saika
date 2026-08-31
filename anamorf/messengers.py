@@ -125,6 +125,9 @@ def _ask_saika(text):
             "text": text,
             "speak": bool(CFG.get("messengers.speak_aloud", False)),
             "timeout_s": int(CFG.get("messengers.reply_timeout_s", 180)),
+            # канал = мессенджер: рубильник управления ПК из чатов действует
+            # на весь путь через LLM, а не только на жёсткий парсер команд
+            "channel": "messenger",
         })
     except Exception as e:
         log.warning("мессенджер: мозги не ответили: %s", e)

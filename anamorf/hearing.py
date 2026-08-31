@@ -150,6 +150,66 @@ _OUTDOOR = ("vehicle", "car", "truck", "motor", "engine", "aircraft",
             "chainsaw", "siren")
 
 
+# ═══ ФИЗИКА ПРОТИВ ОШИБКИ «КЛАВИАТУРА = МАШИНА» (27.08.2026) ═══
+# Владелец, дословно: «я за всё время даже клавиатуру замечал, что он писал
+# слышу машину — это хуета у нас сделана».
+#
+# PANNs обучены на ютубе: там «vehicle» — широкополосный гул с транзиентами,
+# и серия щелчков клавиш спектрально попадает ровно в него. Подтверждение
+# временем (три окна) помогает, но не спасает: печатают тоже долго.
+#
+# Разница у них ФИЗИЧЕСКАЯ, и её видно по спектру одного окна:
+#   машина  — энергия внизу (до ~500 Гц), спектр СТОИТ на месте;
+#   клавиши — энергия размазана вверх, спектр дёргается на каждом щелчке.
+# Считаем два числа — долю низа и «дёрганость» (среднее изменение спектра
+# между кадрами) — и не пускаем уличные метки, если картина не машинная.
+# Это не запрет класса: настоящая машина обе проверки проходит легко.
+def _spectral_veto(tags, chunk):
+    try:
+        if not tags:
+            return tags
+        if not any(any(k in str(n).lower() for k in _OUTDOOR) for n, _ in tags):
+            return tags                      # уличных меток нет — не мешаем
+        x = np.asarray(chunk, dtype=np.float32).ravel()
+        if x.size < 2048:
+            return tags
+        if np.max(np.abs(x)) > 1.5:          # пришёл int16
+            x = x / 32768.0
+        n = 1024
+        hop = 512
+        win = np.hanning(n).astype(np.float32)
+        fq = np.fft.rfftfreq(n, 1.0 / 16000)
+        lo_m = fq <= 500.0
+        sp_prev = None
+        lo_r, flux = [], []
+        for off in range(0, max(0, x.size - n), hop):
+            sp = np.abs(np.fft.rfft(x[off:off + n] * win))
+            tot = float(sp.sum()) + 1e-9
+            lo_r.append(float(sp[lo_m].sum()) / tot)
+            spn = sp / tot
+            if sp_prev is not None:
+                d = spn - sp_prev
+                flux.append(float(np.sqrt((d[d > 0] ** 2).sum())))
+            sp_prev = spn
+        if not lo_r or not flux:
+            return tags
+        low_ratio = float(np.mean(lo_r))
+        jitter = float(np.mean(flux))
+        need_low = float(CFG.get("hearing.outdoor_low_ratio", 0.45))
+        max_jit = float(CFG.get("hearing.outdoor_max_jitter", 0.10))
+        if low_ratio >= need_low and jitter <= max_jit:
+            return tags                      # похоже на настоящий гул
+        out = [(n_, p) for n_, p in tags
+               if not any(k in str(n_).lower() for k in _OUTDOOR)]
+        if len(out) != len(tags):
+            log.debug("уличная метка отклонена: низ %.2f (нужно %.2f), "
+                      "дёрганость %.3f (предел %.3f)",
+                      low_ratio, need_low, jitter, max_jit)
+        return out or tags[:1]
+    except Exception:
+        return tags
+
+
 def _feed_sounds(tags):
     global _last_sent
     now = time.time()
@@ -268,7 +328,93 @@ _RU = {
     "hi-hat": "хай-хэт", "cymbal": "тарелка", "percussion": "перкуссия",
     "drum roll": "дробь", "tabla": "табла", "rimshot": "римшот",
     "scratching (performance technique)": "скретч",
+    # ═══ ЖИВОТНЫЕ И ОКРУЖЕНИЕ (27.08.2026, владелец: «добавь разметки
+    # животных и окружения… больше получать разных меток, а не только
+    # машина или музыка»). PANNs знает 527 классов AudioSet, и добрая
+    # половина из них — звери, птицы, погода, дом. Им просто не хватало
+    # русских имён: без перевода метка уезжала английской строкой либо
+    # подбиралась подстрокой наугад. ═══
+    # звери
+    "cow": "корова", "moo": "мычание", "cattle, bovinae": "коровы",
+    "horse": "лошадь", "neigh, whinny": "ржание", "clip-clop": "цокот копыт",
+    "pig": "свинья", "oink": "хрюканье", "goat": "коза", "bleat": "блеяние",
+    "sheep": "овца", "donkey, ass": "осёл", "rodents, rats, mice": "грызуны",
+    "squeak": "писк", "mouse (animal)": "мышь", "hamster": "хомяк",
+    "rabbit": "кролик", "bat": "летучая мышь", "whimper (dog)": "скулёж",
+    "howl": "вой", "yip": "тявканье", "bow-wow": "гав-гав",
+    "growling (dog)": "рычание", "caterwaul": "кошачий вопль",
+    "hiss (cat)": "шипение кошки", "livestock, farm animals": "скот",
+    # птицы
+    "bird vocalization, bird call, bird song": "пение птицы",
+    "chirp, tweet": "чирикание", "squawk": "клёкот", "pigeon, dove": "голубь",
+    "coo": "воркование", "crow": "ворона", "caw": "карканье",
+    "owl": "сова", "hoot": "уханье", "gull, seagull": "чайка",
+    "chicken, rooster": "курица", "cluck": "кудахтанье",
+    "crowing, cock-a-doodle-doo": "кукареканье", "turkey": "индюк",
+    "gobble": "клокотание", "duck": "утка", "quack": "кряканье",
+    "goose": "гусь", "honk": "гоготание", "bird flight, flapping wings": "хлопанье крыльев",
+    # мелкая живность
+    "insect": "насекомое", "cricket": "сверчок", "mosquito": "комар",
+    "fly, housefly": "муха", "buzz (insect)": "жужжание насекомого",
+    "bee, wasp, etc.": "пчела", "frog": "лягушка", "croak": "кваканье",
+    "snake": "змея", "rattle": "трещотка", "whale vocalization": "кит",
+    # погода и улица
+    "rain on surface": "дождь по крыше", "raindrop": "капли дождя",
+    "thunderstorm": "гроза", "wind noise (microphone)": "ветер в микрофон",
+    "rustling leaves": "шелест листвы", "howl (wind)": "вой ветра",
+    "gust of wind": "порыв ветра", "stream": "ручей", "waterfall": "водопад",
+    "ocean": "океан", "waves, surf": "прибой", "splash, splatter": "плеск",
+    "gurgling": "журчание", "fire": "огонь", "crackle": "потрескивание",
+    "hail": "град", "sonar": "сонар",
+    # дом и вещи
+    "door": "дверь", "slam": "хлопок двери", "creak": "скрип",
+    "squeal": "визг", "cupboard open or close": "шкаф",
+    "drawer open or close": "ящик", "microwave oven": "микроволновка",
+    "blender": "блендер", "vacuum cleaner": "пылесос",
+    "washing machine": "стиральная машина", "toilet flush": "смыв",
+    "sink (filling or washing)": "раковина", "bathtub (filling or washing)": "ванна",
+    "electric shaver, electric razor": "бритва", "hair dryer": "фен",
+    "zipper (clothing)": "молния", "velcro, hook and loop fastener": "липучка",
+    "coin (dropping)": "монета", "packing tape, duct tape": "скотч",
+    "keys jangling": "звон ключей", "scissors": "ножницы",
+    "electric toothbrush": "зубная щётка", "frying (food)": "жарит",
+    "boiling": "кипит", "chopping (food)": "режет",
+    "glass": "стекло", "chink, clink": "звон стекла", "shatter": "звон осколков",
+    "clock": "часы", "tick": "тиканье", "tick-tock": "тик-так",
+    "doorbell": "дверной звонок", "ding-dong": "динь-дон",
+    "buzzer": "зуммер", "smoke detector, smoke alarm": "датчик дыма",
+    "fire alarm": "пожарная сигнализация",
+    # техника и транспорт (частное — раньше всё сваливалось в «машину»)
+    "car passing by": "машина проехала", "car alarm": "автосигнализация",
+    "power windows, electric windows": "стеклоподъёмник",
+    "skidding": "визг шин", "tire squeal": "визг шин",
+    "engine starting": "завёлся двигатель", "idling": "работает на холостых",
+    "accelerating, revving, vroom": "газует", "motorcycle": "мотоцикл",
+    "bus": "автобус", "truck": "грузовик", "train": "поезд",
+    "train horn": "гудок поезда", "railroad car, train wagon": "вагон",
+    "subway, metro, underground": "метро", "aircraft": "самолёт",
+    "helicopter": "вертолёт", "fixed-wing aircraft, airplane": "самолёт",
+    "bicycle": "велосипед", "skateboard": "скейт", "boat, water vehicle": "лодка",
+    "sailboat, sailing ship": "парусник", "chainsaw": "бензопила",
+    "lawn mower": "газонокосилка", "jackhammer": "отбойный молоток",
+    "power tool": "электроинструмент",
+    # человек
+    "crying, sobbing": "плач", "baby cry, infant cry": "плач ребёнка",
+    "screaming": "крик", "yell": "вопль", "shout": "окрик",
+    "children shouting": "детские крики", "whispering": "шёпот",
+    "snoring": "храп", "hiccup": "икота", "burp": "отрыжка",
+    "gasp": "вздох испуга", "groan": "стон", "grunt": "кряхтение",
+    "chatter": "болтовня", "babbling": "лепет", "cheering": "ликование",
+    "booing": "освистывание", "crowd": "толпа", "hubbub, speech noise": "гул голосов",
+    "run": "бег", "walk, footsteps": "шаги", "shuffle": "шарканье",
 }
+
+# ПОРЯДОК ПОИСКА — ОТ ДЛИННОГО К КОРОТКОМУ. Подбор по подстроке шёл в
+# порядке записи словаря, и короткий ключ побеждал длинный: «car» стоит
+# выше, поэтому «car alarm» становилось просто «машиной», а «bird flight,
+# flapping wings» — «птицей». Сортируем один раз при загрузке: сначала
+# самые частные ключи, общие остаются на подхвате (27.08.2026).
+_RU_ORDER = sorted(_RU.items(), key=lambda kv: -len(kv[0]))
 
 
 def enabled() -> bool:
@@ -279,7 +425,7 @@ def _ru(label: str) -> str:
     low = label.lower()
     if low in _RU:
         return _RU[low]
-    for k, v in _RU.items():
+    for k, v in _RU_ORDER:          # от частного к общему, см. _RU_ORDER
         if k in low:
             return v
     return label
@@ -405,7 +551,7 @@ def _loop():
             except Exception as _ce:
                 log.debug("CLAP пропущен: %s", _ce)
             try:
-                _feed_sounds(tags)
+                _feed_sounds(_spectral_veto(tags, chunk))
             except Exception:
                 pass
             # разовые события: чих/кашель/крик — с порогом из таблицы
