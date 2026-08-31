@@ -293,7 +293,7 @@ KEY_SLOTS = [
 def _secrets_path():
     """Куда писать secrets.json: рядом со сборкой (DATA_ROOT), а на машине
     автора — в корне проекта. Читаем-то из обоих (см. _secrets), но пишем в
-    одно предсказуемое место, чтобы ключ не потерялся при обновлении app\."""
+    одно предсказуемое место, чтобы ключ не потерялся при обновлении app\\."""
     if (ROOT / "secrets.json").exists():
         return ROOT / "secrets.json"
     return DATA_ROOT / "secrets.json"
