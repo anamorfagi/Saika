@@ -138,16 +138,38 @@ if exist ".venv\Scripts\python.exe" (
 
 :: ---------- run with self-restart ----------
 set RESTARTS=0
+set SELFRESTARTS=0
 :run
 echo.
 echo [*] Starting Saika... (Ctrl+C to exit)
 :: otkryt vkladku tolko na pervom zapuske; pri restarte posle padeniya
 :: uzhe otkrytaya vkladka sama perepodklyuchitsya i obnovitsya (po BOOT_ID),
 :: novuyu ne plodim - inache seriya kreshey zasypaet brauzer vkladkami
-if %RESTARTS%==0 (set "SAIKA_AUTO_OPEN=1") else (set "SAIKA_AUTO_OPEN=0")
+if defined SAIKA_OPENED (set "SAIKA_AUTO_OPEN=0") else (set "SAIKA_AUTO_OPEN=1")
+set "SAIKA_OPENED=1"
 "%VPY%" -m anamorf.main
 set CODE=%errorlevel%
 if %CODE%==0 goto end
+:: kod 7 - ona sama poprosila perezapusk (besshovnoe obnovlenie koda,
+:: komanda restart). Eto NE padenie: ne tratim popytki i ne zovem doktora.
+:: Ranshe kazhdyy takoy perezapusk schitalsya kreshem - tri podryad, i
+:: "Saika keeps crashing", hotya s nej vse v poryadke.
+if %CODE%==7 (
+    set /a SELFRESTARTS+=1
+    echo.
+    echo [~] Saika perezapuskaet sebya sama ^(obnovlenie koda^), raz !SELFRESTARTS!...
+    :: SCHETCHIK OBYAZATELEN. Bez nego lyuboy povtoryayushchiysya
+    :: vyhod s kodom 7 daet BESKONECHNYY krug bez edinogo sleda.
+    :: 20 - eto mnogo dlya normalnoy raboty i malo dlya petli.
+    if !SELFRESTARTS! GTR 20 (
+        echo [X] Saika perezapuskaetsya po krugu - ostanavlivayus.
+        echo     Smotri logs\saika.log
+        pause
+        exit /b 1
+    )
+    timeout /t 2 /nobreak >nul
+    goto run
+)
 set /a RESTARTS+=1
 if %RESTARTS% GTR 3 (
     echo [X] Saika keeps crashing. See logs\doctor_report.json and logs\saika.log

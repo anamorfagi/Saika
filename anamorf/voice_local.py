@@ -14,11 +14,17 @@
 перебить можно из UI (interrupt), это осознанный компромисс v1.
 """
 import logging
+import re as _re_mod
 import queue
 import threading
 import time
 
 log = logging.getLogger("saika.voice_local")
+
+
+_re_dev = _re_mod.compile(
+    r'^\\s*(?:по умолчанию|авто|default|auto)\\s*[-—–:]\\s*',
+    _re_mod.IGNORECASE)
 
 
 class LocalVoiceLoop:
@@ -58,12 +64,76 @@ class LocalVoiceLoop:
             return True
         return False
 
+    # ---------- выбор устройства ----------
+    @staticmethod
+    def _pick_device(sd, want):
+        """Имя устройства -> его номер. None, если не просили конкретное.
+
+        Одно и то же устройство Windows отдаёт через несколько
+        подсистем. Порядок предпочтения: WASAPI (родная и самая
+        быстрая), затем WDM-KS, DirectSound, MME. Ничего не нашли —
+        возвращаем как было: пусть sounddevice скажет своё слово.
+        """
+        if not want:
+            return None
+        try:
+            apis = {i: (a.get("name") or "").lower()
+                    for i, a in enumerate(sd.query_hostapis())}
+            order = ("wasapi", "wdm-ks", "directsound", "mme")
+            best, best_rank = None, 99
+            for i, d in enumerate(sd.query_devices()):
+                if int(d.get("max_input_channels") or 0) < 1:
+                    continue
+                if want.lower() not in (d.get("name") or "").lower():
+                    continue
+                api = apis.get(d.get("hostapi"), "")
+                rank = next((n for n, key in enumerate(order) if key in api),
+                            len(order))
+                if rank < best_rank:
+                    best, best_rank = i, rank
+            if best is not None:
+                d = sd.query_devices(best)
+                log.info("Микрофон: «%s» через %s (вход №%d)",
+                         d.get("name"), apis.get(d.get("hostapi"), "?"), best)
+                return best
+            log.warning("Микрофон: устройства «%s» среди входов нет — "
+                        "беру системный по умолчанию", want)
+            return None
+        except Exception as e:
+            log.debug("выбор устройства: %s", e)
+            return want
+
     # ---------- захват микрофона ----------
     def _capture_loop(self, chunks: "queue.Queue"):
         import numpy as np
         import sounddevice as sd
         sr = self.cfg.get("stt.sample_rate", 16000)
+        # ПОДПИСЬ ИЗ ИНТЕРФЕЙСА — НЕ ЧАСТЬ ИМЕНИ (2026-09-01).
+        #
+        # В списке устройств первая строка подписана «По умолчанию — …».
+        # Эта подпись уехала в настройки вместе с именем, и получилось
+        # устройство «По умолчанию - Voicemeeter Out B1 (VB-Audio
+        # Voicemeeter VAIO)», которого в системе нет и быть не может.
+        # Микрофон падал при КАЖДОМ старте с ValueError, а выглядело это
+        # как «устройства нет» — хотя Voicemeeter стоял на месте.
+        # Поймано по чужой проге: у неё в том же списке ровно то же
+        # устройство подписано «Авто — Voicemeeter Out B1» и работает.
         device = self.cfg.get("mic.device") or None
+        if isinstance(device, str):
+            device = _re_dev.sub("", device).strip() or None
+        # ИМЯ — НЕ АДРЕС УСТРОЙСТВА (2026-09-01).
+        #
+        # Отрезав подпись, мы упёрлись в следующую стену:
+        # «Multiple input devices found for 'Voicemeeter Out B1 …'».
+        # Windows показывает ОДНО физическое устройство через несколько
+        # звуковых подсистем — WASAPI, MME, DirectSound, WDM-KS, — и у
+        # каждой свой вход с тем же именем. Поиск по имени находит их
+        # все сразу и честно отказывается выбирать за нас.
+        #
+        # Выбираем сами и осознанно: WASAPI первым (родная подсистема
+        # современной Windows, минимальная задержка), дальше по порядку.
+        # Отдаём номер, а не строку: номер однозначен.
+        device = self._pick_device(sd, device)
         block = int(sr * 0.25)  # чанки по 250 мс, как слал браузер
 
         def cb(indata, frames, t, status):

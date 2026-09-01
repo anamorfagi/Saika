@@ -432,21 +432,36 @@ def split(pcm16: np.ndarray, sr: int = SR, encoder=None):
         return whole
 
 
-def who(pcm16: np.ndarray, sr: int = SR):
-    """Чей это кусок: имя из карты голосов + уверенность, или ("", 0).
-    Для подписи разрезанных кусков: who_now() тут не годится — он про
-    «прямо сейчас в комнате», а кусок мог прозвучать три секунды назад."""
+def who_emb(pcm16: np.ndarray, sr: int = SR):
+    """То же, что who(), но ОТДАЁТ И САМ ВЕКТОР (2026-08-31).
+
+    ПОВОД — замер горячего пути. На каждый результат ECAPA кодировала
+    ОДИН И ТОТ ЖЕ кусок ДВАЖДЫ: здесь — чтобы назвать говорящего, и
+    следом в main.py — чтобы положить отпечаток в r["_env"] для
+    пересборки дорожек. Два прогона модели на GPU вместо одного, на
+    каждую фразу, в самом узком месте конвейера. Отдаём вектор наружу —
+    второй прогон становится не нужен, а смысл не меняется: это ровно
+    тот же эмбеддинг того же куска.
+    """
     try:
         from anamorf import voiceprint as vp
         enc = getattr(vp.S, "enc", None)
         reg = getattr(vp.S, "reg", None)
         if enc is None or reg is None:
-            return "", 0.0
+            return "", 0.0, None
         e = enc.encode(pcm16)
         vec = e[0] if isinstance(e, tuple) else e
         if vec is None:
-            return "", 0.0
+            return "", 0.0, None
         name, _sim, conf, _near = reg.match(vec)
-        return name, float(conf)
+        return name, float(conf), vec
     except Exception:
-        return "", 0.0
+        return "", 0.0, None
+
+
+def who(pcm16: np.ndarray, sr: int = SR):
+    """Чей это кусок: имя из карты голосов + уверенность, или ("", 0).
+    Для подписи разрезанных кусков: who_now() тут не годится — он про
+    «прямо сейчас в комнате», а кусок мог прозвучать три секунды назад."""
+    n, c, _ = who_emb(pcm16, sr)
+    return n, c

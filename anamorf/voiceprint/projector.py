@@ -40,6 +40,8 @@ class Projector:
         self._scale = None          # поосевая нормировка входа
         self._comp = None           # (2, dim) для mirror/pca
         self._umap = None
+        self._lo_lin = None      # запасной размах для линейной проекции
+        self._hi_lin = None
         self._lo = np.array([-1.0, -1.0], np.float32)   # границы для растяжки
         self._hi = np.array([1.0, 1.0], np.float32)
 
@@ -103,12 +105,28 @@ class Projector:
         with self._lock:
             self._mean, self._scale = mean, scale
             self._comp, self._umap, self.kind, self.dim = comp, um, kind, dim
+        # ═══ МАСШТАБ СВОЙ У КАЖДОЙ ПРОЕКЦИИ (2026-08-31) ═══
+        # Здесь считался ОДИН размах — по той проекции, которая обучилась
+        # (обычно UMAP). А в работе `um.transform` падает на известном баге
+        # umap-learn (NNDescent без _rp_forest), код честно откатывается на
+        # линейную — и натягивает её на UMAP-овский размах. У PCA он в разы
+        # меньше, поэтому всё облако сжималось в полоску и упиралось в
+        # зажим: владелец увидел «жёстко расплющило». Держим оба размаха.
+        def _range(P):
+            lo = np.percentile(P, 2, axis=0)
+            hi = np.percentile(P, 98, axis=0)
+            span = np.maximum(hi - lo, 1e-6)
+            return lo.astype(np.float32), (lo + span).astype(np.float32)
+
         P = self.transform(X, _raw=True)
-        lo = np.percentile(P, 2, axis=0)
-        hi = np.percentile(P, 98, axis=0)
-        span = np.maximum(hi - lo, 1e-6)
+        lo, hi = _range(P)
         with self._lock:
-            self._lo, self._hi = lo.astype(np.float32), (lo + span).astype(np.float32)
+            self._lo, self._hi = lo, hi
+            # запасной размах — по линейной проекции тех же данных
+            try:
+                self._lo_lin, self._hi_lin = _range(Z @ comp.T)
+            except Exception:
+                self._lo_lin, self._hi_lin = lo, hi
         log.info("Проекция голосов обучена: %s, векторов %d", kind, len(X))
         return kind
 
@@ -126,7 +144,21 @@ class Projector:
             try:
                 P = np.asarray(um.transform(Z), dtype=np.float32)
             except Exception as e:
-                log.warning("UMAP.transform упала (%s) — считаю линейно", e)
+                # ПАДАЕТ — ЗНАЧИТ ПАДАЕТ НАВСЕГДА (2026-08-31). Это не
+                # случайный сбой, а состояние модели: NNDescent внутри
+                # UMAP теряет _rp_forest и уже не восстановится. Раньше мы
+                # ловили исключение на КАЖДОМ чанке речи, писали в лог и
+                # считали линейно — но по UMAP-овскому размаху, отчего
+                # картинку плющило. Переключаемся один раз, честно, и
+                # берём линейный размах.
+                with self._lock:
+                    if self.kind == "umap":
+                        self.kind = "pca"
+                        log.warning("UMAP.transform больше не работает (%s) "
+                                    "— перехожу на линейную проекцию с её "
+                                    "собственным масштабом", e)
+                    if self._lo_lin is not None:
+                        lo, hi = self._lo_lin, self._hi_lin
                 P = Z @ comp.T
         else:
             P = Z @ comp.T

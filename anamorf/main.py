@@ -14,6 +14,7 @@ import queue
 import re
 import subprocess
 import sys
+import collections
 import threading
 import time
 import uuid
@@ -320,6 +321,49 @@ BRAIN_KICK = {"ts": 0.0}      # когда последний раз сами п
 ORB_LIVE = {"b": [], "ts": 0.0, "hear": 0.0, "think": 0.0, "talk": 0.0}
 
 
+# ОДНА ФРАЗА — ОДНО ОБЛАЧКО (2026-08-31).
+#
+# Замер по ролику снейлкика: WER 37.9%, а если выкинуть повторы — 27.1%.
+# Одиннадцать пунктов ошибки брались не из движка, а из ленты. Длинную
+# фразу режет мягкий обрыв: сначала уезжает то, что успело прозвучать
+# («...затащить куда-нибудь в какой-нибудь со»), следом — та же фраза
+# целиком и правильно («...в какой-нибудь сарай»). Обе оседали в ленте
+# отдельными облачками, и в стенограмме всё сказанное стояло дважды.
+#
+# Правильное поведение — не «показать обе», а ЗАМЕНИТЬ: у интерфейса для
+# этого давно есть stt_fix (правка приезжает и переписывает облачко на
+# месте, им же пользуется переспрос смыслом). Условие замены строгое:
+# новая фраза должна начинаться ровно теми же словами, что и предыдущая,
+# и быть длиннее — тогда это дочитанная та же самая реплика, а не похоже
+# сказанная соседняя.
+LAST_STT = {"pid": None, "words": [], "ts": 0.0, "who": ""}
+
+
+def _stt_words(t: str) -> list:
+    import re as _re
+    return _re.sub(r"[^\w ]+", " ", (t or "").lower().replace("ё", "е")).split()
+
+
+def _supersedes(evt: dict) -> bool:
+    """Новая реплика — дочитанная версия предыдущей?"""
+    try:
+        prev, new = LAST_STT["words"], _stt_words(evt.get("text"))
+        if not prev or len(new) <= len(prev):
+            return False
+        if time.time() - LAST_STT["ts"] > 25:
+            return False
+        if (evt.get("speaker") or "") != LAST_STT["who"]:
+            return False
+        same = 0
+        for a, b in zip(prev, new):
+            if a != b:
+                break
+            same += 1
+        return same >= max(4, int(len(prev) * 0.6))
+    except Exception:
+        return False
+
+
 def broadcast_event(evt: dict):
     """Разослать событие всем открытым вкладкам (websocket-очередям)."""
     try:
@@ -341,6 +385,35 @@ def broadcast_event(evt: dict):
         if evt.get("type") in ("stt", "tool", "say", "token", "delta",
                                "answer", "speak", "tts"):
             TALK["ts"] = time.time()
+    except Exception:
+        pass
+    # ЦВЕТ ГОЛОСА ЕДЕТ ВМЕСТЕ С РЕПЛИКОЙ (2026-08-31, владелец: «облачка
+    # в транскрибе соответствуют цвету голоса»). Интерфейс давно умеет
+    # красить облачко по m.speaker_color — но сервер это поле не слал, и
+    # все реплики выходили серыми. Красим здесь, в одном месте: у реестра
+    # есть цвет каждого голоса, тот же, что у его территории на карте.
+    try:
+        if evt.get("type") in ("stt", "stt_ignored") and evt.get("speaker") \
+                and not evt.get("speaker_color"):
+            from anamorf import voiceprint as _vpc
+            _c = (_vpc.S.reg.speakers.get(evt["speaker"]) or {}).get("color")
+            if _c:
+                evt["speaker_color"] = _c
+    except Exception:
+        pass
+    try:
+        if evt.get("type") == "stt" and evt.get("text"):
+            if _supersedes(evt) and LAST_STT["pid"]:
+                evt = {"type": "stt_fix", "pid": LAST_STT["pid"],
+                       "text": evt["text"], "was": " ".join(LAST_STT["words"]),
+                       "why": "дочитала фразу до конца"}
+                LAST_STT["words"] = _stt_words(evt["text"])
+                LAST_STT["ts"] = time.time()
+            else:
+                LAST_STT.update(pid=evt.get("pid"),
+                                words=_stt_words(evt["text"]),
+                                ts=time.time(),
+                                who=evt.get("speaker") or "")
     except Exception:
         pass
     for ws_queue in list(EVENT_CLIENTS):
@@ -780,7 +853,29 @@ _ATLAS = {"prev": None, "acc": [], "t": 0.0,
           "ch": {}}
 
 
+def _mute_soundcard_warning():
+    """«data discontinuity in recording» — не событие, а шум.
+
+    soundcard кричит об этом на каждый пропущенный блок. Один пропуск —
+    это ничто (карта потеряет кадр), а тысяча строк в консоли стоит
+    реального процессорного времени: каждая строка это формат, блокировка
+    и вывод в окно. Само опоздание лечится тем, что поток записи больше
+    ничего не считает (см. выше); а кричать об этом больше не надо.
+    """
+    try:
+        import warnings as _w
+        _w.filterwarnings("ignore", message=".*data discontinuity.*")
+        try:
+            from soundcard import SoundcardRuntimeWarning as _SW
+            _w.filterwarnings("ignore", category=_SW)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def _sysaudio_start():
+    _mute_soundcard_warning()
     """═══ ЗАХВАТ ТОГО, ЧТО РЕАЛЬНО ЗВУЧИТ В КОМПЬЮТЕРЕ (27.08.2026) ═══
 
     Владелец: «сейчас нажата СИСТЕМА, то есть она сейчас должна ВСЕ звуки
@@ -803,8 +898,23 @@ def _sysaudio_start():
     _th = _ATLAS.get("sys_th")
     if _th is not None and _th.is_alive():
         return
+    # ОШИБКА НЕ ДОЛЖНА ЗАЩЁЛКИВАТЬСЯ НАВСЕГДА (2026-08-31).
+    #
+    # Живой случай: в сборке не оказалось модуля soundcard. Захват один
+    # раз не поднялся, записал причину — и БОЛЬШЕ НЕ ПРОБОВАЛ НИКОГДА.
+    # Владелец запускал ролик, а в стенограмме была тишина; тесты этого
+    # не ловили, потому что реплей подаёт звук прямо в очередь, минуя
+    # захват. Модуль потом поставили на ходу — и это ничего не изменило
+    # бы: защёлка держала дверь закрытой до перезапуска приложения.
+    #
+    # Теперь причина живёт минуту. Пропало препятствие (доставили пакет,
+    # освободилось устройство, воткнули наушники) — следующая попытка
+    # поднимется сама. Жалуемся в журнал только когда причина СМЕНИЛАСЬ,
+    # иначе честная «нет loopback-устройства» забила бы журнал.
     if _ATLAS.get("sys_err2"):
-        return
+        if time.time() - float(_ATLAS.get("sys_err2_at") or 0) < 60:
+            return
+        _ATLAS["sys_err2"] = ""
     _ATLAS["sys_on"] = True
 
     def _loop():
@@ -815,24 +925,85 @@ def _sysaudio_start():
             # soundcard — он отдаёт выход обратно на вход штатно.
             import soundcard as _sc
             _spk = None
+            # ВЫШЕ 8 кГц ТОЖЕ ЕСТЬ ЗВУК (01.09.2026, владелец сравнил шкалы:
+            # у него центроид идёт до 11.3 кГц, у нас упирался в 7.6). Мы
+            # писали петлю на 16 кГц — всё выше 8 кГц (половина Найквиста)
+            # выбрасывалось ДО того, как что-то могло его увидеть. У птиц
+            # там половина энергии, у речи — все шипящие. Пишем на 48 кГц:
+            # карта получает полный диапазон, слуху отдаём прореженную
+            # копию 16 кГц, как он и ждёт.
+            _SR = int(CFG.get("atlas.capture_sr", 48000) or 48000)
+            _SRP = 16000
             try:
                 _def = _sc.default_speaker().name
             except Exception:
                 _def = ""
-            for _m in _sc.all_microphones(include_loopback=True):
-                if not getattr(_m, "isloopback", False):
+            # ═══ ПЕТЛЮ ВЫБИРАЕМ ПО ЗВУКУ, А НЕ ПО ИМЕНИ (2026-09-01) ═══
+            #
+            # Раньше брали петлю того выхода, который числится в системе
+            # «по умолчанию». Живой случай: ролик играет, индикация слуха
+            # горит, а фраз нет ни одной — потому что звук шёл на другой
+            # интерфейс (Focusrite), а петля исправно писала тишину с
+            # наушников. Догадаться по имени устройства нельзя никак.
+            #
+            # Поэтому: сначала слушаем каждую петлю по четверти секунды и
+            # берём ту, где ЕСТЬ звук. Тишина везде — возвращаемся к
+            # выходу по умолчанию и ждём: человек может включить звук
+            # позже, и следующая попытка снова померит.
+            _cands = [m for m in _sc.all_microphones(include_loopback=True)
+                      if getattr(m, "isloopback", False)]
+            _best, _best_db = None, -999.0
+            _отчёт = []
+            for _m in _cands:
+                try:
+                    with _m.recorder(samplerate=_SRP, channels=1,
+                                     blocksize=1600) as _r:
+                        _a = _r.record(numframes=int(_SRP * 0.25))
+                    _x = _np.asarray(_a, dtype=_np.float32).ravel()
+                    _rms = float(_np.sqrt(_np.mean(_x * _x)) + 1e-12)
+                    _db = 20.0 * _np.log10(_rms) if _rms > 1e-9 else -120.0
+                    _отчёт.append("%s %.0f дБ" % (_m.name[:34], _db))
+                    if _db > _best_db:
+                        _best, _best_db = _m, _db
+                except Exception as _pe:
+                    # занято монопольно — так и говорим, а не молчим
+                    _отчёт.append("%s НЕ ОТДАЁТ (%s)"
+                                  % (_m.name[:34], str(_pe)[:40]))
                     continue
-                if _def and _def[:18] in _m.name:
-                    _spk = _m
-                    break
-                if _spk is None:
-                    _spk = _m
+            # ЧТО ИМЕННО НАШЛОСЬ — В ЛОГ (01.09.2026, владелец: «у меня
+            # выбрана система, она должна хватать все звуки из системы»).
+            # Он прав, и когда она их не хватает, надо видеть почему: какие
+            # петли есть, сколько на каждой звука и какая отказала.
+            log.warning("Системный звук: петли — %s",
+                        "; ".join(_отчёт) if _отчёт else "ни одной")
+            if _best is not None and _best_db > -60.0:
+                _spk = _best
+                log.warning("Системный звук: нашла звук на «%s» (%.0f дБ) — "
+                            "слушаю её", _spk.name, _best_db)
+            else:
+                for _m in _cands:
+                    if _def and _def[:18] in _m.name:
+                        _spk = _m
+                        break
+                    if _spk is None:
+                        _spk = _m
+                if _spk is not None:
+                    log.warning("Системный звук: на всех петлях тишина — "
+                                "беру выход по умолчанию «%s». Если звук "
+                                "идёт на интерфейс с монопольным режимом "
+                                "(ASIO/Focusrite), петлю с него Windows не "
+                                "отдаёт: сними монополию в свойствах "
+                                "устройства или выведи звук на другой выход",
+                                _spk.name)
             if _spk is None:
                 _ATLAS["sys_err2"] = "нет loopback-устройства"
-                log.warning("Системный звук: loopback не найден")
+                _ATLAS["sys_err2_at"] = time.time()
+                if _ATLAS.get("sys_err2_said") != "нет loopback":
+                    _ATLAS["sys_err2_said"] = "нет loopback"
+                    log.warning("Системный звук: loopback не найден")
                 return
-            _SR = 16000
             log.warning("Системный звук: слушаю выход «%s» (loopback)", _spk.name)
+            _тихо_с = time.time()
             with _spk.recorder(samplerate=_SR, channels=1,
                                blocksize=int(_SR * 0.1)) as _rec:
                 while _ATLAS.get("sys_on"):
@@ -842,6 +1013,21 @@ def _sysaudio_start():
                         x = x.mean(axis=1)
                     if not x.size:
                         continue
+                    # ПЕТЛЮ ВЫБИРАЕМ ЗАНОВО, ЕСЛИ ОНА МОЛЧИТ (01.09.2026).
+                    # Выбор делался ОДИН раз, по четвертьсекундной пробе: если
+                    # в этот момент ничего не играло, бралась первая попавшаяся
+                    # (у владельца — «Наушники (Oculus Virtual Audio Device)»),
+                    # и карта потом стояла пустой часами при играющем звуке.
+                    # Молчит дольше минуты — идём выбирать снова.
+                    if float(_np.abs(x).max()) > 0.002:
+                        _тихо_с = time.time()
+                    elif time.time() - _тихо_с > float(
+                            CFG.get("atlas.loop_resilence_s", 60)):
+                        log.warning("Системный звук: на «%s» минуту тишина — "
+                                    "перевыбираю петлю", _spk.name)
+                        _ATLAS["sys_on"] = False
+                        _ATLAS["sys_th"] = None
+                        break
                     # ЗВУК ИЗ СИСТЕМЫ ИДЁТ В ТОТ ЖЕ СЛУХ, ЧТО И МИКРОФОН
                     # (27.08.2026, владелец: «карта рисует, а текста и
                     # голосов нет»). Раньше loopback кормил только карту —
@@ -849,25 +1035,82 @@ def _sysaudio_start():
                     # облачков диалога и дорожек голосов не появлялось в
                     # принципе. Кладём в общую очередь каналом "sys": там
                     # уже есть готовый путь — сегментатор, STT, ECAPA.
+                    # прослушка включена — свой же голос из наушников
+                    # в слух не пускаем (см. /api/monitor)
+                    if CFG.get("hearing.sys_pause", False):
+                        continue
+                    # ПОТОК ЗАПИСИ НИЧЕГО НЕ СЧИТАЕТ (01.09.2026).
+                    #
+                    # Я поставил сюда atlas_feed прямо в цикл записи — и он
+                    # стал считать сотню БПФ на каждый блок, пока звуковая
+                    # карта ждёт, когда у неё заберут следующий. Она не
+                    # дождалась: консоль залило «data discontinuity in
+                    # recording», процессор ушёл в полку, а печать этих
+                    # тысяч предупреждений добавила сверху.
+                    # Здесь теперь только «взял и положил». Считает отдельный
+                    # поток, и если он не поспевает — теряется кадр карты,
+                    # а не кусок записи.
+                    _AQ = _ATLAS.setdefault("q48", collections.deque(maxlen=8))
+                    _AQ.append((x.copy(), _SR))
+                    if not _ATLAS.get("q48_th"):
+                        _ATLAS["q48_th"] = True
+                        def _atlas_worker():
+                            while True:
+                                try:
+                                    _b, _sr2 = _AQ.popleft()
+                                except IndexError:
+                                    time.sleep(0.01); continue
+                                except Exception:
+                                    time.sleep(0.05); continue
+                                try:
+                                    atlas_feed(_b, "sys", _sr2)
+                                except Exception:
+                                    pass
+                        threading.Thread(target=_atlas_worker, daemon=True,
+                                         name="atlas-48").start()
+                    # СЛУХУ — 16 кГц: движки, VAD и отпечаток голоса живут на
+                    # них. Прореживаем со скользящим средним длиной в шаг —
+                    # без него всё, что выше 8 кГц, свернулось бы вниз и
+                    # стало призрачными словами в транскрибе.
+                    _k = max(1, int(round(_SR / 16000.0)))
+                    if _k > 1:
+                        _n = (x.size // _k) * _k
+                        if _n <= 0:
+                            continue
+                        x16 = x[:_n].reshape(-1, _k).mean(axis=1)
+                    else:
+                        x16 = x
                     _q = _AUDIO_LAB.get("q")
                     if _q is not None:
                         try:
-                            _q.put(("sys", (_np.clip(x, -1, 1) * 32767.0
+                            _q.put(("sys", (_np.clip(x16, -1, 1) * 32767.0
                                             ).astype(_np.int16)))
-                            continue
                         except Exception:
                             pass
-                    atlas_feed(x, "sys")
         except Exception as _e:
-            _ATLAS["sys_err2"] = str(_e)[:160]
-            log.warning("Системный звук не поднялся: %s", _ATLAS["sys_err2"])
+            _why = str(_e)[:160]
+            _ATLAS["sys_err2_at"] = time.time()
+            if _ATLAS.get("sys_err2_said") != _why:
+                _ATLAS["sys_err2_said"] = _why
+                log.warning("Системный звук не поднялся: %s (попробую снова "
+                            "через минуту)", _why)
+            _ATLAS["sys_err2"] = _why
+        finally:
+            # ФЛАГ «УЖЕ ЗАПУЩЕН» ОБЯЗАН СНИМАТЬСЯ (01.09.2026). Вот вторая
+            # половина сегодняшней беды с пустой картой. Повторная попытка
+            # написана честно — раз в минуту, — но добраться до неё было
+            # нельзя: поток умирал, а sys_on оставался True, и вызов
+            # _sysaudio_start() из atlas_feed стоял за условием
+            # «if not sys_on». Захват был мёртв до перезапуска программы, и
+            # ровно это владелец видел как «выбрана система, а карта пустая».
+            _ATLAS["sys_on"] = False
 
     _t = threading.Thread(target=_loop, daemon=True, name="sys-audio")
     _ATLAS["sys_th"] = _t
     _t.start()
 
 
-def atlas_feed(pcm, src="mic"):
+def atlas_feed(pcm, src="mic", sr=16000):
     """Кормится из аудиоцикла рядом с hearing.feed / voiceprint.feed."""
     try:
         # ПЕРЕЗАПУСК ЗАХВАТА БЕЗ ПЕРЕЗАПУСКА ПРОГРАММЫ (27.08.2026). Живая
@@ -891,9 +1134,31 @@ def atlas_feed(pcm, src="mic"):
         _mx = float(_np.abs(a).max())
         if _mx > 1.5:
             a = a / 32768.0
-        sr = 16000
-        n = 320                      # 20 мс
-        win = _np.hanning(512).astype(_np.float32)
+        # ОКНО ЗАДАНО ВО ВРЕМЕНИ, А НЕ В ОТСЧЁТАХ (01.09.2026): при разной
+        # частоте дискретизации 8 мс остаются 8 мс.
+        # ОКНО КОРОЧЕ, ИНАЧЕ СЛОГ НЕ ВИДЕН (01.09.2026). Замерил на записи
+        # соловья из ролика Arese: слог птицы — это спад по частоте с 7.5
+        # до 3 кГц за 16–30 мс. Окно 32 мс накрывает его ЦЕЛИКОМ одним
+        # кадром: на спектрограмме при 32 мс вместо спада видно жирное
+        # пятно, при 8 мс — чистый штрих. Поэтому у него один слог даёт
+        # дугу из десятка импульсов, а у нас давал одну точку, и никакой
+        # петли из повторов сложиться не могло.
+        # Считаем короче: 8 мс окно, 4 мс шаг. Кадров становится в пять раз
+        # больше (250 в секунду против 50), но уходят только звучащие —
+        # тихие отсекает порог ниже.
+        # ШЕСТЬДЕСЯТ КАДРОВ В СЕКУНДУ — ЕГО СОБСТВЕННОЕ ЧИСЛО (01.09.2026).
+        # В ролике «Visualizing Bird Songs» он пишет прямо: «Amplitude from
+        # each recorded audio signal is sampled at 60 frames per second and
+        # translated into data points distributed in 3D space». То есть одна
+        # точка = один кадр при 60 к/с, а не при 250, как считал я. Заодно
+        # вчетверо меньше нагрузка на канал.
+        # Окно берём чуть длиннее шага (16 мс при шаге 16.7), чтобы между
+        # кадрами не оставалось непрослушанных промежутков.
+        _wms = float(CFG.get("atlas.win_ms", 16.0) or 16.0)
+        _hms = float(CFG.get("atlas.hop_ms", 16.667) or 16.667)
+        _W = max(32, int(round(sr * _wms / 1000.0)))
+        n = max(8, int(round(sr * _hms / 1000.0)))
+        win = _np.hanning(_W).astype(_np.float32)
         # setdefault, а не ["ch"]: живая правка меняет ТОЛЬКО код функций,
         # а словарь _ATLAS в работающем процессе остаётся прежним — новых
         # ключей в нём нет, и обращение по ключу роняло всю карту молча
@@ -901,9 +1166,9 @@ def atlas_feed(pcm, src="mic"):
         _CH = _ATLAS.setdefault("ch", {}).setdefault(
             src, {"prev": None, "acc": [], "t": 0.0, "idx": 0})
         _i = _CH.get("idx", 0)
-        for off in range(0, max(0, len(a) - 512), n):
+        for off in range(0, max(0, len(a) - _W), n):
             _i += 1
-            fr = a[off:off + 512] * win
+            fr = a[off:off + _W] * win
             rms = float(_np.sqrt((fr * fr).mean()))
             # ПОРОГ НЕ ЗАШИТ (27.08.2026): звук из системы может приходить
             # тихим (утечка из наушников, тихий источник) — 0.004 отсекало
@@ -911,14 +1176,17 @@ def atlas_feed(pcm, src="mic"):
             if rms < float(CFG.get("atlas.min_rms", 0.0012)):
                 continue
             sp = _np.abs(_np.fft.rfft(fr))
-            fq = _np.fft.rfftfreq(512, 1 / sr)
+            fq = _np.fft.rfftfreq(_W, 1 / sr)
             # ПОЛОСА ДО НАЙКВИСТА, А НЕ ДО 5.5 кГц (27.08.2026). У Arese
             # шкала центроида идёт от 0 до 8 кГц, и это не украшение: у
             # птиц половина энергии выше пяти килогерц. Обрезая полосу на
             # 5500, мы считали центроид по огрызку спектра — он упирался в
             # потолок и терял именно ту разницу между трелями, из которой у
             # него и складывается рисунок.
-            m = (fq >= 60) & (fq <= 7900)
+            # ПОТОЛОК ПОЛОСЫ — ОТ ЧАСТОТЫ ДИСКРЕТИЗАЦИИ, А НЕ 7900 НАВСЕГДА
+            _hi = min(float(CFG.get("atlas.band_hi", 16000) or 16000),
+                      sr * 0.48)
+            m = (fq >= 60) & (fq <= _hi)
             sp = sp[m]; fq = fq[m]
             tot = float(sp.sum()) + 1e-9
             cent = float((fq * sp).sum() / tot)
@@ -945,7 +1213,8 @@ def atlas_feed(pcm, src="mic"):
             # их в три оси будет карта — она же и подстраивает базис на лету.
             mb = _ATLAS.get("mel")
             if mb is None or mb.shape[1] != sp.shape[0]:
-                _e = _np.linspace(_np.log(60.0), _np.log(7900.0), 16)
+                # полосы пересчитываются под новое окно автоматически
+                _e = _np.linspace(_np.log(60.0), _np.log(_hi), 16)
                 _e = _np.exp(_e)
                 mb = _np.zeros((14, sp.shape[0]), dtype=_np.float32)
                 for _b in range(14):
@@ -996,13 +1265,33 @@ def atlas_feed(pcm, src="mic"):
         # живом проигрывании (сервер запускает только владелец) - если
         # WS начнёт захлёбываться, это будет видно как отставание счётчика,
         # можно поднять обратно.
+        # ПУЛЬС КАРТЫ (01.09.2026): раз в минуту говорим, сколько кадров
+        # реально ушло в браузер. Пустая карта при живом звуке — это либо
+        # «не посчитали», либо «посчитали, но не отправили», и без счётчика
+        # эти два случая неразличимы.
+        _k = "cnt_" + src
+        _ATLAS[_k] = _ATLAS.get(_k, 0) + len(_CH["acc"])
+        if now - _ATLAS.get("cnt_t", 0) > 60:
+            _ATLAS["cnt_t"] = now
+            log.info("Карта звуков: за минуту кадров — микрофон %d, система %d "
+                     "(порог %.4f). Карта показывает только выбранный кнопкой "
+                     "канал: если кадры идут не тем каналом, она будет пустой.",
+                     _ATLAS.get("cnt_mic", 0), _ATLAS.get("cnt_sys", 0),
+                     float(CFG.get("atlas.min_rms", 0.0012)))
+            _ATLAS["cnt_mic"] = 0; _ATLAS["cnt_sys"] = 0
         if _CH["acc"] and now - _CH["t"] > 0.02:
             _CH["t"] = now
-            fr_ = _CH["acc"][-40:]
+            fr_ = _CH["acc"][-160:]
             _CH["acc"] = []
             broadcast_event({"type": "atlas", "fr": fr_, "src": src})
-    except Exception:
-        pass
+    except Exception as _ae:
+        # НЕМОЙ EXCEPT — ЭТО ЛОВУШКА (01.09.2026). Карта молчала, а лог был
+        # чист: любая ошибка здесь просто съедалась. Говорим о ней — но один
+        # раз на текст, чтобы не залить лог на каждом кадре.
+        _t = str(_ae)[:200]
+        if _ATLAS.get("feed_err_said") != _t:
+            _ATLAS["feed_err_said"] = _t
+            log.warning("Карта звуков: кадр не посчитался — %s", _t, exc_info=True)
 
 
 def _spawn_watchdog():
@@ -1061,6 +1350,161 @@ def hearing_page():
     if not p.exists():
         return JSONResponse({"error": "нет ui/hearing.html"}, status_code=404)
     return FileResponse(p, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/voices")
+def voices_page():
+    """Сравнение кодировщиков бок о бок: слева новый, справа старый.
+    Отдельная страница — главную не трогаем (2026-08-31, просьба владельца)."""
+    p = ROOT / "ui" / "voices.html"
+    if not p.exists():
+        return JSONResponse({"error": "нет ui/voices.html"}, status_code=404)
+    return FileResponse(p, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/ab")
+def api_ab():
+    try:
+        from anamorf.voiceprint.ab import AB_COMPARE
+        return AB_COMPARE.snapshot()
+    except Exception as e:
+        return {"on": False, "error": str(e)[:200]}
+
+
+@app.post("/api/ab")
+def api_ab_set(body: dict = None):
+    """on/off сравнения и сброс кластеров обеих сторон."""
+    body = body or {}
+    try:
+        from anamorf.voiceprint.ab import AB_COMPARE
+        if "on" in body:
+            CFG.set("voiceprint.ab_compare", bool(body["on"]))
+        if "old" in body:
+            # СТАРАЯ ГОЛОВА ПО КНОПКЕ (2026-08-31): ECAPA поднимается только
+            # когда её попросили сравнить, и грузится в фоне.
+            AB_COMPARE.want_old = bool(body["old"])
+        if body.get("reset"):
+            AB_COMPARE.reset()
+        return AB_COMPARE.snapshot()
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.get("/api/vadtrace")
+def api_vadtrace(n: int = 200):
+    """Покадровая правда о нарезке: что услышали и что с этим сделали.
+
+    Смотреть после потерянной фразы: видно громкость каждого кадра,
+    решение нейронки, действующий порог и причину. Пустой ответ —
+    самописец выключен (stt.vad.trace)."""
+    try:
+        from anamorf.stt.manager import VadSegmenter as _V
+        rows = list(_V.TRACE)[-int(n):]
+        if not rows:
+            return {"on": bool(CFG.get("stt.vad.trace", False)), "rows": [],
+                    "note": "самописец пуст — включи stt.vad.trace"}
+        lost = [r for r in rows if not r["voice"] and (r.get("p") or 0) > 0.2]
+        return {"on": True, "rows": rows, "кадров": len(rows),
+                "подозрительных": len(lost)}
+    except Exception as e:
+        return {"on": False, "error": str(e)[:200]}
+
+
+@app.post("/api/monitor")
+def api_monitor(body: dict = None):
+    """ПРОСЛУШКА СЕБЯ ГЛУШИТ СЛУХ ИЗ СИСТЕМЫ (2026-09-01).
+
+    Владелец включает «прослушать этот микрофон» — свой голос идёт в
+    наушники. А петля системного звука слушает ровно эти наушники, и
+    та же фраза приезжает вторым путём: одна и та же реплика пишется
+    дважды, с разной частотой и разными подписями («микрофон» и «с
+    компьютера»). Это не ошибка распознавания, это два входа на один
+    голос.
+
+    Пока прослушка включена, системный канал в слух не подаём. Сам
+    захват не гасим: поднять его заново стоит секунды, а тут человек
+    щёлкает туда-сюда.
+    """
+    body = body or {}
+    on = bool(body.get("on"))
+    CFG.set("hearing.sys_pause", on)
+    log.warning("Прослушка %s — слух из системы %s",
+                "включена" if on else "выключена",
+                "приглушён" if on else "снова слышит")
+    return {"ok": True, "sys_pause": on}
+
+
+@app.post("/api/mark")
+def api_mark(body: dict = None):
+    """РАЗМЕТКА РЕЧИ ПО ЛЮДЯМ — ЭТАЛОН, А НЕ ОЩУЩЕНИЕ (2026-08-31).
+
+    Владелец размечает прямо в ленте разговора: выделил слова, сказал,
+    чей это голос, нажал Enter. Каждое такое закрепление приезжает сюда
+    и ложится строкой в marked.jsonl.
+
+    Почему на диск, а не в память вкладки: разметку делают кусками по
+    пять минут, между ними прога живёт своей жизнью и переучивает код на
+    ходу. Потерять полчаса чужой работы из-за перезагрузки вкладки —
+    непозволительно. Файл дописывается, никогда не переписывается.
+    """
+    body = body or {}
+    try:
+        # ЭТАЛОННЫЙ ДОКУМЕНТ (2026-08-31). Владелец выходит из разметки —
+        # и вся выправленная им речь ложится рядом с тем, что услышала
+        # система: «heard» против «truth», пословно, плюс всё, что система
+        # знала о звуке в тот момент (движок, задержка, частота, громкость,
+        # уверенность, играла ли музыка). Это и есть материал, по которому
+        # ищутся закономерности: не «здесь ошибка», а «ошибки живут вот
+        # при таких условиях».
+        if body.get("kind") == "doc":
+            rows = body.get("rows") or []
+            fp = resolve("slux_test/snailkik_dnk/reference.jsonl")
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            add = fix = 0
+            with open(fp, "a", encoding="utf-8") as f:
+                for r in rows:
+                    add += int(r.get("added") or 0)
+                    fix += int(r.get("fixed") or 0)
+                    r["ts"] = body.get("ts")
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            log.warning("Эталон: %d фраз, дописано слов %d, исправлено %d "
+                        "-> %s", len(rows), add, fix, fp.name)
+            return {"ok": True, "n": len(rows), "added": add, "fixed": fix}
+        spk = str(body.get("speaker", "")).strip()
+        txt = str(body.get("text", "")).strip()
+        if not spk or not txt:
+            return {"ok": False, "error": "нужны и говорящий, и текст"}
+        fp = resolve("slux_test/snailkik_dnk/marked.jsonl")
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        row = {"ts": body.get("ts"), "speaker": spk, "color":
+               body.get("color", ""), "text": txt[:2000],
+               "wi": body.get("wi"), "meta": str(body.get("meta", ""))[:200]}
+        with open(fp, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        n = sum(1 for _ in open(fp, encoding="utf-8"))
+        log.info("Разметка: «%s» -> %s (всего кусков %d)",
+                 txt[:48], spk, n)
+        return {"ok": True, "n": n}
+    except Exception as e:
+        log.warning("Разметка не записалась: %s", e)
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.get("/api/mark")
+def api_mark_list(n: int = 200):
+    """Что уже размечено — чтобы видеть объём работы и не делать дважды."""
+    try:
+        fp = resolve("slux_test/snailkik_dnk/marked.jsonl")
+        if not fp.exists():
+            return {"rows": [], "n": 0, "speakers": []}
+        rows = [json.loads(l) for l in open(fp, encoding="utf-8") if l.strip()]
+        who = {}
+        for r in rows:
+            who[r.get("speaker", "")] = who.get(r.get("speaker", ""), 0) + 1
+        return {"rows": rows[-int(n):], "n": len(rows),
+                "speakers": sorted(who.items(), key=lambda kv: -kv[1])}
+    except Exception as e:
+        return {"rows": [], "n": 0, "error": str(e)[:200]}
 
 
 # ---------- собственный веб-аватар (three-vrm, 2026-07-25) ----------
@@ -1253,8 +1697,27 @@ def status():
             _s._saika_ecapa_v1 = True
             try:
                 CFG.set("stt.fallback_order", ["gigaam", "vosk", "tone"])
-                CFG.set("voiceprint.encoder", "ecapa")
-                CFG.set("voiceprint.device", "cpu")
+                # БОЛЬШЕ НЕ ПРИБИВАЕМ ECAPA И ПРОЦЕССОР (2026-08-31). Эти
+                # две строки были одноразовой миграцией, но флаг живёт в
+                # процессе — и они выполнялись НА КАЖДОМ СТАРТЕ: любая
+                # смена кодировщика или устройства в конфиге и пульте
+                # молча откатывалась при следующем подъёме. Именно поэтому
+                # ECAPA считалась на процессоре (2469мс на разрез), а
+                # ReDimNet2 не поднималась. «auto» = ReDimNet2 первой,
+                # ECAPA запасной; устройство — по наличию видеокарты.
+                if CFG.get("voiceprint.encoder") in (None, "ecapa"):
+                    CFG.set("voiceprint.encoder", "auto")
+                if CFG.get("voiceprint.device") in (None, "cpu"):
+                    CFG.set("voiceprint.device", "auto")
+                # СТАРОЕ ЗНАКОМСТВО ВЫКЛЮЧЕНО (2026-08-31): auto_meet из
+                # одного центроида и пересборка дорожек _regroup спорили
+                # бы с новой кластеризацией (voiceprint/tracks.py) за одни
+                # и те же имена. Вернуть: voiceprint.auto_meet=true,
+                # voiceprint.regroup_every=5.
+                if CFG.get("voiceprint.auto_meet") is None:
+                    CFG.set("voiceprint.auto_meet", False)
+                if CFG.get("voiceprint.regroup_every") is None:
+                    CFG.set("voiceprint.regroup_every", 0)
 
                 def _reload_ecapa():
                     try:
@@ -1275,21 +1738,19 @@ def status():
                             "(пересборка в фоне)")
             except Exception:
                 pass
-        # РАЗГРУЗКА GPU: мозг 9B не живёт вместе с клон-голосом на 16ГБ и
-        # душит слух. Переключаем на лёгкий Gemma-4-E4B вживую (2026-08-25,
-        # «делай всё что нужно»). В фоне: switch_model выгружает 9B и греет
-        # Gemma — это секунды. Владелец может вернуть 9B в панели в любой миг.
-        if not getattr(_s, "_saika_gemma_v1", False):
-            _s._saika_gemma_v1 = True
-            def _to_gemma():
-                try:
-                    from anamorf.llm import manager as _lm
-                    CFG.set("llm.model", "gemma-4-E4B-it-Q4_K_M")
-                    r = _lm.switch_model("llamacpp", "gemma-4-E4B-it-Q4_K_M")
-                    log.warning("Мозг -> Gemma-4-E4B (разгрузка GPU для слуха): %s", r)
-                except Exception as _e:
-                    log.warning("Переключение на Gemma не удалось: %s", _e)
-            threading.Thread(target=_to_gemma, daemon=True, name="to-gemma").start()
+        # ЗАШИТОЕ ПЕРЕКЛЮЧЕНИЕ НА GEMMA УБРАНО (01.09.2026).
+        #
+        # Здесь стоял костыль от 25.08: на КАЖДОМ старте он молча приказывал
+        # llm.model = gemma-4-E4B и грузил её в видеопамять. Тогда это было
+        # разовой мерой «разгрузить карту», но осталось навсегда — и делало
+        # ровно три недопустимые вещи:
+        #   • грузил модель, которой нет в верху рейтинга (владелец: «какого
+        #     хуя загружается модель даже не из рейтинга»);
+        #   • не смотрел на llm.off — мозги выключены, а модель в памяти;
+        #   • перебивал выбор человека при каждом запуске.
+        # Сегодня из-за занятой видеопамяти система трижды упала с
+        # VIDEO_TDR_ERROR (0x116, «недостаточно ресурсов»). Модель выбирает
+        # лестница рейтинга и человек, а не строчка в коде.
         # повторная пересборка ECAPA после фикса copy-strategy (v2)
         if not getattr(_s, "_saika_ecapa_v2", False):
             _s._saika_ecapa_v2 = True
@@ -1322,6 +1783,20 @@ def status():
             if _cf.exists():
                 _c = _j2.loads(_cf.read_text(encoding="utf-8"))
                 _seq = int(_c.get("seq", 0))
+                # ПАМЯТЬ О ВЫПОЛНЕННОМ ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (2026-08-31,
+                # живая петля 18:37-18:39): команда «restart» с seq 9
+                # осталась в файле, свежий процесс стартует со счётчиком 0,
+                # видит 9 > 0 — и снова перезапускается. Каждые 50 секунд,
+                # бесконечно. Счётчик читаем из ack-файла: что уже
+                # подтверждено — второй раз не выполняем.
+                if not hasattr(_s2, "_saika_ctl_seq"):
+                    try:
+                        _ackf = DATA_ROOT / "data" / "eval_ctl_ack.json"
+                        _s2._saika_ctl_seq = int(_j2.loads(
+                            _ackf.read_text(encoding="utf-8")).get("seq", 0)) \
+                            if _ackf.exists() else 0
+                    except Exception:
+                        _s2._saika_ctl_seq = 0
                 if _seq > int(getattr(_s2, "_saika_ctl_seq", 0)):
                     _s2._saika_ctl_seq = _seq
                     _cmd = str(_c.get("cmd", ""))
@@ -1330,8 +1805,24 @@ def status():
                         if _cmd == "ping":
                             _ack["info"] = "pong"
                         elif _cmd == "cfg":
-                            CFG.set(_c["key"], _c["val"])
-                            _ack["info"] = "%s=%s" % (_c["key"], _c["val"])
+                            # ЧИСЛО ДОЛЖНО ЛОЖИТЬСЯ ЧИСЛОМ (2026-08-31).
+                            # Канал команд текстовый, и «900» уезжало в
+                            # настройки строкой. Дальше её сравнивают с
+                            # числом, Python бросает TypeError, ошибка
+                            # гаснет выше по стеку — и ручка «работает»
+                            # только на словах. Приводим здесь, один раз
+                            # для всех, кто пользуется каналом.
+                            _v = _c["val"]
+                            if isinstance(_v, str):
+                                _t = _v.strip()
+                                if re.fullmatch(r"-?\d+", _t):
+                                    _v = int(_t)
+                                elif re.fullmatch(r"-?\d*\.\d+", _t):
+                                    _v = float(_t)
+                                elif _t.lower() in ("true", "false"):
+                                    _v = (_t.lower() == "true")
+                            CFG.set(_c["key"], _v)
+                            _ack["info"] = "%s=%r" % (_c["key"], _v)
                         elif _cmd == "getcfg":
                             _ack["info"] = repr(CFG.get(_c["key"]))
                         elif _cmd == "bench":
@@ -1447,8 +1938,27 @@ def status():
                             _va = str(_c.get("act", ""))
                             if _va == "clear":
                                 _vr = voiceprint.clear_map()
-                                _ack["info"] = ("карта очищена, убрано %s" %
-                                                _vr.get("removed"))
+                                # ЧИСТИМ ВСЁ, А НЕ ПОЛОВИНУ (2026-08-31).
+                                # clear_map убирал карту и реестр, но живые
+                                # ДОРОЖКИ оставались: после «очистить» прогон
+                                # шёл по старым кластерам, ни одного нового не
+                                # заводилось, и в журнале было пусто — будто
+                                # слух не работает. Чистим и дорожки, и обе
+                                # головы панели сравнения.
+                                _rt = []
+                                try:
+                                    from anamorf.voiceprint.tracks import TRACKS
+                                    TRACKS.reset(); _rt.append("дорожки")
+                                except Exception as _te:
+                                    log.debug("дорожки не сброшены: %s", _te)
+                                try:
+                                    from anamorf.voiceprint.ab import AB_COMPARE
+                                    AB_COMPARE.reset(); _rt.append("сравнение")
+                                except Exception as _te:
+                                    log.debug("сравнение не сброшено: %s", _te)
+                                _ack["info"] = (
+                                    "карта очищена, убрано %s; сброшено: %s"
+                                    % (_vr.get("removed"), ", ".join(_rt) or "—"))
                             elif _va == "forget":
                                 voiceprint.forget(str(_c.get("who", "")))
                                 _ack["info"] = "забыт " + str(_c.get("who", ""))
@@ -1516,6 +2026,14 @@ def status():
                                 _ack["info"] = "openurl: " + str(_oe)[:80]
                         elif _cmd == "restart":
                             _ack["info"] = "restarting(code7)"
+                            # подтверждение — до выхода, иначе следующий
+                            # процесс выполнит restart ещё раз (см. выше)
+                            try:
+                                (DATA_ROOT / "data" / "eval_ctl_ack.json"
+                                 ).write_text(_j2.dumps(_ack, ensure_ascii=False),
+                                              encoding="utf-8")
+                            except Exception:
+                                pass
                             def _rst():
                                 time.sleep(0.6)
                                 try:
@@ -8280,6 +8798,44 @@ def _impulse_loop():
 
 
 # ---------------------- WebSocket ----------------------
+@app.websocket("/ws/watch")
+async def ws_watch(ws: WebSocket):
+    """ТОЛЬКО СМОТРЕТЬ, НИЧЕГО НЕ СЛУШАТЬ (2026-08-31).
+
+    Зачем отдельная дверь. Каждое подключение к /ws поднимает СВОЙ
+    конвейер слуха: свою очередь звука, свою нарезку, свой поток
+    распознавания — и вдобавок перехватывает _AUDIO_LAB["q"], куда
+    подаёт реплей. Пока вкладка была одна, это было незаметно. Стоило
+    открыть карту голосов рядом с основным окном — и в системе стало
+    два конвейера: один жуёт звук, второй ждёт, а реплей уходил тому,
+    кто подключился последним. Тест выглядел так, будто слух умер.
+
+    Карте голосов конвейер не нужен вовсе: она только СМОТРИТ на чужие
+    события. Здесь мы отдаём ей ленту событий и больше ничего."""
+    try:
+        if _browser_cross_site(ws.headers, ws.headers.get("host", "")):
+            await ws.close(code=4403)
+            return
+    except Exception:
+        pass
+    await ws.accept()
+    out: "queue.Queue" = queue.Queue()
+    EVENT_CLIENTS.add(out)
+    try:
+        out.put({"type": "hello", "boot": BOOT_ID, "watch": True})
+        while True:
+            item = await asyncio.get_event_loop().run_in_executor(None, out.get)
+            if item is None:
+                break
+            if isinstance(item, bytes):
+                continue          # звук наблюдателю не нужен
+            await ws.send_text(json.dumps(item, ensure_ascii=False))
+    except Exception:
+        pass
+    finally:
+        EVENT_CLIENTS.discard(out)
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     # Вебсокет мимо http-middleware, поэтому охрана здесь отдельно: через
@@ -8844,36 +9400,129 @@ async def ws_endpoint(ws: WebSocket):
     #      накопленное и подменяет черновик правильным текстом со знаками;
     #   3. чистовик — конец фразы, как раньше, уходит в диалог и стенограмму.
     # Живёт в паузах потока распознавания: готовые фразы всегда важнее.
-    POLISH = {"ts": 0.0, "n": 0}
+    POLISH = {"ts": 0.0, "n": 0, "why": {}, "said": 0.0}
+
+    def _pw(why):
+        """Почему черновик промолчал. Считаем поводы и раз в пять секунд
+        показываем — иначе «живого текста нет» остаётся загадкой без
+        единой зацепки, а гадать по такому поводу мы уже наелись."""
+        POLISH["why"][why] = POLISH["why"].get(why, 0) + 1
+        now = time.monotonic()
+        if now - POLISH.get("said", 0) > 5.0:
+            POLISH["said"] = now
+            if CFG.get("stt.polish_debug", False):
+                log.info("Черновик молчит: %s", ", ".join(
+                    "%s×%d" % kv for kv in sorted(
+                        POLISH["why"].items(), key=lambda kv: -kv[1])[:6]))
+            POLISH["why"] = {}
 
     def _live_polish():
-        if not CFG.get("stt.live_polish", True) or stt.is_streaming():
-            return
-        # движок медленнее двух секунд на кусок — перечитывание не успеет
-        # за собственным циклом и только заткнёт очередь настоящих фраз
-        if HEAR_STAT["stt_ms"] > 2000:
-            return
+        if not CFG.get("stt.live_polish", True):
+            return _pw("выключен")
+        if stt.is_streaming():
+            return _pw("движок и так потоковый")
+        # УСТУПИТЬ ДОРОГУ, А НЕ ЗАМОЛЧАТЬ НАВСЕГДА (2026-08-31). Здесь
+        # стояло `stt_ms > 2000` — и живой текст пропадал ровно тогда,
+        # когда он нужнее всего: под нагрузкой (клон-голос + LLM на той же
+        # карте) GigaAM думает 2.5-3.9с на кусок, сторож срабатывает на
+        # четвёртой фразе и молчит до конца разговора. Разбор сессии
+        # 31.08 13:01-13:24: перечитывание не сработало НИ РАЗУ.
+        # Настоящее условие другое — готовые фразы всегда важнее
+        # черновика, значит достаточно молчать, пока в очереди кто-то
+        # есть, а не отключаться по абсолютному числу миллисекунд.
+        # ═══ ЖИВОЙ ТЕКСТ ОБЯЗАН ИДТИ ВО ВРЕМЯ РЕЧИ (2026-08-31) ═══
+        # Здесь стояло `seg_q.qsize() > 0` — «молчим, пока в очереди есть
+        # готовые фразы». На разговоре с паузами это работает, а на
+        # сплошной речи очередь пуста практически никогда, и черновик не
+        # выходил НИ РАЗУ: у владельца текст просто падал целыми фразами
+        # через две секунды, а «слова, растущие на глазах» не появлялись
+        # вовсе. Проверено живьём: 29 фраз пришло, черновиков ноль.
+        #
+        # Уступать дорогу всё равно надо — готовая фраза важнее черновика.
+        # Но уступать НАКОПЛЕННОЙ очереди, а не самому факту, что в ней
+        # что-то лежит: одна фраза в работе — это норма разговора, а вот
+        # три подряд значит, что движок отстал и ему не до черновиков.
+        if seg_q.qsize() >= int(CFG.get("stt.polish_skip_q", 3) or 3):
+            return _pw("очередь фраз")
+        if HEAR_STAT["stt_ms"] > float(
+                CFG.get("stt.polish_max_ms", 4500) or 4500):
+            return _pw("движок думает слишком долго")
         now = time.monotonic()
         # 0.55с (2026-08-15, задача владельца «сделать распознавание текста
         # мгновенным»). Шаг подпирается снизу реальной ценой движка: gigaam
         # на свободном GPU тратит 200-400мс на кусок, значит перечитывать
         # можно вдвое чаще, чем раньше, и очередь настоящих фраз всё равно
         # не заткнётся — она всегда важнее и разбирается первой.
-        wait = max(float(CFG.get("stt.polish_every_s", 0.55)),
-                   HEAR_STAT["stt_ms"] / 1000 * 1.2)
+        # `or` — не украшение: в config.default.json эти ключи лежат
+        # как null, а CFG.get отдаёт None для СУЩЕСТВУЮЩЕГО ключа, и
+        # float(None) роняет поток (см. ниже про polish_grow_s).
+        # ШАГ ЧЕРНОВИКА НЕ ДОЛЖЕН ЗАВИСЕТЬ ОТ ЧУЖОЙ МЕДЛИТЕЛЬНОСТИ
+        # (2026-08-31). Здесь шаг подпирался снизу временем РАЗБОРА
+        # ГОТОВОЙ ФРАЗЫ: движок думает 2с — и черновик тоже раз в 2.4с.
+        # Но черновик читает короткий хвост, а не всю фразу, и стоит
+        # заметно дешевле. Привязка была не к своей цене, а к чужой, и
+        # ровно она превращала «слова на глазах» в «текст раз в две
+        # секунды». Подпираем собственной ценой прошлого прогона.
+        wait = max(float(CFG.get("stt.polish_every_s", 0.4) or 0.4),
+                   float(POLISH.get("cost", 0.0)) * 1.3)
         if now - POLISH["ts"] < wait:
-            return
-        snap = stt.peek()
+            return _pw("рано, шаг ещё не вышел")
+        # ДВЕ СЕКУНДЫ РЕЧИ — СЛИШКОМ ПОЗДНО (2026-08-31). peek по умолчанию
+        # отдаёт кусок только после 2с непрерывной речи. В живом разговоре
+        # фразы рвутся раньше: на ролике куски идут по 1.6-3.8с, и снимок
+        # не успевал случиться ни разу. А владельцу нужно видеть слова
+        # ПОКА они звучат, а не через две секунды после начала.
+        _minS = float(CFG.get("stt.polish_min_s", 0.7) or 0.7)
+        snap = stt.peek(_minS)
         if snap is None:
-            return
+            # ═══ ЧЕРНОВИК ЗНАЛ ТОЛЬКО ПРО МИКРОФОН (2026-08-31) ═══
+            #
+            # stt.peek() заглядывает в буфер МИКРОФОННОГО VAD. А звук с
+            # компьютера идёт своим каналом и режется СВОИМ сегментатором
+            # (SYS_VAD ниже по файлу) — микрофонный VAD при этом молчит,
+            # in_speech у него False, и снимок не отдавался НИКОГДА.
+            #
+            # Отсюда и картина, которую владелец видел живьём: фразы в
+            # ленте есть, а «слова, растущие на глазах» не появляются
+            # вовсе. Живое перечитывание было подключено ровно к тому
+            # каналу, по которому он смотрит ролики, — и только к нему
+            # оно и не работало. Диагностика показала это одной строкой:
+            # «нечего перечитывать» ×46 за пять секунд.
+            #
+            # Берём тот буфер, в котором сейчас идёт речь: сперва
+            # микрофон, а если там тихо — системный канал.
+            _sv = SYS_VAD.get("v")
+            if _sv is not None and getattr(_sv, "in_speech", False) \
+                    and getattr(_sv, "buffer", None):
+                try:
+                    if _sv.speech_samples >= _sv.sr * _minS:
+                        snap = np.concatenate(list(_sv.buffer))
+                        snap = snap[-int(_sv.sr * 14.0):]
+                except Exception as _pe:
+                    log.debug("снимок системного канала: %s", _pe)
+                    snap = None
+        if snap is None:
+            return _pw("нечего перечитывать (речь ещё не набралась)")
         # 0.2с новой речи вместо 0.3с: за это время человек успевает
         # договорить слово, а именно слова и должны появляться на экране
-        grow = int(float(CFG.get("stt.polish_grow_s", 0.2)) * 16000)
+        # МИНА (2026-08-31): stt.polish_grow_s лежит в config.default.json
+        # как null. CFG.get возвращает default ТОЛЬКО когда ключа нет; ключ
+        # есть, значит приходит None, и float(None) — TypeError. Строка
+        # стояла вне try, а сама функция зовётся из ветки
+        # `except queue.Empty` в _stt_worker — исключение отсюда вылетало
+        # МИМО единственного except и убивало поток распознавания целиком.
+        # Не рвануло до сих пор лишь потому, что сторож выше не пускал
+        # сюда. Починили бы скорость — слух умер бы на первой длинной фразе.
+        grow = int(float(CFG.get("stt.polish_grow_s", 0.2) or 0.2) * 16000)
         if len(snap) <= POLISH["n"] + grow:
-            return
+            return _pw("звук не подрос")
         POLISH["ts"], POLISH["n"] = now, len(snap)
+        if seg_q.qsize() >= int(CFG.get("stt.polish_skip_q", 3) or 3):
+            return
+        _t_pol = time.monotonic()
         try:
             results = stt.transcribe_segment(snap)
+            POLISH["cost"] = time.monotonic() - _t_pol
             txt = (results[0]["text"] if results else "").strip()
             if txt:
                 try:
@@ -8886,10 +9535,89 @@ async def ws_endpoint(ws: WebSocket):
                 # уверенность едет прямо в черновик — интерфейс красит
                 # слова по ней, пока фраза ещё звучит. Даёт её whisper;
                 # у GigaAM вероятностей нет — там черновик просто текстом.
-                out.put({"type": "stt_draft", "text": txt,
-                         "words": results[0].get("words") or None})
+                # ЧЕРНОВИК — ТОЖЕ ВО ВСЕ ОКНА (2026-08-31). Это и есть
+                # «текст проявляется на глазах»: пока фраза ещё звучит,
+                # движок перечитывает растущий кусок каждые полсекунды и
+                # шлёт черновик. Он уходил в очередь ОДНОЙ вкладки — той,
+                # чей конвейер жуёт звук. У владельца в окне живой сборки
+                # текста не было вообще, и распознавание выглядело так,
+                # будто фраза просто падает целиком через две секунды.
+                broadcast_event({"type": "stt_draft", "text": txt,
+                                 "words": results[0].get("words") or None})
         except Exception as e:
             log.debug("Скользящая нормализация споткнулась: %s", e)
+
+    def _censor_scan(pcm16, sr):
+        """ЗАПИКАННЫЕ СЛОВА И ГЛУШЕНИЕ — ПО САМОМУ ЗВУКУ (2026-08-31).
+
+        Владелец: «в диалоге реально запикивается „а ты свою пизду“ —
+        было бы прикольно получать полный вариант, но хотя бы отмечать,
+        что там были запиканы слова, и улавливать это моментально».
+
+        Полный вариант вернуть нельзя: слова там физически нет, звук
+        вырезан ещё на монтаже. Врать домыслом мы не будем. А вот
+        ОТМЕТИТЬ место — можно, и это честно: движок в этом месте всё
+        равно выдаёт обрубок, и без метки он выглядит как его ошибка.
+
+        Как ловим. Писк цензуры — это чистый тон (обычно около 1000 Гц):
+        почти вся энергия сидит в одном-двух соседних бинах спектра.
+        У речи энергия размазана по гармоникам, у шума — по всему
+        спектру. Значит признак простой и дешёвый: доля энергии в самом
+        громком бине. Второй случай — просто заглушили: провал громкости
+        внутри фразы, когда вокруг речь. Оба считаются по окнам 32 мс
+        обычным numpy, то есть за единицы миллисекунд на всю фразу, и не
+        требуют ни движка, ни нейросети.
+        """
+        out = {}
+        try:
+            x = np.asarray(pcm16, np.float32) / 32768.0
+            sr = int(sr or 16000)
+            n = int(sr * 0.032)
+            if len(x) < n * 3:
+                return out
+            win = np.hanning(n)
+            spans, loud = [], []
+            for i in range(0, len(x) - n, n // 2):
+                fr = x[i:i + n] * win
+                rms = float(np.sqrt(np.mean(fr * fr)) + 1e-9)
+                loud.append(rms)
+                sp = np.abs(np.fft.rfft(fr))
+                e = float(np.sum(sp) + 1e-9)
+                k = int(np.argmax(sp))
+                # доля энергии в пике и двух соседях
+                peak = float(np.sum(sp[max(0, k - 1):k + 2])) / e
+                hz = k * sr / float(n)
+                spans.append((i / float(sr), peak, hz, rms))
+            if not spans:
+                return out
+            med = float(np.median([s[3] for s in spans])) + 1e-9
+            beeps, mutes = [], []
+            for t, peak, hz, rms in spans:
+                # чистый тон в голосовом диапазоне и достаточно громкий
+                if peak > 0.34 and 400 <= hz <= 3000 and rms > med * 0.6:
+                    beeps.append((t, hz))
+                elif rms < med * 0.06:
+                    mutes.append(t)
+            def _merge(ts, gap=0.12):
+                out2 = []
+                for t in ts:
+                    if out2 and t - out2[-1][1] <= gap:
+                        out2[-1][1] = t
+                    else:
+                        out2.append([t, t])
+                return [x2 for x2 in out2 if x2[1] - x2[0] >= 0.10]
+            bz = _merge([t for t, _hz in beeps])
+            mz = _merge(mutes)
+            if bz:
+                out["beeped"] = [[round(a, 2), round(b + 0.032, 2)]
+                                 for a, b in bz]
+                out["beep_hz"] = int(np.median([h for _t, h in beeps]))
+            if mz:
+                out["muted"] = [[round(a, 2), round(b + 0.032, 2)]
+                                for a, b in mz]
+        except Exception as e:
+            log.debug("поиск запикивания: %s", e)
+        return out
 
     def _voice_metrics(pcm16, sr, text):
         """Частота (F0), яркость тембра и скорость речи одного куска.
@@ -9012,7 +9740,15 @@ async def ws_endpoint(ws: WebSocket):
             try:
                 seg = seg_q.get(timeout=0.4)
             except queue.Empty:
-                _live_polish()
+                # ЧЕРНОВИК НЕ ИМЕЕТ ПРАВА УБИТЬ СЛУХ (2026-08-31). Мы
+                # внутри except — исключение отсюда уходит мимо
+                # обработчиков цикла и хоронит поток распознавания
+                # молча, без единой строки в логе.
+                try:
+                    _live_polish()
+                except Exception as _e_lp:
+                    log.warning("Живое перечитывание споткнулось (дальше "
+                                "без него): %s", _e_lp)
                 continue
             if seg is None:
                 break
@@ -9124,6 +9860,15 @@ async def ws_endpoint(ws: WebSocket):
                 # РАЗРЕЗ ПО ГОВОРЯЩИМ — ТОЖЕ ПО ВЫРОВНЕННОМУ (2026-08-16):
                 # он опирается на те же тон и огибающую, которые на тихом
                 # куске не считаются вовсе
+                # ═══ СЕКУНДОМЕР ПО СТАДИЯМ (2026-08-31) ═══
+                # Замер показал 4790-5660мс на сегмент при отставании
+                # 12-16с, но ОДНО число не говорит, кто их съел: движок,
+                # разрез по голосам, развод дорожек или три прогона ECAPA
+                # подряд. Оптимизировать по догадке — это менять код и
+                # надеяться. Считаем каждую стадию отдельно и печатаем
+                # одной строкой; стоит это доли миллисекунды.
+                _stg = {}
+                _t_st = time.monotonic()
                 _seg_lvl = seg_in
                 try:
                     from anamorf.stt import frontend as _fe0
@@ -9133,12 +9878,23 @@ async def ws_endpoint(ws: WebSocket):
                                                 {**_fc0, "pad_ms": 0})
                 except Exception:
                     _seg_lvl = seg_in
+                _stg["подг"] = (time.monotonic() - _t_st) * 1000
                 _parts = [{"start": 0, "end": len(seg_in), "crowd": False}]
-                try:
-                    from anamorf.stt import turns as _turns
-                    _parts = _turns.split(_seg_lvl, sr_hz)
-                except Exception as e:
-                    log.debug("разрез по голосам пропущен: %s", e)
+                # РАЗРЕЗ УСТУПАЕТ ДОРОГУ (2026-08-31). turns.split кодирует
+                # ECAPA каждое окно 1.2с — на длинном куске это самый
+                # дорогой шаг после движка. Когда очередь уже отстаёт,
+                # целый текст важнее разреза: пропускаем и говорим об этом
+                # честно в замере (стадия «разрез» = 0).
+                _t_st = time.monotonic()
+                _do_turns = bool(CFG.get("stt.turns_enabled", True)) and \
+                    seg_q.qsize() <= int(CFG.get("stt.turns_skip_lag", 1))
+                if _do_turns:
+                    try:
+                        from anamorf.stt import turns as _turns
+                        _parts = _turns.split(_seg_lvl, sr_hz)
+                    except Exception as e:
+                        log.debug("разрез по голосам пропущен: %s", e)
+                _stg["разрез"] = (time.monotonic() - _t_st) * 1000
                 results = []
                 for _pi, _pt in enumerate(_parts):
                     _audio = _seg_lvl[_pt["start"]:_pt["end"]] \
@@ -9163,7 +9919,10 @@ async def ws_endpoint(ws: WebSocket):
                             # реальной надобности — и ждёт паузы в слухе,
                             # тот же урок, что и с прогревом голоса
                             _unmix.warm(_hear_busy)
+                            _t_st = time.monotonic()
                             _tt = _unmix.split(_audio, sr_hz)
+                            _stg["развод"] = _stg.get("развод", 0.0) + \
+                                (time.monotonic() - _t_st) * 1000
                             if _tt:
                                 _tracks = _tt
                         except Exception as e:
@@ -9205,7 +9964,15 @@ async def ws_endpoint(ws: WebSocket):
                         # только уровень.)
                         _audio_an = _audio_eng if _audio_eng is not \
                             _audio_t else _audio_t
-                        for r in (stt.transcribe_segment(_audio_eng) or []):
+                        # ОДИН ЭМБЕДДИНГ НА ДОРОЖКУ (2026-08-31): считается
+                        # лениво при первом спросе и переиспользуется и для
+                        # имени говорящего, и для отпечатка в r["_env"].
+                        _who_c = None
+                        _t_st = time.monotonic()
+                        _res_eng = stt.transcribe_segment(_audio_eng) or []
+                        _stg["движок"] = _stg.get("движок", 0.0) + \
+                            (time.monotonic() - _t_st) * 1000
+                        for r in _res_eng:
                             if _in_db is not None:
                                 r["in_dbfs"] = _in_db
                             r["sec"] = round(len(_audio_t) / float(sr_hz), 2)
@@ -9219,10 +9986,61 @@ async def ws_endpoint(ws: WebSocket):
                             # приписывается другому.
                             if True:
                                 try:
-                                    _nm, _cf = _turns.who(_audio_an, sr_hz)
+                                    from anamorf.stt import turns as _turns
+                                    if _who_c is None:
+                                        _t_st = time.monotonic()
+                                        _who_c = _turns.who_emb(_audio_an,
+                                                                sr_hz)
+                                        _stg["кто"] = _stg.get("кто", 0.0) + \
+                                            (time.monotonic() - _t_st) * 1000
+                                    _nm, _cf, _wvec = _who_c
                                     if _nm:
                                         r["speaker"] = _nm
                                         r["speaker_conf"] = round(_cf, 2)
+                                    # ═══ ДОРОЖКИ ГОВОРЯЩИХ (2026-08-31) ═══
+                                    # Реестр не узнал — значит незнакомец.
+                                    # Раньше такие реплики уходили БЕЗ метки
+                                    # (32 из 40 на ролике), а знакомство
+                                    # решал auto_meet из одного центроида.
+                                    # Теперь отпечаток идёт в онлайн-
+                                    # кластеризацию с правилом трёх секунд
+                                    # (voiceprint/tracks.py). Смесь двух
+                                    # голосов (crowd без развода) не кормим:
+                                    # её отпечаток — ничей.
+                                    elif _wvec is not None and not (
+                                            _pt.get("crowd")
+                                            and len(_tracks) == 1):
+                                        try:
+                                            from anamorf.voiceprint import \
+                                                tracks as _trk
+                                            _tn, _tc, _tid = _trk.TRACKS.observe(
+                                                _wvec,
+                                                len(_audio_an) / float(sr_hz))
+                                            if _tn:
+                                                r["speaker"] = _tn
+                                                r["speaker_conf"] = round(_tc, 2)
+                                            elif _tid:
+                                                r["track_pending"] = _tid
+                                        except Exception as _te:
+                                            log.debug("дорожки: %s", _te)
+                                    # ═══ СРАВНЕНИЕ БОК О БОК (2026-08-31) ═══
+                                    # Та же фраза уходит второй головой на
+                                    # ECAPA — чтобы панель /voices честно
+                                    # показывала «новая слева, старая
+                                    # справа». Гейт voiceprint.ab_compare,
+                                    # выключено — ни грамма GPU не тратим.
+                                    try:
+                                        from anamorf.voiceprint.ab import \
+                                            AB_COMPARE as _abc
+                                        if _abc.enabled():
+                                            _ab = _abc.observe(
+                                                _audio_an,
+                                                len(_audio_an) / float(sr_hz),
+                                                r.get("text", ""))
+                                            if _ab:
+                                                r["ab"] = _ab
+                                    except Exception as _abe:
+                                        log.debug("сравнение: %s", _abe)
                                 except Exception:
                                     pass
                             if len(_tracks) > 1:
@@ -9237,8 +10055,42 @@ async def ws_endpoint(ws: WebSocket):
                             # метки голосов — какая частота, тембр, скорость
                             # речи»). Считаются по самому куску, дёшево.
                             try:
+                                _t_st = time.monotonic()
+                                try:
+                                    r.update(_censor_scan(_audio_an, sr_hz))
+                                except Exception as _ce:
+                                    log.debug("цензура: %s", _ce)
+                                # МЕТКА НАСТРОЯ (2026-08-31, владелец:
+                                # «прикольно было бы получать метку смеха
+                                # — настроя — для Сайки»). Уши на PANNs
+                                # уже слушают тот же звук и знают 527
+                                # классов; берём то, что звучало рядом с
+                                # этой фразой, и кладём прямо в реплику.
+                                # Смысл не в подписи: по этой метке она
+                                # понимает, шутка это была или ссора, а
+                                # текст такого не показывает вовсе.
+                                try:
+                                    from anamorf import hearing as _hr
+                                    _snd = _hr.now()
+                                    if _snd:
+                                        r["sounds"] = [[a, round(float(b), 2)]
+                                                       for a, b in _snd]
+                                        _mood = {"смех": "смех",
+                                                 "хихиканье": "смех",
+                                                 "аплодисменты": "одобрение",
+                                                 "крик": "крик",
+                                                 "плач": "плач",
+                                                 "музыка": "музыка"}
+                                        for _a, _b in _snd:
+                                            if _a in _mood and _b >= 0.25:
+                                                r["mood"] = _mood[_a]
+                                                break
+                                except Exception as _he:
+                                    log.debug("метка настроя: %s", _he)
                                 r.update(_voice_metrics(
                                     _audio_an, sr_hz, r.get("text", "")))
+                                _stg["метрики"] = _stg.get("метрики", 0.0) + \
+                                    (time.monotonic() - _t_st) * 1000
                             except Exception:
                                 pass
                             # ГОЛОСОВАЯ ДНК: отпечаток СТРОЕНИЯ голоса
@@ -9263,18 +10115,25 @@ async def ws_endpoint(ws: WebSocket):
                                 # Огибающая остаётся запасным вариантом:
                                 # когда ECAPA недоступна или кусок слишком
                                 # короткий для неё.
+                                # ВТОРОЙ ПРОГОН ECAPA УБРАН (2026-08-31).
+                                # Здесь стоял `_enc.encode(_audio_an)` —
+                                # ровно тот же кусок, который двумя
+                                # десятками строк выше уже закодировал
+                                # `turns.who`. Модель на GPU считала одно
+                                # и то же дважды на КАЖДУЮ фразу. Теперь
+                                # вектор приезжает из who_emb; если его
+                                # почему-то нет (энкодер выключен, кусок
+                                # короче 0.6с) — падаем на огибающую, как
+                                # и раньше.
+                                _t_st = time.monotonic()
                                 _e = None
                                 try:
-                                    _enc = _turns._encoder()
-                                    if _enc is not None and \
+                                    _wv = _who_c[2] if _who_c else None
+                                    if _wv is not None and \
                                             len(_audio_an) >= sr_hz * 0.6:
-                                        _ev = _enc.encode(_audio_an)
-                                        _ev = _ev[0] if isinstance(_ev, tuple) \
-                                            else _ev
-                                        if _ev is not None:
-                                            _e = np.asarray(_ev, np.float32
-                                                            ).ravel()
-                                            r["voice_id"] = "ecapa"
+                                        _e = np.asarray(_wv, np.float32
+                                                        ).ravel()
+                                        r["voice_id"] = "ecapa"
                                 except Exception:
                                     _e = None
                                 if _e is None:
@@ -9291,6 +10150,8 @@ async def ws_endpoint(ws: WebSocket):
                                 _fm = _vd.formants(_audio_an, sr_hz)
                                 if _fm:
                                     r["tract_cm"] = _vd.tract_length(_fm)
+                                _stg["днк"] = _stg.get("днк", 0.0) + \
+                                    (time.monotonic() - _t_st) * 1000
                             except Exception as _e2:
                                 log.debug("голосовая ДНК: %s", _e2)
                             results.append(r)
@@ -9416,6 +10277,15 @@ async def ws_endpoint(ws: WebSocket):
                 HEAR_STAT["stt_ms"] = round(
                     0.7 * HEAR_STAT["stt_ms"] + 0.3 * ms, 1)
                 HEAR_STAT["lag"] = seg_q.qsize()
+                # одна строка на сегмент: видно, кто съел секунды
+                try:
+                    if CFG.get("stt.stage_timing", True) and _stg:
+                        log.info("Слух по стадиям (%.1fс звука, %d частей, "
+                                 "итого %.0fмс): %s", sec, len(_parts), ms,
+                                 " | ".join("%s %.0f" % (k, v)
+                                            for k, v in _stg.items()))
+                except Exception:
+                    pass
                 if not results:
                     HEAR_STAT["empty"] += 1
                     # пустой ответ движка — тоже факт, и на стенде он самый
@@ -9423,6 +10293,13 @@ async def ws_endpoint(ws: WebSocket):
                     hear_bench.record(seg, sr_hz, "", stt.current_name, ms,
                                       {"rms_raw": round(rms_seg, 5),
                                        "empty": True})
+                    # ЗАМОК НА ЧЕРНОВИКЕ (2026-08-31). POLISH["n"] != 0
+                    # затыкает и Vosk-черновик, и перечитывание. Сбрасывали
+                    # его строкой ниже — то есть ТОЛЬКО когда движок что-то
+                    # нашёл. Одна пустая выдача (а их за сессию сотни:
+                    # HEAR_STAT["empty"]) запирала живой текст до следующей
+                    # удачной фразы.
+                    POLISH["n"] = 0
                     continue
                 POLISH["n"] = 0
                 DRAFT.reset()
@@ -9492,6 +10369,26 @@ async def ws_endpoint(ws: WebSocket):
     hear_thread.start()
     stt_thread = threading.Thread(target=_stt_worker, name="stt", daemon=True)
     stt_thread.start()
+
+    def _polish_worker():
+        """ЧЕРНОВИК ЖИВЁТ СВОЕЙ ЖИЗНЬЮ (2026-08-31).
+
+        Раньше живое перечитывание висело в ветке `except queue.Empty`
+        потока распознавания — то есть по построению работало только
+        когда сказать нечего. Ровно наоборот тому, зачем оно нужно.
+        Теперь у него свой такт: пока человек говорит, движок каждые
+        полторы десятых секунды перечитывает растущий кусок и шлёт
+        текст во все окна. Сам он себя и придерживает — по накопленной
+        очереди, по времени последнего прогона и по приросту звука."""
+        while not stop_event_all.is_set():
+            time.sleep(0.15)
+            try:
+                _live_polish()
+            except Exception as _e:
+                log.debug("черновик: %s", _e)
+
+    threading.Thread(target=_polish_worker, name="stt-draft",
+                     daemon=True).start()
     out.put({"type": "hello", "boot": BOOT_ID})
     # Беймакс здоровается и коротко докладывает, как система себя чувствует
     try:
@@ -10572,7 +11469,20 @@ async def ws_endpoint(ws: WebSocket):
         # голоса: помечен золотом — отвечаем, всё остальное молча в чат.
         if observe["on"] and not (observe.get("owner")
                                   and r.get("speaker_owner")):
-            out.put({"type": "stt", **r})
+            # СТЕНОГРАММУ ВИДЯТ ВСЕ ОКНА (2026-08-31).
+            #
+            # Живой случай: владелец смотрит в чат, там пусто, а в журнале
+            # фразы идут одна за другой. Причина — конвейер слуха
+            # принадлежит ОДНОМУ подключению, и out.put кладёт текст в
+            # очередь именно этой вкладки. Стоило открыть второе окно (или
+            # просто перезагрузить своё), как звук уходил в конвейер
+            # последнего подключившегося, а первая вкладка выглядела
+            # мёртвой, хотя система работала.
+            #
+            # Стенограмма — это факт о мире, а не о вкладке: её должны
+            # видеть все, кто смотрит. broadcast_event раскладывает по
+            # всем живым клиентам, включая пассивных наблюдателей.
+            broadcast_event({"type": "stt", **r})
             _rescore_later(r)
             return
         # ЭХО ИЗ КОЛОНОК (2026-07-26, живой случай). Владелец говорит через
@@ -10669,7 +11579,8 @@ async def ws_endpoint(ws: WebSocket):
                     log.info("Рядом говорит «%s» (уверенность %.0f%%, "
                              "похожесть %.2f) — записала, в разговор не "
                              "беру", _sp_name or _near, _sp_conf * 100, _sim)
-                    out.put({"type": "stt", **r, "ignored_guest": True})
+                    broadcast_event({"type": "stt", **r,
+                                     "ignored_guest": True})
                     _barge(False, "рядом говорит не владелец")
                     return
         # «стоп» уже отработал первой строкой voice_phrase (2026-08-15) —
@@ -10722,7 +11633,8 @@ async def ws_endpoint(ws: WebSocket):
                 if len(_names) >= 2:
                     log.info("Такт: разговор между людьми (%s) — не влезаю "
                              "без имени: %r", _names, r["text"][:40])
-                    out.put({"type": "stt_ignored", **r, "social": True})
+                    broadcast_event({"type": "stt_ignored", **r,
+                                     "social": True})
                     _barge(False, "разговор между людьми")
                     return
         except Exception as e:
@@ -10731,7 +11643,7 @@ async def ws_endpoint(ws: WebSocket):
                 or _addressed(r["text"]) or now < attn["until"]):
             _user_activity()
             attn["until"] = now + _window()
-            out.put({"type": "stt", **r})
+            broadcast_event({"type": "stt", **r})
             _barge(True, "говорят со мной")
             _rescore_later(r)
             handle_text(r["text"], heard_ts=heard_mono)

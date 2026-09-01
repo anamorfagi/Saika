@@ -93,8 +93,8 @@ class VadSegmenter:
     def __init__(self):
         vad = CFG.get("stt.vad", {})
         self.threshold = vad.get("rms_threshold", 0.012)
-        self.silence_ms = vad.get("silence_ms", 700)
-        self.min_speech_ms = vad.get("min_speech_ms", 300)
+        self._silence_ms = vad.get("silence_ms", 700)
+        self._min_speech_ms = vad.get("min_speech_ms", 300)
         # ПРЕДЕЛ КУСКА — 12с, а не 25 (2026-07-29, разбор рабочего дня
         # владельца). Разговор ОДНОГО человека сам режется паузами, и предел
         # не срабатывает почти никогда. А в комнате, где говорят несколько,
@@ -104,7 +104,7 @@ class VadSegmenter:
         # копится, а текст на экране стоит. Двенадцать секунд: longform не
         # трогаем никогда, задержка сверху ограничена, а фраза рвётся редко —
         # пауза в 700мс между предложениями всё-таки случается.
-        self.max_segment_s = vad.get("max_segment_s", 12)
+        self._max_segment_s = vad.get("max_segment_s", 12)
         self.preroll_ms = vad.get("preroll_ms", 240)
         self.adaptive = vad.get("adaptive", True)
         self.sr = CFG.get("stt.sample_rate", 16000)
@@ -114,7 +114,86 @@ class VadSegmenter:
         self.last_cut = ""
         self.reset()
 
+    # ═══ РУЧКИ НАРЕЗКИ ЖИВЫЕ, А НЕ СЛЕПОК ПРИ РОЖДЕНИИ (2026-08-31) ═══
+    #
+    # Две беды разом, обе поймал владелец по своему же скриншоту: фразы
+    # шли по 15-16 секунд, движок отставал на 23 секунды, хотя потолок
+    # стоял 10.
+    #
+    # Первая: значения читались ОДИН РАЗ в __init__. Сегментатор живёт
+    # всё время работы, значит любая правка ручки доезжала до него
+    # только после переподключения — то есть на словах применялась, а на
+    # деле нет. Ровно та же ловушка, что была с порогом склейки голосов.
+    #
+    # Вторая: панель и файл-канал кладут числа СТРОКАМИ ('900'), а тут
+    # они сравниваются с числами. Python на этом бросает TypeError,
+    # исключение гасится выше по стеку, и нарезка молча уходит в
+    # запасное поведение. Снаружи это выглядит как «настройка не
+    # работает», без единой строки в журнале.
+    #
+    # Поэтому ручки стали свойствами: читаем свежее значение и всегда
+    # приводим к числу, а не надеемся, что его положили правильным.
+    @staticmethod
+    def _num(v, d):
+        try:
+            return type(d)(v)
+        except (TypeError, ValueError):
+            return d
+
+    def _knob(self, name, own, d):
+        v = CFG.get("stt.vad." + name, None)
+        if v is None:
+            v = own
+        return self._num(v, d)
+
+    def __live_after__(self):
+        """Достроить себя после живой правки кода (2026-08-31).
+
+        Экземпляр переживает правку вместе с состоянием — это правильно,
+        но полей, появившихся В ЭТОЙ правке, у него нет. Здесь ровно так
+        и вышло: ручки стали свойствами `_silence_ms` и прочими, а живой
+        сегментатор помнил старые имена. Свойство лезло за несуществующим
+        полем, падало, и нарезка вставала — при живом звуке ноль фраз."""
+        for name, d in (("silence_ms", 700), ("min_speech_ms", 300),
+                        ("max_segment_s", 12)):
+            if not hasattr(self, "_" + name):
+                setattr(self, "_" + name,
+                        self.__dict__.pop(name, None) or d)
+
+    # СЕТТЕРЫ ОБЯЗАТЕЛЬНЫ. Режим наблюдения (кино, звук с компьютера)
+    # переставляет эти ручки прямо присваиванием — а свойство без
+    # сеттера на присваивание бросает AttributeError. Ошибка ушла в
+    # общий except, нарезка встала, и прогон дал РОВНО НОЛЬ фраз при
+    # живом звуке: черновик работал, а фраз не было ни одной.
+    @property
+    def silence_ms(self):
+        return self._knob("silence_ms",
+                          getattr(self, "_silence_ms", 700), 700)
+
+    @silence_ms.setter
+    def silence_ms(self, v):
+        self._silence_ms = self._num(v, 700)
+
+    @property
+    def min_speech_ms(self):
+        return self._knob("min_speech_ms",
+                          getattr(self, "_min_speech_ms", 300), 300)
+
+    @min_speech_ms.setter
+    def min_speech_ms(self, v):
+        self._min_speech_ms = self._num(v, 300)
+
+    @property
+    def max_segment_s(self):
+        return self._knob("max_segment_s",
+                          getattr(self, "_max_segment_s", 12), 12)
+
+    @max_segment_s.setter
+    def max_segment_s(self, v):
+        self._max_segment_s = self._num(v, 12)
+
     def reset(self):
+        self._nf_warm, self._nf_n = None, 0   # разогрев замера фона заново
         self.buffer = []
         self.preroll = []          # последние чанки ДО начала речи
         self.preroll_samples = 0
@@ -135,8 +214,36 @@ class VadSegmenter:
             pass
         if not self.adaptive:
             return self.threshold
-        # пол шума * 2.5 + небольшой запас; конфигный порог — нижняя планка
-        return max(self.threshold, self.noise_floor * 2.5 + 0.004)
+        # пол шума * 2.5 + небольшой запас; конфигный порог — нижняя планка.
+        # ПОТОЛОК ОБЯЗАТЕЛЕН: даже если фон намерили неверно, адаптация не
+        # имеет права задрать планку настолько, чтобы проглотить обычную
+        # речь. Четыре базовых порога — это уже очень шумная комната.
+        adaptive = self.noise_floor * 2.5 + 0.004
+        return max(self.threshold, min(adaptive, self.threshold * 4.0))
+
+    # ═══ САМОПИСЕЦ НАРЕЗКИ (2026-09-01) ═══
+    # Владелец: «сказал „таак, проверка, как ты пишешь" — написал только
+    # вторую часть», «первые фразы ролика вообще не писались». Гадать,
+    # где именно теряется начало, мы уже пробовали — и гипотеза не
+    # подтвердилась стендом. Поэтому пишем правду покадрово: громкость,
+    # решение нейронки, действующий порог и что с кадром сделали.
+    # Кольцо на 600 кадров — это минута при кадре 100мс.
+    TRACE = []
+    TRACE_MAX = 600
+
+    def _trace(self, rms, thr, prob, is_voice, why):
+        try:
+            if not CFG.get("stt.vad.trace", False):
+                return
+            VadSegmenter.TRACE.append({
+                "t": round(time.time(), 2), "rms": round(rms, 5),
+                "thr": round(thr, 5),
+                "p": None if prob is None else round(prob, 3),
+                "voice": bool(is_voice), "in": bool(self.in_speech),
+                "why": why})
+            del VadSegmenter.TRACE[:-VadSegmenter.TRACE_MAX]
+        except Exception:
+            pass
 
     def push(self, pcm16: np.ndarray):
         """Вернёт np.int16-сегмент когда фраза закончилась, иначе None."""
@@ -144,6 +251,7 @@ class VadSegmenter:
         thr = self._eff_threshold()
         # гистерезис: подняться над порогом сложнее, чем удержаться
         is_voice = rms > (thr * 0.6 if self.in_speech else thr)
+        _why = "по громкости" 
         # ═══ НЕЙРОННОЕ РЕШЕНИЕ «РЕЧЬ ЛИ ЭТО» (2026-08-15) ═══
         # Порог по громкости не отличает слог от щелчка клавиши — отсюда
         # фантомные фразы на печатание и каша в движке. Когда silero-vad
@@ -174,20 +282,79 @@ class VadSegmenter:
                         self.speech_prob = p
                         on = float(CFG.get("stt.vad.neuro_on", 0.5))
                         off = float(CFG.get("stt.vad.neuro_off", 0.35))
-                        is_voice = p >= (off if self.in_speech else on)
+                        # ═══ ГРОМКОСТЬ И НЕЙРОНКА РЕШАЮТ ВМЕСТЕ ═══
+                        # (2026-09-01, по замеру самописца)
+                        #
+                        # Самописец показал ровно, где терялось начало
+                        # фразы: кадры rms 0.069 и 0.048 — то есть в
+                        # десять раз громче порога — приходили с
+                        # уверенностью 0.305 и 0.337 при пороге входа
+                        # 0.42, и их не пускали. Это не тихая речь.
+                        # Просто атака слова — то место, где silero
+                        # менее всего уверена: гласная ещё не
+                        # развернулась. Владелец видел это как «сказал
+                        # „таак, проверка" — написал только вторую
+                        # часть» и «первые фразы ролика не писались».
+                        #
+                        # Правило теперь такое: входим в речь либо по
+                        # уверенности, либо когда нейронка колеблется,
+                        # НО звук заведомо громкий. Тихий сомнительный
+                        # кадр по-прежнему не пройдёт — а значит шум
+                        # словами не станет: в том же замере ни один
+                        # кадр не был пропущен при низкой вероятности.
+                        if self.in_speech:
+                            is_voice = p >= off
+                            _why = "нейронка (держим)"
+                        elif p >= on:
+                            is_voice = True
+                            _why = "нейронка"
+                        else:
+                            _loud = float(CFG.get(
+                                "stt.vad.loud_enter_x", 4.0) or 4.0)
+                            _soft = float(CFG.get(
+                                "stt.vad.neuro_on_loud", 0.0) or 0.0) \
+                                or on * 0.6
+                            is_voice = (p >= _soft and rms >= thr * _loud)
+                            _why = ("громко+нейронка" if is_voice
+                                    else "нейронка")
                 else:
                     # мёртвая тишина: нейронку не будим
                     self.speech_prob = 0.0
                     is_voice = False
+                    _why = "тише шлагбаума %.4f" % gate
         except Exception:
             pass
+        self._trace(rms, thr, getattr(self, "speech_prob", None),
+                    is_voice, _why)
 
         if not self.in_speech and not is_voice:
             # обновляем шумовой пол ТОЛЬКО на чистой тишине (медленная EMA);
             # чанк, взявший порог, в пол не считаем — иначе тихий голос
             # у границы постепенно задирал бы порог сам себе
-            self.noise_floor = (0.95 * self.noise_floor + 0.05 * rms
-                                if self.noise_floor > 0 else rms)
+            # ═══ ПЕРВЫЙ КАДР НЕ НАЗНАЧАЕТ ФОН (2026-09-01) ═══
+            #
+            # Было: `... if self.noise_floor > 0 else rms` — то есть самый
+            # первый кадр целиком объявлялся уровнем шума. Если в этот
+            # момент уже звучала речь или только что заиграл ролик, фоном
+            # объявлялась САМА РЕЧЬ, порог прыгал на «фон × 2.5» — выше
+            # говорящего — и глох весь вход. Опускался он потом медленно и
+            # только на тишине.
+            #
+            # Владелец видел это дважды и описал точнее любого лога:
+            # «первые фразы ролика вообще не писались», «сказал „таак,
+            # проверка, как ты пишешь" — написал только вторую часть».
+            #
+            # Теперь фон набирается по МИНИМУМУ первой секунды, а не по
+            # первому кадру: громкое начало больше не может назначить сам
+            # себя тишиной.
+            if self.noise_floor <= 0:
+                _w = getattr(self, "_nf_warm", None)
+                self._nf_warm = rms if _w is None else min(_w, rms)
+                self._nf_n = getattr(self, "_nf_n", 0) + 1
+                if self._nf_n >= 10:            # ~1с по кадрам 100мс
+                    self.noise_floor = self._nf_warm
+            else:
+                self.noise_floor = 0.95 * self.noise_floor + 0.05 * rms
             # копим предролл (кольцо ~preroll_ms)
             self.preroll.append(pcm16)
             self.preroll_samples += len(pcm16)
@@ -437,12 +604,35 @@ class STTManager:
         if segment is None or not len(segment):
             return []
         sr = CFG.get("stt.sample_rate", 16000)
-        for name in self._healthy_chain():
+        # ═══ СНАЧАЛА ЯЗЫК, ПОТОМ ДВИЖОК (2026-09-01) ═══
+        # Раньше кусок всегда шёл в GigaAM, а тот знает только русский:
+        # «What's your name» превращалось в «Вот чя наив». Заметить это
+        # по виду текста нельзя — слов ровно столько, сколько сказано.
+        # Поэтому спрашиваем крошечный определитель ДО расшифровки и
+        # отдаём кусок тому, кто этот язык знает. Не уверен — молчит, и
+        # тогда работаем как раньше.
+        _chain = list(self._healthy_chain())
+        _lang, _lang_p = None, 0.0
+        try:
+            from anamorf.stt import langid as _lid
+            _lang, _lang_p = _lid.detect(segment, sr)
+            if _lang:
+                _want = _lid.engine_for(_lang)
+                if _want and _chain and _want != _chain[0]:
+                    _chain = [_want] + [c for c in _chain if c != _want]
+                    log.info("Слух: язык «%s» (%.0f%%) — отдаю движку %s",
+                             _lang, _lang_p * 100, _want)
+        except Exception as _le:
+            log.debug("маршрут по языку: %s", _le)
+        for name in _chain:
             try:
                 with self.lock:
                     eng = self._get(name)
                     text = eng.transcribe(segment, sr)
                 results = [{"text": text, "engine": name}] if text else []
+                if results and _lang:
+                    results[0]["lang"] = _lang
+                    results[0]["lang_p"] = round(_lang_p, 2)
                 # пословная уверенность, если движок её посчитал (whisper):
                 # интерфейс подсветит слова, которые прозвучали нечётко
                 _wrds = getattr(eng, "last_words", None)
@@ -455,10 +645,67 @@ class STTManager:
                 else:
                     self._notified_fallback = None
                 self.health[name] = "ok"
+                results = self._second_opinion(results, segment, sr, name)
                 return self._drop_junk(results)
             except Exception as e:
                 self._mark_broken(name, e)
         return []
+
+    # ═══ ВТОРОЕ МНЕНИЕ ПО ПОДОЗРЕНИЮ (2026-09-01) ═══
+    #
+    # Владелец сказал «How are you» — в ленте появилось «Ха.». Это не
+    # ошибка распознавания, это чужой язык: GigaAM знает только русский
+    # и честно укладывает английскую речь в русскую фонетику. Ни один
+    # порог такого не лечит.
+    #
+    # Держать многоязычный whisper поднятым всегда — дорого: он съест
+    # видеопамять, которой и так впритык. Поэтому спрашиваем его ТОЛЬКО
+    # по подозрению: звучало долго, а на выходе горстка букв. У русской
+    # речи плотность 2-6 слов в секунду; пол-слова в секунду означает,
+    # что движок не понял язык.
+    #
+    # Whisper при language=None определяет язык сам и сразу
+    # расшифровывает — один проход. Определённый язык кладём в реплику:
+    # по нему интерфейс поставит метку, а маршрутизатор дальше решит,
+    # кому отдавать следующие куски этого голоса.
+    def _second_opinion(self, results, segment, sr, used):
+        try:
+            if not CFG.get("stt.multilang", True):
+                return results
+            if used == "faster_whisper":
+                return results
+            sec = len(segment) / float(sr or 16000)
+            if sec < float(CFG.get("stt.multilang_min_s", 0.8) or 0.8):
+                return results
+            txt = (results[0].get("text") if results else "") or ""
+            words = len([w for w in txt.split() if w.strip(".,!?…-")])
+            dens = words / max(sec, 0.1)
+            thr = float(CFG.get("stt.multilang_density", 1.0) or 1.0)
+            if dens >= thr:
+                return results          # похоже на нормальную русскую речь
+            eng = self._get("faster_whisper")
+            with self.lock:
+                alt = eng.transcribe(segment, sr)
+            if not alt or not alt.strip():
+                return results
+            lang = getattr(eng, "last_lang", None)
+            lp = float(getattr(eng, "last_lang_p", 0.0) or 0.0)
+            aw = len([w for w in alt.split() if w.strip(".,!?…-")])
+            if aw <= words:
+                return results          # лучше не стало — не трогаем
+            log.info("Слух: «%s» звучало %.1fс, а слов %d — переспросила "
+                     "многоязычным: «%s» (язык %s, уверенность %.0f%%)",
+                     txt[:32], sec, words, alt[:48], lang or "?", lp * 100)
+            out = [{"text": alt, "engine": "faster_whisper",
+                    "lang": lang, "lang_p": round(lp, 2),
+                    "was": txt, "was_engine": used}]
+            _w = getattr(eng, "last_words", None)
+            if _w:
+                out[0]["words"] = _w
+            return out
+        except Exception as e:
+            log.debug("второе мнение: %s", e)
+            return results
 
     def process_chunk(self, pcm16: np.ndarray) -> list[dict]:
         """Вернёт [{'text':..., 'engine':...}] за готовые фразы."""

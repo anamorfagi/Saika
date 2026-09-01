@@ -24,7 +24,7 @@ import json
 import logging
 import time
 
-from anamorf.config import CFG, resolve
+from anamorf.config import CFG, DATA_ROOT, resolve
 
 log = logging.getLogger("saika.draft")
 
@@ -39,9 +39,14 @@ class Draft:
         self.last = ""
         self.last_ts = 0.0
         self.ms = 0.0     # скользящая цена одного куска
+        self._good = 0    # сколько кусков прожевали живыми (см. _load)
 
     def enabled(self):
         return bool(CFG.get("stt.draft", True))
+
+    def _hangs(self):
+        """Файл со счётчиком зависаний Vosk (переживает перезапуск)."""
+        return DATA_ROOT / "data" / "draft_hangs.json"
 
     def _load(self):
         if self.rec is not None or self._tried:
@@ -55,18 +60,48 @@ class Draft:
         # нельзя, поэтому лечим единственным доступным способом — НЕ
         # ВХОДИМ туда второй раз: метка чёрного ящика от прошлого запуска
         # говорит, что там уже умирали.
+        # МЕТКА ЖИВЁТ ОДИН ЗАПУСК, А НЕ ВЕЧНО (2026-08-31, живой разбор).
+        # Было: любое упоминание vosk в чёрном ящике выключало черновик
+        # НАВСЕГДА — метку никто не снимал ни при удачном старте, ни при
+        # выходе. Зависли один раз 27.08 в 13:48 — и по 31.08 включительно
+        # черновика не было НИ РАЗУ, на каждом старте в логе честно
+        # писалось «ВЫКЛЮЧЕН», а человек всё это время видел пустой экран
+        # вместо растущих слов. Разовый зависон не имеет права хоронить
+        # фичу. Теперь: метку снимаем сразу, зависания считаем отдельно, и
+        # опускаем руки только после трёх подряд. Счётчик обнуляется, когда
+        # черновик прожевал 300 кусков (~30с речи) живым — см. feed().
         try:
             from anamorf import stage
             last = stage.PATH.read_text(encoding="utf-8") \
                 if stage.PATH.exists() else ""
             if "vosk" in last.lower():
-                self.ok, self.error = False, "прошлый запуск завис здесь"
-                log.warning("Черновик распознавания ВЫКЛЮЧЕН: прошлый "
-                            "запуск завис внутри Vosk (%s). Точный движок "
-                            "работает как работал — пропадёт только серый "
-                            "текст по ходу фразы. Вернуть: stt.draft = true "
-                            "в config.json.", last.split("\t")[0])
-                return None
+                stage.clear()          # метка отработала — снимаем
+                where = last.split("\t")[0]
+                n = 0
+                try:
+                    n = int(json.loads(
+                        self._hangs().read_text(encoding="utf-8")).get("n", 0))
+                except Exception:
+                    n = 0
+                n += 1
+                try:
+                    f = self._hangs()
+                    f.parent.mkdir(parents=True, exist_ok=True)
+                    f.write_text(json.dumps({"n": n, "where": where}),
+                                 encoding="utf-8")
+                except Exception:
+                    pass
+                if n >= 3:
+                    self.ok = False
+                    self.error = "завис три раза подряд"
+                    log.warning("Черновик распознавания ВЫКЛЮЧЕН: Vosk "
+                                "завис %d раза подряд (%s). Точный движок "
+                                "работает как работал — пропадёт только "
+                                "серый текст по ходу фразы. Вернуть: "
+                                "удалить data/draft_hangs.json.", n, where)
+                    return None
+                log.warning("Прошлый запуск завис внутри Vosk (%s) — пробую "
+                            "ещё раз, попытка %d из 3", where, n)
         except Exception:
             pass
         try:
@@ -114,6 +149,16 @@ class Draft:
             stage.mark("черновик: vosk.AcceptWaveform")
             _acc = rec.AcceptWaveform(pcm16.tobytes())
             stage.clear()
+            # ПРОЖИЛИ — ЗНАЧИТ ЗДОРОВЫ (2026-08-31). Тридцать секунд речи
+            # без зависания снимают счёт прошлых зависаний: иначе три
+            # старых обморока накопятся за месяцы и выключат черновик у
+            # совершенно исправного Vosk.
+            self._good += 1
+            if self._good == 300:
+                try:
+                    self._hangs().unlink(missing_ok=True)
+                except Exception:
+                    pass
             if _acc:
                 # кусок закрылся — черновик обнуляем: дальше слово скажет
                 # точный движок, и спорить с ним черновику незачем

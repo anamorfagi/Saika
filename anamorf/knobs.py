@@ -67,6 +67,30 @@ def _apply(data: dict) -> dict:
                 DENOISE.set_engine(str(v))
             if k == "stt.engine":
                 stt.set_engine(str(v))
+            # ═══ ГДЕ СЧИТАТЬ ОТПЕЧАТОК ГОЛОСА (2026-08-31) ═══
+            # Замер по стадиям показал: разрез фразы по говорящим стоит
+            # 2469мс против 828мс у самого распознавания. Причина не в
+            # алгоритме — ECAPA считалась на ПРОЦЕССОРЕ
+            # (voiceprint.device="cpu"), а turns.split кодирует по окну
+            # на каждые 1.2 секунды. Модель весит ~20 МБ, на видеокарте
+            # места не занимает.
+            #
+            # Смена этой ручки требует ПЕРЕСБОРКИ уже поднятого
+            # кодировщика: сам по себе CFG.set не двигает модель между
+            # устройствами. Собираем на месте — объект тот же, все
+            # ссылки на него живые, ни одна фраза не теряется.
+            if k in ("voiceprint.device", "voiceprint.encoder"):
+                from anamorf import voiceprint as _vp
+                _enc = getattr(_vp.S, "enc", None)
+                if _enc is not None:
+                    _enc._tried = False
+                    _enc._retried = False
+                    _enc._sb = None
+                    _enc.backend, _enc.dim = "light", 68
+                    _enc.warmup()
+                    log.warning("Пульт: отпечаток голоса пересобран (%s=%s) "
+                                "-> backend=%s dim=%s", k, v,
+                                _enc.backend, _enc.dim)
             applied[k] = v
         except Exception as e:
             skipped[k] = str(e)[:80]

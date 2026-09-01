@@ -83,7 +83,16 @@ class FasterWhisperEngine(STTEngine):
         # Плюс temperature-ступеньки: не сошлось на нуле — пробуем горячее,
         # и если ни одна не прошла пороги, движок честно вернёт пусто.
         cfg = CFG.get("stt.engines.faster_whisper", {})
-        kw = dict(language=CFG.get("stt.language", "ru"),
+        # ЯЗЫК МОЖЕТ БЫТЬ «auto» (2026-09-01). Владелец говорит на
+        # нескольких языках и хочет, чтобы система ловила их на лету.
+        # faster-whisper при language=None определяет язык сам по первым
+        # секундам и тут же расшифровывает — один проход вместо двух.
+        # Определённый язык кладём в last_lang: маршрутизатор выше по
+        # стеку использует его, чтобы решить, кому отдать следующий кусок.
+        _lang = CFG.get("stt.language", "ru")
+        if str(_lang).lower() in ("auto", "", "none"):
+            _lang = None
+        kw = dict(language=_lang,
                   beam_size=1, vad_filter=True,
                   # ПОСЛОВНАЯ УВЕРЕННОСТЬ (2026-08-15, владелец: «как в
                   # прогах, где языку учат — подсвечивать слова, которые
@@ -102,7 +111,13 @@ class FasterWhisperEngine(STTEngine):
                   temperature=[0.0, 0.2, 0.4])
         try:
             try:
-                segments, _ = self.model.transcribe(audio, **kw)
+                segments, _info = self.model.transcribe(audio, **kw)
+                try:
+                    self.last_lang = getattr(_info, "language", None)
+                    self.last_lang_p = float(
+                        getattr(_info, "language_probability", 0.0) or 0.0)
+                except Exception:
+                    self.last_lang, self.last_lang_p = None, 0.0
             except TypeError:
                 # старая сборка faster-whisper без части порогов — работаем
                 # как раньше, фразы-штампы всё равно отсеет _is_junk

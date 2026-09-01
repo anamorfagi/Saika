@@ -77,6 +77,9 @@ class Registry:
                         "pinned": bool(meta.get("pinned", {}).get(name, False)),
                         "auto": bool(meta.get("auto", {}).get(name, False)),
                         "owner": bool(meta.get("owner", {}).get(name, False)),
+                        # старые печати метки не имеют — это всегда ECAPA:
+                        # другого 192-мерного кодировщика у нас не было
+                        "enc": meta.get("enc", {}).get(name, "ecapa"),
                         "hyp": dict(meta.get("hyp", {}).get(name, {}))}
             self.stat = dict(meta.get("stat", {}))
             self.skel = dict(meta.get("skel", {}))
@@ -93,7 +96,32 @@ class Registry:
             log.warning("Не смогла прочитать память отпечатков (%s) — "
                         "начинаю с чистого листа", e)
 
+    def stale(self) -> list:
+        """Имена печатей, снятых ДРУГИМ кодировщиком, чем работает сейчас.
+
+        Их нельзя ни сравнивать, ни дописывать: числа те же по длине, но из
+        другого пространства. Живой случай 31.08 — «Сайка» и «Виталя» были
+        сняты ECAPA, после перехода на ReDimNet2 совпадали со звуком из
+        ролика и обрастали чужими векторами (120 и 85 штук)."""
+        cur = cur_encoder()
+        if not cur:
+            return []
+        return [n for n, v in self.speakers.items()
+                if str(v.get("enc") or "ecapa") != cur]
+
     def _drop_mismatched(self):
+        # ЧУЖОЙ КОДИРОВЩИК — НЕ ПОВОД СТИРАТЬ ЧЕЛОВЕКА (2026-08-31).
+        # Печать владельца стоит его времени: он записывал её вживую.
+        # Поэтому не удаляем, а откладываем — она вернётся к жизни, если
+        # вернуть прежний кодировщик, и перезапишется, когда он начитает
+        # заново на новом.
+        _st = self.stale()
+        if _st:
+            log.warning("Отпечатки сняты другим кодировщиком и отложены: %s. "
+                        "Сравнивать их с нынешним нельзя — длина совпадает, "
+                        "а пространство другое. Начитай заново (панель "
+                        "«Голосовые метки») или верни прежний кодировщик.",
+                        ", ".join(_st[:8]))
         dims = {v["embs"].shape[1] for v in self.speakers.values() if len(v["embs"])}
         if self.pts is not None:
             dims.add(self.pts.shape[1])
@@ -125,13 +153,14 @@ class Registry:
         try:
             DIR.mkdir(parents=True, exist_ok=True)
             arrays, colors, pinned, auto, hyp = {}, {}, {}, {}, {}
-            owner = {}
+            owner, enc = {}, {}
             for name, v in self.speakers.items():
                 arrays["sp_" + _safe(name)] = v["embs"]
                 colors[name] = v["color"]
                 pinned[name] = bool(v.get("pinned"))
                 auto[name] = bool(v.get("auto"))
                 owner[name] = bool(v.get("owner"))
+                enc[name] = str(v.get("enc") or "")
                 hyp[name] = {k: round(float(x), 2)
                              for k, x in (v.get("hyp") or {}).items()}
             if self.pts is not None and len(self.pts):
@@ -141,7 +170,7 @@ class Registry:
                 "speakers": list(self.speakers.keys()), "colors": colors,
                 "stat": self.stat, "skel": self.skel,
                 "pinned": pinned, "auto": auto, "hyp": hyp,
-                "owner": owner,
+                "owner": owner, "enc": enc,
                 "pts_who": self.pts_who, "pts_ts": self.pts_ts,
                 "saved": time.time()}, ensure_ascii=False), "utf-8")
             self.dirty = False
@@ -343,6 +372,10 @@ class Registry:
         self.speakers[name] = {"embs": embs, "color": color, "_c": None,
                                "pinned": bool(keep.get("pinned", False)),
                                "auto": bool(keep.get("auto", False)),
+                               # ЧЕМ СНЯТА ПЕЧАТЬ (2026-08-31): без этой
+                               # метки печати ECAPA и ReDimNet2 неразличимы
+                               # (обе по 192 числа) и молча сравниваются
+                               "enc": keep.get("enc") or cur_encoder(),
                                "hyp": dict(keep.get("hyp", {}))}
         self.dirty = True
         self._drop_mismatched()
@@ -531,8 +564,12 @@ class Registry:
         e = np.asarray(emb, dtype=np.float32)
         floor = CFG.get("voiceprint.threshold", 0.0) or _floor(len(emb))
         best = ("", -1.0, 0.0, "")
+        _cur = cur_encoder()
         for name, v in self.speakers.items():
             if v["embs"].shape[1] != len(e):
+                continue
+            # печать другого кодировщика: длина совпала, пространство — нет
+            if _cur and str(v.get("enc") or "ecapa") != _cur:
                 continue
             c, mu, sd = self._prof(name)
             s = cosine(e, c)
@@ -607,6 +644,20 @@ class Registry:
 
     def colors(self):
         return {n: v["color"] for n, v in self.speakers.items()}
+
+
+def cur_encoder() -> str:
+    """Имя кодировщика, который считает отпечатки ПРЯМО СЕЙЧАС.
+
+    Нужен, потому что размерность больше не отличает движки: и ECAPA, и
+    ReDimNet2 дают 192 числа — но это ЧИСЛА ИЗ РАЗНЫХ ПРОСТРАНСТВ, и
+    сравнивать их между собой так же осмысленно, как градусы с процентами.
+    Ленивый импорт: registry живёт внутри пакета voiceprint."""
+    try:
+        from anamorf import voiceprint as _vp
+        return str(getattr(getattr(_vp.S, "enc", None), "backend", "") or "")
+    except Exception:
+        return ""
 
 
 def _floor(dim):

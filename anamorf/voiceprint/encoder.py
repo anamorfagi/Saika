@@ -165,10 +165,14 @@ class Encoder:
         self._tried = False
         self._lock = threading.Lock()
         self.last_error = ""
+        # ЗАСТАВИТЬ КОНКРЕТНЫЙ ДВИЖОК (2026-08-31): нужно для сравнения
+        # бок о бок — второй экземпляр держим на ECAPA, пока основной уже
+        # на ReDimNet2. Пусто — берём из конфига, как раньше.
+        self.force = None
 
     # --- тяжёлый движок поднимается лениво и молча падает в лёгкий
     def warmup(self):
-        want = CFG.get("voiceprint.encoder", "auto")
+        want = self.force or CFG.get("voiceprint.encoder", "auto")
         if want == "light" or self._tried:
             return self.backend
         self._tried = True
@@ -181,6 +185,39 @@ class Encoder:
             with TORCH_GATE:
                 import torch
                 torch.set_num_threads(1)  # не отбирать ядра у слуха и LLM
+                # ═══ ReDimNet2 ВМЕСТО ECAPA (2026-08-31, решение владельца:
+                # «выпиливаем ECAPA, собираем 0.2.2 на новейшей технологии
+                # распознавания голоса») ═══
+                # Разведка по первоисточникам (arXiv 2603.11841, март 2026,
+                # Interspeech 2026): ReDimNet2-B3 — 4.1M параметров против
+                # 20.8M у ECAPA, EER 0.42% против 0.80% на VoxCeleb1-O,
+                # обгоняет ECAPA2 при в 69 раз меньших вычислениях. MIT.
+                # Авторы — ID R&D, лаборатория с русскоязычными данными
+                # (VoxTube). Вход — моно 16 кГц, ровно наш. Загружается
+                # через torch.hub, веса кэшируются в models/torch/hub.
+                # ECAPA остаётся ЗАПАСНЫМ путём: не поднялась новая —
+                # работаем как раньше, ни одна фраза не теряется.
+                if want in ("auto", "redimnet"):
+                    try:
+                        self._sb, self._dev = self._load_redimnet(torch)
+                        self._torch = torch
+                        self.backend = "redimnet"
+                        # размерность и прогрев ядер — одним холостым
+                        # прогоном, чтобы первая живая фраза не платила
+                        # за холодный старт
+                        _probe = torch.zeros(1, 16000)
+                        with torch.no_grad():
+                            _e = self._sb.encode_batch(
+                                _probe.to(self._dev)).squeeze().cpu().numpy()
+                        self.dim = int(np.asarray(_e).ravel().shape[0])
+                        log.info("Отпечаток голоса: ReDimNet2 поднята на %s, "
+                                 "%d измерений", self._dev, self.dim)
+                        return self.backend
+                    except Exception as _re:
+                        self.last_error = "ReDimNet2: " + str(_re)[:160]
+                        log.warning("Отпечаток голоса: ReDimNet2 не поднялась "
+                                    "(%s) — беру ECAPA", str(_re)[:200])
+                        self._sb = None
                 try:
                     from speechbrain.inference.speaker import EncoderClassifier
                 except Exception:         # speechbrain < 1.0
@@ -298,6 +335,41 @@ class Encoder:
                      "работаю на лёгких признаках", self.last_error)
         return self.backend
 
+    def _load_redimnet(self, torch):
+        """Поднять ReDimNet2 через torch.hub. Возвращает (обёртка, устройство).
+
+        Обёртка даёт тот же метод encode_batch(t), что и speechbrain — так
+        encode() ниже не знает, какая модель под ним, и живая замена
+        кодировщика сводится к одному объекту."""
+        size = str(CFG.get("voiceprint.redimnet.size", "b3"))
+        ttype = str(CFG.get("voiceprint.redimnet.train", "lm"))
+        dset = str(CFG.get("voiceprint.redimnet.dataset", "vox2"))
+        dev = str(CFG.get("voiceprint.device", "auto"))
+        if dev == "auto":
+            dev = "cuda" if torch.cuda.is_available() else "cpu"
+        hub = DATA_ROOT / "models" / "torch" / "hub"
+        hub.mkdir(parents=True, exist_ok=True)
+        torch.hub.set_dir(str(hub))
+        kw = dict(model_name=size, train_type=ttype, pretrained=True,
+                  trust_repo=True)
+        if dset != "vox2":
+            kw["dataset"] = dset
+        try:
+            m = torch.hub.load("PalabraAI/redimnet2", "redimnet2", **kw)
+        except TypeError:
+            kw.pop("trust_repo", None)       # старый torch без этого флага
+            m = torch.hub.load("PalabraAI/redimnet2", "redimnet2", **kw)
+        m = m.eval().to(dev)
+
+        class _Wrap:
+            def __init__(self, model, device):
+                self.model, self.device = model, device
+
+            def encode_batch(self, t):
+                return self.model(t.to(self.device))
+
+        return _Wrap(m, dev), dev
+
     def encode(self, pcm16: np.ndarray):
         """int16 моно 16кГц -> (вектор единичной длины, высота тона в Гц)."""
         x = np.asarray(pcm16, dtype=np.float32) / 32768.0
@@ -314,7 +386,8 @@ class Encoder:
                 return _unit(v), f0
             except Exception as e:
                 # один сбой не должен гасить модуль: падаем в лёгкий путь
-                log.warning("ECAPA споткнулась (%s) — лёгкие признаки", e)
+                log.warning("%s споткнулась (%s) — лёгкие признаки",
+                            self.backend, e)
                 self._sb = None
                 self.backend, self.dim = "light", 68
         v, f0 = _light_features(x)

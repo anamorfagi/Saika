@@ -522,6 +522,11 @@
     margin-right:3px}
   .qscore{display:inline-block;min-width:16px;text-align:center;font-weight:700;
     font-size:11px;margin-right:4px}
+  /* полоска модели: горит, когда модель в памяти; мигает, когда лежит в
+     памяти при выключенных мозгах (см. 01.09.2026 в fillModelPop) */
+  .item.inmem .qbars i{box-shadow:0 0 5px currentColor}
+  .item.inmem-idle .qbars i{animation:memblink 1.25s ease-in-out infinite}
+  @keyframes memblink{0%,100%{opacity:1}50%{opacity:.22}}
   .qbars{display:inline-flex;align-items:flex-end;gap:1px;height:14px;
     margin-right:7px;cursor:pointer;vertical-align:middle}
   .qbars i{display:block;width:2px;border-radius:1px;transition:background .15s}
@@ -1878,6 +1883,7 @@ if (!window.ORBMODE) setTimeout(function(){
   <!-- DreamPC: экспериментальная диффузионная модель -->
   <button class="iconbtn" id="btn-dreampc" title="DreamPC — диффузионная модель LLaDA-8B (эксперимент)">🧪</button>
   <button class="iconbtn" id="btn-train" title="Инженерная вкладка — дообучение характера Сайки">🎓</button>
+  <button class="iconbtn" id="btn-mark" title="Разметка речи по людям: слово мышкой, стрелки вправо/влево — расширить, вверх/вниз — чей это голос, Enter — закрепить, двойной клик — поправить текст">◫</button>
   <input id="input" placeholder="Скажи или напиши…" autocomplete="off">
   <button class="iconbtn" id="btn-send" title="Отправить">➤</button>
   <!-- прикрепить картинку/PDF (мультимодальная модель посмотрит; PDF рендерится в картинку на сервере) -->
@@ -2208,7 +2214,60 @@ function handleJson(m){
       }
       d.appendChild(document.createTextNode('…'));
     }else{
-      d.textContent=m.text+' …';
+      /* ═══ ПРОМЕЖУТОЧНЫЕ ГИПОТЕЗЫ И ЗАКРЕПЛЕНИЕ (2026-08-31) ═══
+         Владелец: «слова должны строиться в реальном времени прямо из
+         слогов и проявляться, когда слово точно определено».
+
+         Как это устроено в потоковом распознавании: движок каждые
+         несколько сотен миллисекунд перечитывает растущий кусок и
+         выдаёт interim-гипотезу — она имеет право поменяться. Когда
+         подъезжает дальнейший контекст, гипотеза перестаёт меняться и
+         становится final. Здесь у нас ровно этот поток: черновик
+         приходит заново каждые ~0.4с целиком.
+
+         Значит уверенность можно взять не у движка (GigaAM вероятностей
+         не отдаёт вовсе), а из САМОГО ПОТОКА: слово, которое пережило
+         несколько перечитываний подряд не изменившись, — устоялось.
+         Слово, появившееся только что, ещё вилами по воде. Слово,
+         которое подменили, — только что исправленная гипотеза, и это
+         надо показать, иначе исправление проходит незаметно.
+
+         Отсюда три состояния:
+           только появилось  — тускло, проявляется по буквам
+           устояло дважды    — закрепилось, полный цвет
+           подменили         — вспышка, потом тускло заново
+         Последнее слово держим тусклым всегда: оно ещё звучит. */
+      const DR = (window.__draft = window.__draft ||
+                  {prev: [], firm: [], txt: ''});
+      const ws = String(m.text).trim().split(/\s+/).filter(Boolean);
+      if(DR.txt !== m.text){
+        DR.txt = m.text;
+        const firm = [], fixed = [];
+        for(let i = 0; i < ws.length; i++){
+          if(DR.prev[i] === ws[i]) firm[i] = (DR.firm[i] || 0) + 1;
+          else { firm[i] = 0; if(DR.prev[i] != null) fixed[i] = DR.prev[i]; }
+        }
+        d.textContent = '';
+        for(let i = 0; i < ws.length; i++){
+          const sp = document.createElement('span');
+          sp.textContent = ws[i];
+          const last = (i === ws.length - 1);
+          if(fixed[i] != null){
+            sp.className = 'dr dr-fix';
+            sp.title = 'было расслышано: ' + fixed[i];
+          }else if(firm[i] >= 2 && !last){
+            sp.className = 'dr dr-firm';
+          }else{
+            sp.className = 'dr dr-new';
+          }
+          d.appendChild(sp);
+          d.appendChild(document.createTextNode(' '));
+        }
+        const tail = document.createElement('span');
+        tail.className = 'dr-tail'; tail.textContent = '…';
+        d.appendChild(tail);
+        DR.prev = ws; DR.firm = firm;
+      }
     }
     chatBottom();
     return;
@@ -2228,6 +2287,8 @@ function handleJson(m){
       if(window.earsRender) window.earsRender();
     }catch(e){}
     const _d=document.getElementById('stt-draft'); if(_d) _d.remove();
+    // фраза закрылась — история гипотез больше не про неё
+    try{ window.__draft = {prev:[], firm:[], txt:''}; }catch(e){}
     // услышано + метрики: движок, за сколько распознал, во сколько услышала
     let meta='услышано: '+m.engine;
     if(m.stt_ms!=null) meta+=' · распознала за '+(m.stt_ms>=1000?(m.stt_ms/1000).toFixed(1)+'с':m.stt_ms+'мс');
@@ -2251,6 +2312,40 @@ function handleJson(m){
       meta += ' · голос: '+m.speaker+
         (m.speaker_conf!=null?' ('+Math.round(m.speaker_conf*100)+'%)':'');
     if(m.src === 'sys') meta += ' · с компьютера';
+    // ЯЗЫК И ПЕРЕСПРОС (2026-09-01). Когда фразу переспросили
+    // многоязычным движком, честно показываем: какой язык распознан и
+    // что слышалось до этого. Домысел обязан быть виден — иначе ему
+    // нельзя доверять.
+    if(m.lang){
+      const FLAG={ru:'🇷🇺',en:'🇬🇧',es:'🇪🇸',uk:'🇺🇦',ja:'🇯🇵',zh:'🇨🇳',
+                  de:'🇩🇪',fr:'🇫🇷',it:'🇮🇹',pl:'🇵🇱',tr:'🇹🇷'}[m.lang]||'🌐';
+      meta += ' · ' + FLAG + ' ' + m.lang +
+              (m.lang_p!=null ? ' ('+Math.round(m.lang_p*100)+'%)' : '');
+    }
+    if(m.was){
+      meta += ' · переспросила: слышалось «' + String(m.was).slice(0,24) + '»';
+    }
+    // ЗАПИКАНО И ЗАГЛУШЕНО (2026-08-31). Слово вырезали на монтаже —
+    // движок выдаёт обрубок, и без метки это читается как ЕГО ошибка.
+    // Полный вариант вернуть неоткуда, звука там нет; честно сказать,
+    // что тут была цензура, — единственное правдивое, что можно.
+    if(Array.isArray(m.beeped) && m.beeped.length){
+      const sec = m.beeped.reduce((a,b)=>a+(b[1]-b[0]),0);
+      meta += ' · 🔇 запикано ' + m.beeped.length + '× (' +
+              sec.toFixed(1) + 'с' + (m.beep_hz ? ', ~'+m.beep_hz+' Гц' : '') +
+              ') — слово вырезано на монтаже, вернуть неоткуда';
+    }
+    if(Array.isArray(m.muted) && m.muted.length){
+      const sec = m.muted.reduce((a,b)=>a+(b[1]-b[0]),0);
+      meta += ' · 🔈 заглушено ' + sec.toFixed(1) + 'с';
+    }
+    // НАСТРОЙ: смех, крик, аплодисменты. Не украшение — по нему видно,
+    // шутка это была или ссора, а текст такого не показывает вовсе.
+    if(m.mood){
+      const ico = {'смех':'😄','одобрение':'👏','крик':'❗',
+                   'плач':'😢','музыка':'🎵'}[m.mood] || '';
+      meta += ' · ' + ico + ' ' + m.mood;
+    }
     // под музыку по высоте тона людей не разводим: у поющего частота
     // идёт по мелодии, а не по человеку (2026-08-16)
     if(m.music) meta += ' · 🎵 играет музыка — по тону не развожу';
@@ -2346,6 +2441,13 @@ function handleJson(m){
       if(who) bub.dataset.who = who;
     }
     LANES.last[who || '_'] = bub;
+    // СЫРОЙ ОТВЕТ СЕРВЕРА ОСТАЁТСЯ ПРИ ПУЗЫРЕ (2026-08-31). Он нужен
+    // разметке: сравнивая исправленный владельцем текст с тем, что
+    // система услышала, мы сможем спросить не «где ошибка», а «чем
+    // отличался звук в тех местах» — движок, задержка, частота,
+    // громкость, уверенность по словам. Без этой привязки эталон
+    // говорит только что было неверно, но не почему.
+    try{ if(bub) bub.__stt = m; }catch(e){}
     window.__lastSttBub = bub;
     // запоминаем пузырь по номеру фразы: «мозг в ухе» переспросит текст
     // смыслом и пришлёт правку следом (2026-08-16)
@@ -3230,12 +3332,18 @@ function _playMonitorChunk(buf){
   src.start(monPlayTime);
   monPlayTime += ab.duration;
 }
+let monSysWas=false;          // системный слух был включён до прослушки
 async function toggleMonitor(){
   if(monOn){
     monOn=false;
     if(monCtx){ monCtx.close(); monCtx=null; }
     $('#btn-monitor').textContent='🔉 Прослушать этот микрофон';
     $('#btn-monitor').classList.remove('sel');
+    // слух из системы был приглушён на время прослушки — возвращаем
+    api('/api/monitor',{on:false}).catch(()=>{});
+    if(monSysWas && typeof sysStart==='function'){
+      monSysWas=false; try{ sysStart(); }catch(e){}
+    }
     // вернуть эхоподавление (constraints зависят от monOn — см. startMic)
     if(micOn){ stopMic('смена настроек'); await startMic(); }
     return;
@@ -3248,6 +3356,17 @@ async function toggleMonitor(){
   monOn=true;
   $('#btn-monitor').textContent='🔇 Выключить прослушку';
   $('#btn-monitor').classList.add('sel');
+  // ═══ ПРОСЛУШКА ГЛУШИТ СЛУХ ИЗ СИСТЕМЫ (2026-09-01) ═══
+  // Твой голос идёт в наушники, а петля системного звука слушает
+  // ровно их — и та же фраза приезжает вторым путём. В ленте это
+  // выглядит как две одинаковые реплики с разной частотой: одна
+  // «микрофон», другая «с компьютера». Гасим оба системных пути:
+  // серверную петлю (флагом) и браузерную дорожку, если она шла.
+  api('/api/monitor',{on:true}).catch(()=>{});
+  if(typeof sysStream!=='undefined' && sysStream
+     && typeof sysStop==='function'){
+    monSysWas=true; try{ sysStop(); }catch(e){}
+  }
   // перезапуск с echoCancellation:false — иначе AEC вычитает твой же
   // голос, который играет прослушка (самоподавление)
   stopMic('смена настроек'); await startMic();
@@ -3971,9 +4090,20 @@ async function fillModelPop(){
                 status.llm.backend===m.backend;
     el.className='item'+(sel?' sel':'');
     const isLoaded = loaded.has(m.name);
+    /* МОДЕЛЬ В ПАМЯТИ ПРИ ВЫКЛЮЧЕННЫХ МОЗГАХ — ПОЛОСКА МИГАЕТ
+       (01.09.2026, владелец: «если модель загружена, значит полоска
+       светиться должна; если мозги вырублены — сделай её мигающей»).
+       Он смотрел на список и не мог понять, почему занята видеопамять:
+       список показывал оценку модели, но не то, что она СЕЙЧАС лежит в
+       памяти мёртвым грузом. Мигание — это «занимает карту, но молчит». */
+    const _мозгиВыкл = !!(status.llm && status.llm.off);
+    if(isLoaded) el.classList.add('inmem');
+    if(isLoaded && _мозгиВыкл) el.classList.add('inmem-idle');
     const score=ratings[m.name]||0, tps=tpsMap[m.name]||0;
     const dot = sel ? ' <span class="st ok" title="активная — сейчас отвечает">▶</span>'
-               : isLoaded ? ' <span class="st" style="color:var(--dim)">в памяти</span>' : '';
+               : isLoaded ? (' <span class="st" style="color:'+
+                   (_мозгиВыкл?'var(--warn)':'var(--dim)')+'">в памяти'+
+                   (_мозгиВыкл?' · мозги выключены':'')+'</span>') : '';
     const btn = `<button class="mini" title="${isLoaded?'Выгрузить из памяти'
         :'Загрузить в память'}">${isLoaded?'⏏':'⬇'}</button>`;
     // ✕ удалить модель С ДИСКА — только для локальных бэкендов с файлами
@@ -9937,9 +10067,26 @@ window.saikaOrb = async function(on){
   .vp-wrap{margin:4px 0 2px}
   /* высота ФИКСИРОВАННАЯ: у canvas атрибут height задаёт и внутренний
      размер, и (без CSS-высоты) внешний — иначе картинка «дышит» сама */
+  /* ЖИВАЯ КАРТА ВМЕСТО ПЛОСКОГО ХОЛСТА (2026-08-31). Владелец:
+     «эту залупу выпиливай и вот это как раз впили в блок звука в
+     голосовые метки». Внутри — та же страница /voices, что и на весь
+     экран: зум, перетаскивание, перелёт к голосу, слежение за
+     активным. Старый #vp-mini остался в DOM скрытым — на нём висят
+     обработчики и он ничего не стоит, но глазам больше не мешает. */
+  .vp-live{width:100%;height:280px;display:block;border:1px solid
+    rgba(255,255,255,.09);border-radius:12px;background:#0b0c0e}
+  .vp-cv[hidden]{display:none!important}
   .vp-cv{width:100%;height:150px;display:block;border-radius:12px;cursor:zoom-in;
     background:radial-gradient(120% 120% at 50% 40%,rgba(77,208,225,.07),
       rgba(10,12,20,.55));border:1px solid rgba(255,255,255,.09)}
+  /* Реестр системы — НЕ общий список двух голов, а именно её память.
+     Подписываем прямо здесь: под картой сравнения он читался как общий
+     (владелец: «написал у каждой свой, а сделал общий»). */
+  .vp-reg{display:flex;align-items:baseline;gap:8px;margin:12px 1px 2px;
+    font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--dim);border-top:1px solid rgba(255,255,255,.07);padding-top:9px}
+  .vp-reg i{font-style:normal;text-transform:none;letter-spacing:0;
+    color:var(--dim);opacity:.6;margin-left:auto}
   .vp-now{display:flex;align-items:center;gap:6px;font-size:11.5px;
     margin:5px 1px 2px;min-height:16px}
   .vp-dot{width:8px;height:8px;border-radius:50%;flex:none;
@@ -10102,8 +10249,10 @@ window.saikaOrb = async function(on){
   const box = document.createElement('div');
   box.innerHTML =
     '<div class="title">Узнавание голоса</div>' +
-    '<div class="vp-wrap"><canvas id="vp-mini" class="vp-cv" ' +
-      'title="Твой голос в пространстве голосов. Клик — открыть панель"></canvas>' +
+    '<div class="vp-wrap"><iframe id="vp-live" class="vp-live" ' +
+      'src="/voices?embed=1" loading="lazy" ' +
+      'title="Живая карта голосов: облака растут по мере того, как она слышит">' +
+      '</iframe><canvas id="vp-mini" class="vp-cv" hidden></canvas>' +
       '<div class="vp-now"><span class="vp-dot" id="vp-mdot"></span>' +
       '<span id="vp-mtxt" class="vp-dim">молчание</span></div></div>' +
     '<div class="vp-row"><input type="search" id="vp-name" ' +
@@ -10112,6 +10261,8 @@ window.saikaOrb = async function(on){
       'data-lpignore="true" data-1p-ignore data-form-type="other">' +
       '<button class="vp-btn acc" id="vp-recmenu">Записать</button></div>' +
     '<div class="vp-bar" id="vp-prog" style="display:none"><i></i></div>' +
+    '<div class="vp-reg">записанные голоса системы' +
+      '<i>ведёт только новая · ReDimNet2</i></div>' +
     '<div class="vp-list" id="vp-list"></div>' +
     '<div class="vp-row"><button class="vp-btn" id="vp-open" style="flex:1">' +
       '⤢ Открыть панель голоса</button>' +
@@ -13788,7 +13939,14 @@ body.zpress .zlab.press{transform:translate(-50%,-50%) translateY(5px)
 @media (max-width:1240px){#zp-body .ears-split{grid-template-columns:1fr}}
 #zp-body .ears-wrap{display:flex;flex-direction:column;gap:22px;height:auto;
   max-width:none;margin:0;padding-bottom:8px}
-#zp-body .ears-stage{flex:0 0 auto;width:100%;border:0;border-radius:12px;
+#zp-body /* КАРТЕ — ЦЕЛЫЙ ЭКРАН (01.09.2026, владелец дважды: «спусти блоки
+   движки и микрофон, шумодав ниже»). Высоту я задавал из скрипта, но
+   она проигрывала раскладке родителя, и карта оставалась полосой в
+   пятую часть экрана. Ставим порог прямо в стиле — так его ничто не
+   пересилит, а настройки честно уезжают под сгиб, второй страницей. */
+.ears-stage{min-height:min(78vh,860px)!important}
+.ears-split{min-height:min(78vh,860px)}
+.ears-stage{flex:0 0 auto;width:100%;border:0;border-radius:12px;
   background:#0e0e0e;display:block}
 #zp-body .ears-col{display:flex;flex-direction:column;gap:2px;min-width:0}
 /* ears-page ПОЛНАЯ ШИРИНА: от края до края, без окна-в-окне.
@@ -13798,10 +13956,37 @@ body.zpress .zlab.press{transform:translate(-50%,-50%) translateY(5px)
 #zp-body .ears-page{margin-top:26px;max-width:none;width:100%;padding:0 40px 20px}
 #zp-body .ears-page > .zp-cap{margin-left:2px}
 #zp-body .ears-page .vp-wrap{max-width:none;width:100%}
-#zp-body .ears-page #vp-mini{width:100%;height:min(52vh,560px)}
 #zp-body .ears-page #vp-list,#zp-body .ears-page .vp-row{max-width:none}
-#zp-body .ears-page #vp-mini{width:100%;height:min(34vh,300px)}
+/* ═══ КАРТА ГОЛОСОВ — НЕ ПОЛОСА (2026-08-31) ═══
+   Здесь стояли ДВЕ одинаковые строки для #vp-mini: 52vh/560px и следом
+   34vh/300px. Селекторы совпадают, вес одинаков — побеждала последняя, а
+   первая была мёртвой. На широком окне выходил холст ~1800x300, то есть
+   полоса 6:1. mapFit честно держит пропорции облака, поэтому точки
+   заполняли высоту и вставали узким столбиком в середине, а по бокам
+   зияла пустота — владелец: «область растянул, а облачка сплющило».
+   Пропорции облака ломать нельзя (место точки — это смысл), поэтому
+   ограничиваем не облако, а КОРОБКУ: держим её около 2:1 и ставим по
+   центру. Тогда облако занимает её целиком, а не прячется в столбик. */
+#zp-body .ears-page .vp-wrap{max-width:min(100%,1180px);margin-left:auto;
+  margin-right:auto}
+#zp-body .ears-page #vp-mini{width:100%;height:clamp(320px,44vh,560px)}
 #zp-body .ears-page .vp-wrap{max-width:none}
+#zp-body .ears-page .vp-live{height:clamp(560px,74vh,900px)}
+/* ═══ НА СТРАНИЦЕ МЕТОК — ТОЛЬКО КАРТА (2026-08-31) ═══
+   Владелец: «всю вот эту хуйню ниже тогда выпиливай». Под двумя живыми
+   панелями оставался хвост от старой разметки: строка «молчание», поле
+   с кнопкой «Записать», реестр системы и кнопка «Открыть панель голоса».
+   Он спорил с панелями за смысл — у каждой головы уже есть свой список,
+   а внизу лежал ещё один, общий, и читался как их итог.
+   Прячем ИМЕННО ЗДЕСЬ, а не удаляем: это тот же самый узел, что живёт в
+   меню микрофона (страница его одалживает и возвращает). В меню 🎙 и
+   запись голоса, и реестр остаются на месте — они нужны, просто не тут. */
+#zp-body .ears-page .vp-now,
+#zp-body .ears-page .vp-row,
+#zp-body .ears-page .vp-bar,
+#zp-body .ears-page .vp-reg,
+#zp-body .ears-page #vp-list,
+#zp-body .ears-page > div > .title{display:none}
 #zp-body .ears-grid{max-width:none;margin:0;overflow:visible;display:grid;
   grid-template-columns:1fr 1fr;gap:4px 26px;align-content:start;
   padding-right:6px;scrollbar-width:thin}
@@ -15619,13 +15804,19 @@ const ZPANELS = {
       // владелец: «как вёрстка сайта: начальная страница, вторая с доп.
       // инфой и настройками»). Высота = ровно видимая часть панели, поэтому
       // считаем её от zp-body и пересчитываем при изменении окна.
+      /* КАРТЕ — ЦЕЛЫЙ ЭКРАН (01.09.2026, владелец: «спусти блоки движки и
+         микрофон, шумодав ниже»). Высота бралась от zp-body, а он в
+         развёрнутом окне бывает низким — карта сжималась до полосы в
+         четверть экрана, и настройки лезли на неё сверху. Берём большее из
+         двух: высота панели и 78% окна, но не меньше 520 px. Настройки
+         уходят под сгиб, как и задумано — второй страницей. */
       const fitStage = () => {
         const hh = b.clientHeight || 0;
-        if (hh > 200){
-          fr.style.height = hh + 'px';
-          wrap.style.height = hh + 'px';   // титульный экран ровно по панели
-        }
+        const want = Math.max(hh, Math.round(window.innerHeight * 0.78), 520);
+        fr.style.height = want + 'px';
+        wrap.style.height = want + 'px';
       };
+      window.addEventListener('resize', fitStage);
       fitStage();
       try { new ResizeObserver(fitStage).observe(b); } catch(e){}
       setTimeout(fitStage, 60);
@@ -18356,5 +18547,695 @@ else start();
   }catch(e){}
 })();
 </script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     РЕЖИМ РАЗМЕТКИ РЕЧИ ПО ЛЮДЯМ (2026-08-31)
+
+     ЗАЧЕМ. Пороги кластеризации весь вечер крутились на глаз, и это
+     дало ровно то, чего и следовало ждать: четырнадцать «людей» там,
+     где их четверо, и два прочтения собственной калибровки задом
+     наперёд. Ощущение — не измеритель. Нужен эталон: кто и что сказал
+     на самом деле. Но переписывать два часа руками — не та работа:
+     текст и время у нас уже есть, машина их даёт. Человек нужен ровно
+     для одного — сказать, ЧЕЙ это голос.
+
+     КАК ЭТО РАБОТАЕТ (со слов владельца). Он слушает ролик, транскриб
+     пишет сплошняком. В режиме разметки у каждого слова появляется
+     полупрозрачная рамка. Клик по слову — выделили. Стрелка вправо —
+     присоединили следующее, сколько бы раз ни нажал; влево — отпустили.
+     Мышью можно протянуть сразу по нескольким. Стрелки вверх/вниз
+     перебирают говорящих: цвет рамки меняется, а над блоком встаёт
+     табличка с именем — там же можно вписать нового. Enter закрепляет.
+     Двойной клик до Enter — правка самого текста, если движок ослышался.
+
+     ПОЧЕМУ РАЗМЕТКА ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК. Каждое закрепление уходит на
+     сервер строкой в slux_test/snailkik_dnk/marked.jsonl. Разметку можно
+     делать кусками по пять минут: посчитать чистоту и полноту можно уже
+     на первом куске, а не после двух часов работы.
+     ═══════════════════════════════════════════════════════════════ -->
+<style>
+/* СЛОВА БЕЗ РАМОК (2026-08-31, владелец: «убери рамочки, рамка должна
+   проявляться вокруг того количества слов, которое я выделю»). Рамка у
+   каждого слова превращала текст в сетку и мешала читать — а читать тут
+   и есть главная работа. Теперь слово голое, подсвечивается только под
+   курсором, а рамка рисуется ОДНА вокруг всего выделенного куска:
+   левый край у первого слова, правый у последнего, верх и низ у всех.
+   Так видно именно границы блока, который ты назначаешь человеку. */
+body.marking #chat .msg.user .mw{
+  border:1px solid transparent; border-radius:0;
+  padding:0 2px; margin:0; display:inline-block;
+  cursor:pointer; transition:background .1s}
+body.marking #chat .msg.user .mw:hover{
+  background:rgba(255,255,255,.07); border-radius:4px}
+body.marking #chat .msg.user .mw.sel{
+  background:color-mix(in srgb, var(--mkc,#4dd0e1) 22%, transparent);
+  border-top-color:var(--mkc,#4dd0e1);
+  border-bottom-color:var(--mkc,#4dd0e1)}
+body.marking #chat .msg.user .mw.sel.sel-a{
+  border-left-color:var(--mkc,#4dd0e1);
+  border-top-left-radius:6px;border-bottom-left-radius:6px;
+  padding-left:5px}
+body.marking #chat .msg.user .mw.sel.sel-z{
+  border-right-color:var(--mkc,#4dd0e1);
+  border-top-right-radius:6px;border-bottom-right-radius:6px;
+  padding-right:5px}
+
+/* ЩЕЛЬ МЕЖДУ СЛОВАМИ — ТУДА СТАВИТСЯ КУРСОР (2026-08-31, владелец:
+   «между словами добавь возможность поставить курсор, чтобы я мог
+   вписать недостающих слов»). Пропущенное движком слово вписывается
+   ровно на своё место, а не в конец фразы: порядок слов и есть то, что
+   потом сравнивается с эталоном. */
+body.marking #chat .msg.user .mgap{display:inline-block;width:6px;
+  cursor:text;position:relative;vertical-align:baseline}
+body.marking #chat .msg.user .mgap:hover::before,
+body.marking #chat .msg.user .mgap.hot::before{
+  content:'';position:absolute;left:2px;top:-2px;bottom:-2px;width:2px;
+  background:var(--ok,#81c784);border-radius:2px;
+  animation:mgapBlink .9s steps(2) infinite}
+@keyframes mgapBlink{50%{opacity:.25}}
+body.marking #chat .msg.user .mw.mgap-in{
+  min-width:22px;background:#0d1014;
+  border:1px solid var(--ok,#81c784)!important;border-radius:5px;
+  padding:0 5px}
+#chat .msg.user .mw.done{
+  border-color:transparent;
+  border-bottom:2px solid var(--wc,#8892a6);
+  background:color-mix(in srgb, var(--wc,#8892a6) 13%, transparent)}
+/* табличка говорящего — встаёт НАД блоком, как и просил владелец */
+#mk-chip{position:absolute;z-index:60;display:none;align-items:center;gap:7px;
+  background:#12151a;border:1px solid var(--mkc,#4dd0e1);border-radius:9px;
+  padding:5px 9px;box-shadow:0 6px 22px rgba(0,0,0,.55);font-size:12.5px;
+  white-space:nowrap;transform:translateY(-100%)}
+#mk-chip .dot{width:9px;height:9px;border-radius:50%;
+  background:var(--mkc,#4dd0e1);flex:none}
+#mk-chip input{background:#0d1014;border:1px solid var(--border);
+  color:var(--fg);border-radius:6px;padding:3px 7px;font:inherit;width:130px}
+#mk-chip .hint{color:var(--dim);font-size:11px}
+/* ПОДСКАЗКА — НАВЕРХУ, НАД ЛЕНТОЙ (2026-08-31, владелец: «подними эту
+   разметку вверх в средней панели»). Внизу она стояла впритык к строке
+   ввода и мешала самому нужному: разметка идёт по словам в ленте, а
+   глаза при этом всё время внизу. Сверху она читается один раз и не
+   лезет под руку. Ширину не тянем — панель ровно по содержимому. */
+#mk-bar{display:none;position:absolute;left:50%;transform:translateX(-50%);
+  top:56px;z-index:55;background:rgba(18,21,26,.94);
+  border:1px solid var(--border);backdrop-filter:blur(10px);
+  border-radius:10px;padding:6px 12px;font-size:12px;color:var(--dim);
+  box-shadow:0 6px 22px rgba(0,0,0,.5);white-space:nowrap}
+body.marking #mk-bar{display:block}
+#mk-bar b{color:var(--fg);font-weight:600}
+#mk-bar kbd{background:#1a1e23;border:1px solid var(--border);border-radius:4px;
+  padding:1px 5px;font:inherit;font-size:11px;color:var(--fg)}
+body.marking #chat .msg.user{user-select:none}
+
+/* ═══ В РАЗМЕТКЕ ТЕКСТ ИДЁТ СПЛОШНЯКОМ (2026-08-31) ═══
+   Владелец: «в этом режиме текст должен писаться сплошняком, а не
+   облачками». И это не про красоту. Облачко — это граница фразы,
+   которую нарезал VAD, а человек говорит не фразами движка: мысль
+   спокойно переходит из одного облачка в другое, и перебивают ровно
+   посередине. Пока текст разложен по пузырям, выделить «вот эти слова
+   сказал один человек» через границу пузыря психологически нельзя —
+   глаз видит стену. Сплошняком граница исчезает, а стрелка вправо и
+   так уже идёт сквозь неё.
+   Пузыри мы не ломаем, а только ГАСИМ ИХ ВИД: те же узлы, те же слова,
+   тот же порядок — выйдешь из режима, всё вернётся как было. Подписи
+   (движок, герцы, слоги в секунду) прячем: в разметке важен текст, а
+   не метрики, и они рвали бы строку. Реплики Сайки и служебные заметки
+   тоже прячем — размечаем речь людей, а не разговор с ней. */
+/* ТЕКСТ РАСТЁТ СНИЗУ ВВЕРХ И НА ВСЮ ШИРИНУ (2026-08-31).
+   Владелец: «текст должен сплошняком писаться и снизу вверх, а не
+   наоборот, и во всю длину интерфейса».
+   Лента — колонка, прижатая к низу (justify-content:flex-end): пока
+   речи мало, она лежит внизу у строки ввода, а не висит вверху над
+   пустотой; новые слова дописываются снизу, старые уползают вверх —
+   ровно как смотришь ролик. Сам поток слов живёт в одном блоке
+   #mk-flow: инлайн-поток внутри flex-контейнера невозможен, потому
+   что каждый прямой ребёнок стал бы отдельным рядом.
+   Ширину не режем ничем: разметка идёт словами, и чем длиннее строка,
+   тем меньше переносов рвут фразу пополам. */
+body.marking #chat{display:flex!important;flex-direction:column;
+  max-width:none!important;width:100%;
+  line-height:2.15;padding:14px 26px 18px;font-size:15px}
+/* Прижимаем ОТСТУПОМ, а не justify-content:flex-end — это не вкусовщина.
+   flex-end в прокручиваемом контейнере обрезает содержимое сверху: когда
+   речи станет больше экрана, до первых слов уже не домотать, они уходят
+   за недостижимый край. margin-top:auto даёт то же самое прижатие к низу,
+   но прокрутка остаётся честной. */
+body.marking #mk-flow{width:100%;max-width:none;margin-top:auto}
+body.marking #chat .msg.user{display:inline;background:none!important;
+  border:0!important;border-left:0!important;box-shadow:none;padding:0!important;
+  margin:0!important;max-width:none!important;border-radius:0}
+body.marking #chat .msg.user > div{display:inline}
+body.marking #chat .msg.user .meta{display:none}
+body.marking #chat .msg.saika,
+body.marking #chat .msg.sys,
+body.marking #chat .msg.note,
+body.marking #chat .msg.assistant{display:none}
+/* слово-разделитель между бывшими пузырями: без него соседние реплики
+   слипаются в одно слово */
+body.marking #chat .msg.user::after{content:' ';white-space:pre}
+/* ДОПИСАННОЕ РУКОЙ ВИДНО ВСЕГДА (2026-08-31, просьба владельца:
+   «мои дописанные слова отмечай пунктиром или красной оконтовкой»).
+   Это не украшение: слово, которого движок не выдал ВООБЩЕ, и слово,
+   которое он выдал неверно, — две разные болезни. Первое значит, что
+   звук не дожил до движка (обрезал VAD, съел шумодав, срезала нарезка);
+   второе — что дожил, но был разобран неправильно. Лечатся они в разных
+   местах системы, поэтому и помечены по-разному. */
+#chat .mw.mw-new{border:1px dashed #ef5350!important;
+  color:#ffcdd2;border-radius:5px}
+#chat .mw.mw-fix{border-bottom:2px dotted var(--warn)!important;
+  cursor:help}
+#chat .mw.mw-new::after{content:'+';font-size:9px;vertical-align:super;
+  color:#ef5350;margin-left:1px;opacity:.8}
+body.marking #chat .msg.user .mw[contenteditable]{
+  user-select:text;background:#0d1014;border-color:var(--ok,#81c784)}
+</style>
+<div id="mk-chip"><span class="dot"></span><input id="mk-name"
+  placeholder="имя говорящего" autocomplete="off" spellcheck="false">
+  <span class="hint">↑↓ выбрать · Enter закрепить</span></div>
+<div id="mk-bar">разметка: <b>клик</b> по слову · <kbd>→</kbd><kbd>←</kbd>
+  расширить · <kbd>↑</kbd><kbd>↓</kbd> чей голос · <kbd>Enter</kbd> закрепить
+  · <kbd>двойной клик</kbd> поправить текст · <kbd>Esc</kbd> снять</div>
+<script>
+(function(){
+  const PALETTE = ['#4dd0e1','#ffb74d','#ba68c8','#81c784','#f06292',
+                   '#7986cb','#ffd54f','#4db6ac','#ff8a65','#9575cd'];
+  const MK = window.MARK = {
+    on:false, anchor:null, focus:null, spk:-1,   // -1 = ещё не выбран
+    speakers:[], editing:false
+  };
+  let WI = 0;                                   // сквозной номер слова
+
+  const $$ = s => document.querySelector(s);
+  const chat = () => document.getElementById('chat');
+
+  /* ─── слова ─────────────────────────────────────────────────────── */
+  // Разбиваем ТОЛЬКО текстовый узел пузыря. Подпись под ним (.meta) не
+  // трогаем: она не речь, размечать там нечего.
+  function wrapBubble(b){
+    const t = b.firstChild;
+    if(!t || t.classList && t.classList.contains('meta')) return;
+    if(t.dataset && t.dataset.wrapped === '1') return;
+    const txt = (t.textContent || '').trim();
+    if(!txt) return;
+    t.textContent = '';
+    const parts = txt.split(/\s+/);
+    t.appendChild(gapNode());
+    for(const w of parts){
+      const sp = document.createElement('span');
+      sp.className = 'mw'; sp.textContent = w;
+      sp.dataset.wi = String(WI++);
+      t.appendChild(sp);
+      t.appendChild(gapNode());
+    }
+    t.dataset.wrapped = '1';
+  }
+  // ОДИН БЛОК ПОД ВЕСЬ ПОТОК. Лента прижата к низу, а значит она flex —
+  // и каждый прямой ребёнок в ней стал бы отдельным рядом, то есть
+  // столбиком пузырей, чего мы как раз избегаем. Поэтому в разметке все
+  // реплики переезжают внутрь #mk-flow: там обычный инлайн-поток, слова
+  // текут строками во всю ширину. Узлы те же самые — переезд ничего не
+  // ломает: склейка реплик и правка по смыслу держат их по ссылке.
+  let moving = false;
+  function flow(){
+    let f = document.getElementById('mk-flow');
+    if(!f){
+      f = document.createElement('div'); f.id = 'mk-flow';
+      chat().appendChild(f);
+    }
+    return f;
+  }
+  function wrapAll(){
+    const f = flow();
+    moving = true;
+    try{
+      chat().querySelectorAll(':scope > .msg.user').forEach(b => f.appendChild(b));
+      f.querySelectorAll('.msg.user').forEach(wrapBubble);
+    } finally { moving = false; }
+    try{ chatBottom(); }catch(e){}
+  }
+  // ═══ ВОЗВРАТ В ОБЛАЧКА — С АНИМАЦИЕЙ (2026-08-31) ═══
+  // Владелец: «когда я верну в обычный режим, все прописанные слова
+  // должны санимироваться в облачка обратно всем диалогом с подписями,
+  // что где и как».
+  // Смысл не в красоте перехода. Разметка идёт сплошняком, где границы
+  // фраз намеренно стёрты; возврат показывает ту же самую речь уже
+  // разложенной по фразам движка — и видно, как ЛЕГЛА разметка: где
+  // человек провёл границу говорящего внутри одного пузыря (значит,
+  // нарезка слепила двоих) и где один говорящий растянулся на три
+  // пузыря (значит, нарезка порубила одного). Это и есть первый живой
+  // отчёт о том, как работает слух.
+  // Приём стандартный: снимаем положение ДО, переносим узлы, снимаем
+  // ПОСЛЕ и проигрываем разницу трансформацией — браузер анимирует
+  // только transform, поэтому переход остаётся гладким на сотнях слов.
+  function unflow(){
+    const f = document.getElementById('mk-flow');
+    if(!f) return;
+    const kids = Array.from(f.children);
+    const before = new Map();
+    kids.forEach(b => before.set(b, b.getBoundingClientRect()));
+    moving = true;
+    try{
+      kids.forEach(b => chat().insertBefore(b, f));
+      f.remove();
+    } finally { moving = false; }
+    requestAnimationFrame(() => {
+      kids.forEach(b => {
+        const a = before.get(b), c = b.getBoundingClientRect();
+        if(!a || !c.height) return;
+        const dx = a.left - c.left, dy = a.top - c.top;
+        const sx = c.width ? Math.max(.2, a.width / c.width) : 1;
+        if(Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        b.style.transformOrigin = 'left top';
+        b.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scaleX(' +
+                            sx + ')';
+        b.style.opacity = '.55';
+        requestAnimationFrame(() => {
+          b.style.transition = 'transform .42s cubic-bezier(.2,.8,.2,1),' +
+                               ' opacity .42s ease';
+          b.style.transform = ''; b.style.opacity = '';
+          setTimeout(() => { b.style.transition = '';
+                             b.style.transformOrigin = ''; }, 480);
+        });
+      });
+    });
+    try{ chatBottom(); }catch(e){}
+  }
+
+  // ═══ ЭТАЛОННЫЙ ДОКУМЕНТ ═══
+  // Собираем по каждому пузырю три вещи рядом: что услышала система,
+  // что стоит после правки владельца и чем это отличается — пословно.
+  // Плюс всё, что система знала о звуке в тот момент. Дальше по этим
+  // строкам ищутся закономерности: не «здесь ошибка», а «ошибки живут
+  // там, где было столько-то герц, такая-то громкость, столько-то
+  // говорящих разом».
+  function buildDoc(){
+    const rows = [];
+    document.querySelectorAll('#chat .msg.user').forEach(b => {
+      const ws = Array.from(b.querySelectorAll('.mw'));
+      if(!ws.length) return;
+      const m = b.__stt || {};
+      const words = ws.map(w => ({
+        w: w.textContent.trim(),
+        spk: w.dataset.spk || '',
+        add: w.classList.contains('mw-new') || undefined,
+        was: w.dataset.was || undefined
+      }));
+      const spk = {};
+      words.forEach(w => { if(w.spk) spk[w.spk] = (spk[w.spk] || 0) + 1; });
+      rows.push({
+        heard: (m.text || '').trim(),                 // как услышала система
+        truth: words.map(w => w.w).join(' '),         // как было на самом деле
+        words: words,
+        added: words.filter(w => w.add).length,
+        fixed: words.filter(w => w.was).length,
+        speakers: spk,                                // кто говорил, по словам
+        sys: {engine:m.engine, ms:m.stt_ms, sec:m.sec, hz:m.voice_hz,
+              wps:m.rate_wps, music:m.music, src:m.src, shaky:m.shaky,
+              guess:m.speaker, conf:m.speaker_conf, db:m.in_dbfs}
+      });
+    });
+    return rows;
+  }
+  async function saveDoc(){
+    const rows = buildDoc().filter(r => r.added || r.fixed ||
+                                        Object.keys(r.speakers).length);
+    if(!rows.length) return 0;
+    try{
+      const r = await fetch('/api/mark', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({kind:'doc', rows: rows, ts: Date.now()})});
+      const j = await r.json();
+      return j.n || rows.length;
+    }catch(e){ return 0; }
+  }
+  window.MARK_DOC = buildDoc;
+  // Щель — это пробел, по которому можно щёлкнуть. Он же и есть пробел
+  // между словами: ширину держим на нём, отдельный текстовый узел не
+  // нужен, иначе при пересборке слов пробелы начинают дублироваться.
+  function gapNode(){
+    const g = document.createElement('span');
+    g.className = 'mgap';
+    g.title = 'вписать пропущенное слово';
+    return g;
+  }
+  function gapOpen(g){
+    if(g.querySelector('.mgap-in')) return;
+    const inp = document.createElement('span');
+    inp.className = 'mw mgap-in mw-new';
+    inp.setAttribute('contenteditable', 'true');
+    inp.dataset.wi = String(gapWi(g));
+    g.classList.add('hot');
+    g.appendChild(inp);
+    inp.focus();
+    const fin = (keep) => {
+      const val = (inp.textContent || '').trim();
+      g.classList.remove('hot');
+      inp.remove();
+      if(!keep || !val) return;
+      // слово могло быть вписано не одно
+      for(const w of val.split(/\s+/)){
+        const sp = document.createElement('span');
+        sp.className = 'mw mw-new';
+        sp.textContent = w;
+        sp.title = 'вписано рукой — движок этого слова не выдал вовсе';
+        sp.dataset.wi = String(gapWi(g));
+        g.parentNode.insertBefore(sp, g.nextSibling);
+        g.parentNode.insertBefore(gapNode(), sp.nextSibling);
+      }
+      renumber();
+    };
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();                 // стрелки тут двигают курсор
+      if(e.key === 'Enter'){ e.preventDefault(); fin(true); }
+      if(e.key === 'Escape'){ e.preventDefault(); fin(false); }
+    });
+    inp.addEventListener('blur', () => fin(true));
+  }
+  // номер вписанного слова — между соседями, чтобы порядок не поехал
+  function gapWi(g){
+    const prev = g.previousElementSibling, next = g.nextElementSibling;
+    const a = prev && prev.dataset && prev.dataset.wi != null
+              ? +prev.dataset.wi : -1;
+    const b = next && next.dataset && next.dataset.wi != null
+              ? +next.dataset.wi : a + 1;
+    return (a + b) / 2;
+  }
+
+  const words = () => Array.from(chat().querySelectorAll('.mw'));
+  const wordAt = i => chat().querySelector('.mw[data-wi="'+i+'"]');
+
+  /* ─── выделение ─────────────────────────────────────────────────── */
+  function range(){
+    if(MK.anchor == null) return [];
+    const a = Math.min(MK.anchor, MK.focus), b = Math.max(MK.anchor, MK.focus);
+    return words().filter(w => {
+      const i = +w.dataset.wi; return i >= a && i <= b;
+    });
+  }
+  function paint(){
+    words().forEach(w => w.classList.remove('sel', 'sel-a', 'sel-z'));
+    const r = range();
+    if(r.length){ r[0].classList.add('sel-a');
+                  r[r.length - 1].classList.add('sel-z'); }
+    const col = MK.spk >= 0 ? MK.speakers[MK.spk].color : '#4dd0e1';
+    document.body.style.setProperty('--mkc', col);
+    r.forEach(w => w.classList.add('sel'));
+    chip(r, col);
+  }
+  function chip(r, col){
+    const c = $$('#mk-chip');
+    if(!r.length || MK.spk < 0){ c.style.display = 'none'; return; }
+    const first = r[0].getBoundingClientRect();
+    c.style.display = 'flex';
+    c.style.setProperty('--mkc', col);
+    c.style.left = (first.left + window.scrollX) + 'px';
+    c.style.top  = (first.top + window.scrollY - 6) + 'px';
+    const inp = $$('#mk-name');
+    if(document.activeElement !== inp) inp.value = MK.speakers[MK.spk].name;
+  }
+  function clearSel(){
+    MK.anchor = MK.focus = null; MK.spk = -1; MK.editing = false;
+    words().forEach(w => { w.classList.remove('sel', 'sel-a', 'sel-z');
+                           w.removeAttribute('contenteditable'); });
+    $$('#mk-chip').style.display = 'none';
+  }
+
+  /* ─── список говорящих ──────────────────────────────────────────── */
+  function ensureSpk(){
+    if(MK.speakers.length) return;
+    // затравка: те, кого система уже завела, чтобы первые нажатия
+    // ↑↓ сразу давали осмысленные имена, а не пустые слоты
+    const seen = new Set();
+    chat().querySelectorAll('.msg.user[data-who]').forEach(b => {
+      const w = b.dataset.who; if(w && !seen.has(w)) seen.add(w);
+    });
+    Array.from(seen).slice(0, 8).forEach((n, i) =>
+      MK.speakers.push({name:n, color:PALETTE[i % PALETTE.length]}));
+    if(!MK.speakers.length)
+      MK.speakers.push({name:'Голос 1', color:PALETTE[0]});
+    // всегда держим один пустой слот в конце — «это кто-то новый»
+    MK.speakers.push({name:'', color:PALETTE[MK.speakers.length % PALETTE.length]});
+  }
+  function cycle(d){
+    ensureSpk();
+    if(MK.spk < 0){ MK.spk = 0; }
+    else{
+      MK.spk = (MK.spk + d + MK.speakers.length) % MK.speakers.length;
+    }
+    paint();
+  }
+
+  /* ─── закрепление ───────────────────────────────────────────────── */
+  async function commit(){
+    const r = range();
+    if(!r.length || MK.spk < 0) return;
+    const inp = $$('#mk-name');
+    let name = (inp.value || '').trim();
+    if(!name){ inp.focus(); return; }
+    MK.speakers[MK.spk].name = name;
+    const col = MK.speakers[MK.spk].color;
+    // если это был пустой слот — заводим следующий пустой
+    if(MK.spk === MK.speakers.length - 1)
+      MK.speakers.push({name:'',
+        color:PALETTE[MK.speakers.length % PALETTE.length]});
+    const text = r.map(w => w.textContent).join(' ');
+    r.forEach(w => {
+      w.classList.remove('sel'); w.classList.add('done');
+      w.style.setProperty('--wc', col);
+      w.dataset.spk = name;
+    });
+    // время берём из подписи пузыря, где стоит реальная метка часов
+    const bub = r[0].closest('.msg');
+    const md = bub && bub.querySelector('.meta');
+    try{
+      await fetch('/api/mark', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({speaker:name, color:col, text:text,
+          wi:[+r[0].dataset.wi, +r[r.length-1].dataset.wi],
+          meta: md ? md.textContent : '', ts: Date.now()})});
+    }catch(e){}
+    clearSel();
+  }
+
+  /* ─── правка текста двойным кликом ──────────────────────────────── */
+  function editOn(){
+    const r = range(); if(!r.length) return;
+    MK.editing = true;
+    // запоминаем, что тут стояло ДО правки: без этого потом не отличить
+    // «движок ослышался» от «движок промолчал»
+    MK.wasWords = r.map(w => w.textContent.trim());
+    MK.editHost = r[0].parentNode;
+    r.forEach(w => w.setAttribute('contenteditable', 'true'));
+    r[0].focus();
+    const sel = window.getSelection(), rg = document.createRange();
+    rg.selectNodeContents(r[r.length-1]); rg.collapse(false);
+    sel.removeAllRanges(); sel.addRange(rg);
+  }
+
+  // Наибольшая общая подпоследовательность: обычный diff по словам.
+  // Нужен, чтобы отличить ДОПИСАННОЕ от ИСПРАВЛЕННОГО. Если просто
+  // сравнивать по позициям, то одно вставленное слово сдвинет хвост и
+  // вся оставшаяся фраза притворится исправленной — а это ровно та
+  // статистика, ради которой всё и затевается.
+  function lcs(a, b){
+    const n = a.length, m = b.length;
+    const d = Array.from({length:n+1}, () => new Int32Array(m+1));
+    for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
+      d[i][j] = a[i] === b[j] ? d[i+1][j+1]+1 : Math.max(d[i+1][j], d[i][j+1]);
+    const out = []; let i=0, j=0;
+    while(i<n && j<m){
+      if(a[i] === b[j]){ out.push(['=', a[i], b[j]]); i++; j++; }
+      else if(d[i+1][j] >= d[i][j+1]){ out.push(['-', a[i], null]); i++; }
+      else { out.push(['+', null, b[j]]); j++; }
+    }
+    while(i<n) out.push(['-', a[i++], null]);
+    while(j<m) out.push(['+', null, b[j++]]);
+    return out;
+  }
+
+  function editOff(){
+    if(!MK.editing) return;
+    MK.editing = false;
+    const r = range();
+    if(!r.length){ MK.wasWords = null; return; }
+    // читаем, что получилось, и заново раскладываем на слова: человек
+    // мог вписать пробел, а значит два слова вместо одного
+    const now = r.map(w => w.textContent).join(' ')
+                 .replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    const was = MK.wasWords || [];
+    const host = r[0].parentNode;
+    // ЯКОРЬ БЕРЁМ ЗА ПРОБЕЛАМИ (2026-08-31). Первая версия брала
+    // nextSibling последнего слова — а это как раз тот пробельный узел,
+    // который цикл ниже сам и удаляет. insertBefore получал узел, уже не
+    // принадлежащий родителю, падал, и правленые слова не появлялись
+    // вовсе: строка молча теряла кусок. Поймано стендом, а не глазами.
+    let anchor = r[r.length - 1].nextSibling;
+    while(anchor && anchor.nodeType === 3 && !anchor.textContent.trim())
+      anchor = anchor.nextSibling;
+    const baseWi = +r[0].dataset.wi;
+    const spk = r[0].dataset.spk || '';
+    const col = r[0].style.getPropertyValue('--wc') || '';
+    r.forEach(w => { const n2 = w.nextSibling;
+      if(n2 && n2.nodeType === 3 && !n2.textContent.trim()) n2.remove();
+      w.remove(); });
+    let k = 0, made = [];
+    try{
+    for(const [op, oldW, newW] of lcs(was, now)){
+      if(op === '-') continue;                 // слово убрали — просто нет
+      const sp = document.createElement('span');
+      sp.className = 'mw';
+      sp.textContent = newW;
+      sp.dataset.wi = String(baseWi + (k++) / 100);
+      if(spk){ sp.classList.add('done'); sp.dataset.spk = spk;
+               if(col) sp.style.setProperty('--wc', col); }
+      if(op === '+'){
+        sp.classList.add('mw-new');
+        sp.title = 'дописано рукой — движок этого слова не выдал вовсе';
+      }else if(op === '=' && oldW !== newW){
+        sp.classList.add('mw-fix'); sp.dataset.was = oldW;
+        sp.title = 'система услышала: ' + oldW;
+      }
+      host.insertBefore(sp, anchor);
+      host.insertBefore(document.createTextNode(' '), anchor);
+      made.push(sp);
+    }
+    }catch(err){
+      // молча терять правку нельзя: лучше честно сказать в журнал
+      console.warn('[разметка] правка не разложилась:', err);
+    }
+    // слова пересобраны — старое выделение больше не про них
+    MK.anchor = made.length ? +made[0].dataset.wi : null;
+    MK.focus  = made.length ? +made[made.length-1].dataset.wi : null;
+    MK.wasWords = null;
+    renumber();
+    paint();
+  }
+
+  // после вставки слов дробные номера приводим обратно к целым, иначе
+  // стрелка вправо начнёт спотыкаться о несуществующие индексы
+  function renumber(){
+    let i = 0;
+    const all = Array.from(chat().querySelectorAll('.mw'))
+      .sort((a,b) => (+a.dataset.wi) - (+b.dataset.wi));
+    const keepA = MK.anchor, keepF = MK.focus;
+    let na = null, nf = null;
+    for(const w of all){
+      const old = +w.dataset.wi;
+      if(keepA != null && old === keepA) na = i;
+      if(keepF != null && old === keepF) nf = i;
+      w.dataset.wi = String(i++);
+    }
+    WI = i;
+    if(na != null) MK.anchor = na;
+    if(nf != null) MK.focus = nf;
+  }
+
+  /* ─── мышь ──────────────────────────────────────────────────────── */
+  let dragging = false;
+  document.addEventListener('mousedown', e => {
+    if(!MK.on || MK.editing) return;
+    const g = e.target.closest && e.target.closest('.mgap');
+    if(g && !e.target.closest('.mgap-in')){
+      e.preventDefault(); clearSel(); gapOpen(g); return;
+    }
+    const w = e.target.closest && e.target.closest('.mw');
+    if(!w){
+      // КЛИК В ПУСТОТУ — СНЯТЬ ВЫДЕЛЕНИЕ (2026-08-31, просьба владельца).
+      // Промахнулся мимо слова или передумал — не надо искать Esc.
+      // Табличку с именем и строку ввода при этом не трогаем: клик по
+      // ним не должен рушить то, что человек как раз собирается назвать.
+      if(!(e.target.closest && e.target.closest('#mk-chip')) &&
+         !(e.target.closest && e.target.closest('#mk-bar')) &&
+         MK.anchor != null) clearSel();
+      return;
+    }
+    e.preventDefault();
+    MK.anchor = MK.focus = +w.dataset.wi; MK.spk = -1;
+    dragging = true; paint();
+  });
+  document.addEventListener('mousemove', e => {
+    if(!dragging || !MK.on) return;
+    const w = e.target.closest && e.target.closest('.mw');
+    if(w){ MK.focus = +w.dataset.wi; paint(); }
+  });
+  document.addEventListener('mouseup', () => { dragging = false; });
+  document.addEventListener('dblclick', e => {
+    if(!MK.on) return;
+    const w = e.target.closest && e.target.closest('.mw');
+    if(w && w.classList.contains('sel')) editOn();
+  });
+
+  /* ─── клавиши ───────────────────────────────────────────────────── */
+  document.addEventListener('keydown', e => {
+    if(!MK.on) return;
+    const inName = e.target === $$('#mk-name');
+    if(MK.editing){
+      if(e.key === 'Enter'){ e.preventDefault(); editOff(); }
+      if(e.key === 'Escape'){ e.preventDefault(); editOff(); }
+      return;
+    }
+    if(e.key === 'Escape'){ e.preventDefault(); clearSel(); return; }
+    if(e.key === 'Enter'){ e.preventDefault(); commit(); return; }
+    if(inName && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
+    if(MK.anchor == null) return;
+    if(e.key === 'ArrowRight'){
+      e.preventDefault();
+      if(wordAt(MK.focus + 1)) { MK.focus++; paint(); }
+    }else if(e.key === 'ArrowLeft'){
+      e.preventDefault();
+      if(MK.focus > MK.anchor){ MK.focus--; paint(); }
+    }else if(e.key === 'ArrowUp'){
+      e.preventDefault(); cycle(-1);
+    }else if(e.key === 'ArrowDown'){
+      e.preventDefault(); cycle(1);
+    }
+  });
+
+  /* ─── включение режима ──────────────────────────────────────────── */
+  const btn = document.getElementById('btn-mark');
+  if(btn) btn.onclick = () => {
+    MK.on = !MK.on;
+    document.body.classList.toggle('marking', MK.on);
+    btn.style.color = MK.on ? 'var(--accent)' : '';
+    if(MK.on){ wrapAll(); ensureSpk(); }
+    else {
+      clearSel();
+      // сначала сохранить, потом перекладывать: узлы те же, но пусть
+      // эталон уедет на диск до любых движений вида
+      saveDoc().then(n => { if(n) console.log('[разметка] эталон: строк', n); });
+      unflow();
+    }
+  };
+  // новые реплики прилетают всё время — режем их на слова на лету
+  // сами же двигаем узлы — без этой защёлки наблюдатель звал бы себя
+  // по кругу на каждом переносе
+  new MutationObserver(() => { if(MK.on && !moving) wrapAll(); })
+    .observe(chat(), {childList:true, subtree:true});
+})();
+</script>
+
+
+<style>
+/* ── ПРОМЕЖУТОЧНЫЕ ГИПОТЕЗЫ В ЧЕРНОВИКЕ (2026-08-31) ──
+   Тусклое — то, что модель ещё может передумать. Полный цвет — то, что
+   пережило несколько перечитываний и больше не меняется. Жёлтая вспышка
+   — гипотезу только что подменили: без неё исправление проходит
+   незаметно, а именно оно и показывает, что система думает, а не просто
+   печатает. */
+#stt-draft{opacity:1!important;font-style:normal!important}
+#stt-draft .dr{transition:color .25s ease, opacity .25s ease}
+#stt-draft .dr-new{color:var(--dim);opacity:.5;
+  animation:drIn .22s ease both}
+#stt-draft .dr-firm{color:var(--fg);opacity:1}
+#stt-draft .dr-fix{color:var(--warn);opacity:.95;
+  animation:drFix .5s ease both;cursor:help}
+#stt-draft .dr-tail{color:var(--dim);opacity:.5;
+  animation:drBlink 1s steps(2) infinite}
+@keyframes drIn{from{opacity:0;filter:blur(3px);transform:translateY(2px)}
+  to{opacity:.5;filter:blur(0);transform:none}}
+@keyframes drFix{0%{background:rgba(255,213,79,.28);border-radius:4px}
+  100%{background:transparent}}
+@keyframes drBlink{50%{opacity:.15}}
+</style>
 </body>
 </html>

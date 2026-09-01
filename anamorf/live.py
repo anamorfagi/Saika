@@ -45,6 +45,15 @@ import types
 
 log = logging.getLogger("saika.live")
 
+try:
+    from anamorf.config import CFG
+except Exception:      # живая правка не должна зависеть
+    class _NoCfg:      # от настроек, если их ещё нет
+        @staticmethod
+        def get(k, d=None):
+            return d
+    CFG = _NoCfg()
+
 
 # ─────────────────────── перепрошивка объектов ───────────────────────
 def _graft_func(old, new) -> bool:
@@ -109,7 +118,8 @@ def reload_module(name: str) -> tuple:
         importlib.reload(mod)
     except Exception as e:
         return False, f"перечитать не вышло: {e}"
-    grafted, added = 0, 0
+    grafted, added, kept = 0, 0, 0
+    fixed = []
     for key, new_val in list(vars(mod).items()):
         old_val = old_ns.get(key)
         if old_val is None:
@@ -126,7 +136,172 @@ def reload_module(name: str) -> tuple:
             if _graft_class(old_val, new_val):
                 setattr(mod, key, old_val)
                 grafted += 1
-    return True, f"перепрошито {grafted}, новых имён {added}"
+        elif _same_kind(old_val, new_val):
+            # ЖИВОЙ ОДИНОЧКА ПЕРЕЖИВАЕТ ПРАВКУ (2026-08-31).
+            #
+            # importlib.reload переисполняет модуль целиком, а значит
+            # строка вида `S = Manager()` внизу файла СОЗДАЁТ НОВЫЙ
+            # объект. Классу мы аккуратно перепрошиваем методы, чтобы
+            # живой экземпляр не терял состояние, — и тут же меняем сам
+            # экземпляр на пустой. Модели, поднятые в видеопамяти,
+            # счётчики, накопленные отпечатки, открытые сокеты — всё
+            # молча обнулялось на каждой правке файла.
+            #
+            # Теперь одиночку оставляем СТАРУЮ: её класс уже перепрошит,
+            # поведение новое, состояние на месте. А чтобы объект мог
+            # починить сам себя (добавить поле, которого не было в его
+            # версии, пересоздать захваченный замок), класс может
+            # объявить __live_after__ — вызовем сразу после правки.
+            setattr(mod, key, old_val)
+            kept += 1
+            hook = getattr(type(old_val), "__live_after__", None)
+            if hook is not None:
+                try:
+                    hook(old_val)
+                    fixed.append(key)
+                except Exception as e:
+                    log.warning("%s.%s не пережил правку: %s", name, key, e)
+    tail = f"перепрошито {grafted}, новых имён {added}"
+    if kept:
+        tail += f", живых объектов сохранено {kept}"
+    if fixed:
+        tail += " (починили себя: " + ", ".join(fixed[:6]) + ")"
+    return True, tail
+
+
+def _same_kind(old_val, new_val) -> bool:
+    """Один ли это по сути объект — чтобы отличить живого одиночку от
+    обычной константы. Сравниваем классы по имени и модулю: после
+    reload класс уже другой объект, хотя это тот же самый класс."""
+    if isinstance(old_val, (str, bytes, int, float, bool, type(None),
+                            tuple, frozenset)):
+        return False
+    to, tn = type(old_val), type(new_val)
+    if to is tn:
+        return True
+    return (getattr(to, "__qualname__", "?") == getattr(tn, "__qualname__", "!")
+            and getattr(to, "__module__", "?") == getattr(tn, "__module__", "!"))
+
+
+# ─────────────────── верхний уровень тоже живой ───────────────────
+# ХОЛОДНЫХ ПРАВОК БЫТЬ НЕ ДОЛЖНО (2026-08-31, владелец: «я не должен
+# трогать этот перезапуск, ты должен уметь обновлять весь код — горячий,
+# холодный, любой»). Раньше всё, что лежит ВНЕ функций и классов —
+# константы, словари настроек, импорты, таблицы — обновить на ходу было
+# нельзя, и живая правка честно писала «функции обновлены, эти строки
+# нет». А это ровно та строчка, после которой человека просят нажать
+# кнопку.
+#
+# Теперь верхний уровень тоже применяется, но не слепо. Модуль нельзя
+# переисполнить целиком: там поднимается сервер, вешаются вебсокеты,
+# стартуют потоки — второй раз это не запуск, а катастрофа. Поэтому
+# берём ПООПЕРАТОРНО только то, что изменилось, и пропускаем операторы,
+# которые что-то ЗАПУСКАЮТ. Пропущенное не замалчиваем — пишем в журнал
+# поимённо, чтобы было видно, что именно осталось от старого запуска.
+_TOP_UNSAFE = ("FastAPI(", "uvicorn", "add_middleware", ".mount(",
+               "Thread(", ".start()", "atexit", "signal.signal",
+               "basicConfig", "app.include_router", "asyncio.run")
+
+
+def _top_stmts(src: str) -> dict:
+    """Операторы верхнего уровня: ключ -> исходник.
+
+    Ключ у присваивания — имена, которым оно присваивает: тогда правка
+    значения видна как ИЗМЕНЕНИЕ той же строки, а не как новая."""
+    out = {}
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return out
+    lines = src.splitlines(keepends=True)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            continue
+        piece = "".join(lines[node.lineno - 1:node.end_lineno])
+        names = []
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                names += [n.id for n in ast.walk(t) if isinstance(n, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target,
+                                                            ast.Name):
+            names = [node.target.id]
+        key = ("=" + ",".join(names)) if names else piece
+        out[key] = piece
+    return out
+
+
+def apply_top(mod, old_src: str, new_src: str) -> tuple:
+    """Применить изменившийся верхний уровень. -> (что сделали, что нет).
+
+    ═══ ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО (2026-09-01) ═══
+
+    Живой разбор: включённым это подняло ВТОРУЮ КОПИЮ СИСТЕМЫ поверх
+    первой. В журнале запуск шёл дважды в одном процессе — два
+    голосовых цикла, два планировщика, два PANNs, два llama-server, — а
+    затем kill_by_port убивал первую копию по занятому порту, и
+    start.bat видел падение с кодом 15. Владелец ловил это как «окно
+    исчезло» и бесконечный круг перезапусков.
+
+    Причина в самой затее. На верхнем уровне main.py лежит не только
+    список констант, но и ЗАПУСК ВСЕГО. Отличить одно от другого
+    списком опасных слов нельзя: запуск прячется за любым вызовом,
+    который на вид безобиден. Чёрный список тут принципиально дырявый,
+    а цена дырки — вторая копия системы.
+
+    Поэтому верхний уровень снова НЕ применяется, а честно называется в
+    журнале как недоехавший. Функции и классы обновляются на лету, как и
+    раньше, — этого хватает почти всегда. Включить можно осознанно
+    (dev.hot_top_level), но только для модулей, где на верхнем уровне
+    заведомо одни константы.
+    """
+    if not CFG.get("dev.hot_top_level", False):
+        changed = [k for k, v in _top_stmts(new_src).items()
+                   if (_top_stmts(old_src) if old_src else {}).get(k) != v]
+        if changed:
+            return [], ["верхний уровень (%d строк) — функции обновлены, "
+                        "эти нет: включается dev.hot_top_level, но там же "
+                        "лежит запуск системы" % len(changed)]
+        return [], []
+    new_t = _top_stmts(new_src)
+    old_t = _top_stmts(old_src) if old_src else {}
+    g = vars(mod)
+    done, skipped = [], []
+    for key, piece in new_t.items():
+        if old_t.get(key) == piece:
+            continue
+        short = piece.strip().splitlines()[0][:60]
+        if any(u in piece for u in _TOP_UNSAFE):
+            skipped.append(short + "  (запускает — трогать на ходу нельзя)")
+            continue
+        before = {n: g.get(n) for n in _names_of(piece) if n in g}
+        try:
+            exec(compile(piece, "<live-top:%s>" % getattr(mod, "__name__", "?"),
+                         "exec"), g, g)
+        except Exception as e:
+            skipped.append("%s  (%s)" % (short, e))
+            continue
+        # живой объект пересоздавать нельзя — вернём прежний (см. _same_kind)
+        for n, old_val in before.items():
+            new_val = g.get(n)
+            if old_val is not new_val and _same_kind(old_val, new_val):
+                g[n] = old_val
+                hook = getattr(type(old_val), "__live_after__", None)
+                if hook is not None:
+                    try:
+                        hook(old_val)
+                    except Exception as e:
+                        log.warning("%s не пережил правку: %s", n, e)
+        done.append(short)
+    return done, skipped
+
+
+def _names_of(piece: str) -> list:
+    try:
+        return [n.id for st in ast.parse(piece).body
+                for n in ast.walk(st) if isinstance(n, ast.Name)]
+    except Exception:
+        return []
 
 
 # ─────────────────────── хирургия главного модуля ───────────────────────
@@ -178,8 +353,15 @@ def _drop_route(app, method: str, path: str):
     try:
         keep = []
         for r in app.router.routes:
-            same = (getattr(r, "path", None) == path
-                    and method in (getattr(r, "methods", None) or set()))
+            if getattr(r, "path", None) != path:
+                keep.append(r)
+                continue
+            meths = getattr(r, "methods", None)
+            # У ВЕБСОКЕТА НЕТ methods (2026-08-31): условие «метод входит в
+            # methods» на нём всегда ложно, старый маршрут оставался в
+            # списке первым и продолжал звать снятый обработчик. Совпал
+            # путь и методов нет — это тот самый вебсокет, снимаем.
+            same = (method in meths) if meths else (method == "WEBSOCKET")
             if not same:
                 keep.append(r)
         app.router.routes = keep
@@ -306,11 +488,9 @@ def _patch_single(mod, path) -> tuple:
         done.append(fname)
 
     # верхний уровень: если изменилось что-то ВНЕ функций, честно скажем
-    top_new = _top_level(new_src)
-    top_old = _top_level(old_src) if old_src else top_new
-    if top_new != top_old:
-        failed.append("верхний уровень модуля (константы/импорты) — "
-                      "функции обновлены, эти строки нет")
+    t_done, t_skip = apply_top(mod, old_src or "", new_src)
+    done += ["верх: " + d for d in t_done]
+    failed += ["верх: " + s2 for s2 in t_skip]
     mod.__live_src__ = new_src
     return done, failed
 
