@@ -1,0 +1,23 @@
+@font-face { font-family: Gilroy; src: url('/fonts/Gilroy-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: Gilroy; src: url('/fonts/Gilroy-Semibold.ttf') format('truetype'); font-weight: 600; font-display: swap; }
+@font-face { font-family: Aquire; src: url('/fonts/Aquire.otf') format('opentype'); font-display: swap; }
+:root {
+  color-scheme: dark;
+  --bg: #131615; --rail: #222625; --panel: #252a28; --workspace: #1b201e;
+  --surface: #252b28; --surface-hover: #303834; --ink: #e8ece7; --muted: #9da9a1;
+  --faint: #748078; --line: #39433d; --line-soft: #2d3530;
+  --accent: #b5cab3; --accent-ink: #1c2b20; --amber: #ddba80; --blue: #9cbcd0;
+  --raised: #d4dcd2; --raised-ink: #303930; --shadow: 0 12px 38px #00000024;
+  --radius-sm: 8px; --radius: 14px; --radius-lg: 22px;
+  --rail-width: 70px; --inspector-width: 250px; --ease: cubic-bezier(.22,.8,.25,1);
+  --font: Gilroy, 'Segoe UI Variable', 'Segoe UI', sans-serif;
+  --mono: 'Cascadia Mono', Consolas, monospace;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #d2d3ce; --rail: #ebebe5; --panel: #eeeee8; --workspace: #f8f8f2;
+  --surface: #e9ece4; --surface-hover: #dce2d6; --ink: #27352c; --muted: #596a5d;
+  --faint: #738274; --line: #bac5b7; --line-soft: #d4dbcf;
+  --accent: #507c54; --accent-ink: #f0f6ee; --amber: #906b30; --blue: #49788d;
+  --raised: #343f35; --raised-ink: #edf3e8; --shadow: 0 12px 38px #37473417;
+}
