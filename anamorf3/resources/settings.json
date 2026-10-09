@@ -1,0 +1,25 @@
+{
+  "_doc": "Настройки resources/. Пути — от корня репозитория (C:/AI/Saika). Ключи облака здесь НЕ хранятся: key_ref указывает на поле в secrets.json.",
+  "local": {
+    "binary": "third_party/llamacpp/llama-server.exe",
+    "model": "models/gguf/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+    "mmproj": "models/gguf/mmproj-Qwen3.6-35B-A3B-BF16.gguf",
+    "port": 8791,
+    "ctx": 32768,
+    "n_cpu_moe": 32,
+    "batch": 2048,
+    "ubatch": 2048,
+    "kv": "q8_0",
+    "start_timeout_s": 240,
+    "extra": []
+  },
+  "cloud": {
+    "provider": "mistral",
+    "base_url": "https://api.mistral.ai/v1",
+    "model": "mistral-medium-3-5",
+    "key_ref": "llm.cloud_keys.mistral",
+    "timeout_s": 120
+  },
+  "secrets_file": "secrets.json",
+  "state_dir": "data/anamorf3"
+}
