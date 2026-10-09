@@ -610,6 +610,18 @@ def loaded_models() -> list[str]:
         _mark_down("locallm")
     try:
         from anamorf.llm import llamacpp
+        # ═══ ЖИВОСТЬ — ЭТО ПРОЦЕСС, А НЕ ОТВЕТ ПО HTTP (06.09.2026) ═══
+        # Владелец нажал «выгрузить», видеопамять упала с 97% до 79%, а в
+        # списке модель осталась «ДУМАЕТ» — «ноль импакта от нажатия».
+        # Признак «в памяти» брался из опроса llama-server по HTTP, и этот
+        # опрос возвращал пустой список ВСЕГДА — по нему прятались и
+        # кнопка, и лампочка, то есть интерфейс судил о памяти по
+        # недостоверной улике и врал в обе стороны.
+        # llama-server держит модель ровно столько, сколько живёт его
+        # процесс: процесса нет — модели в памяти нет. Это знание точное,
+        # и спрашивать по сети о нём незачем.
+        if llamacpp.installed() and getattr(llamacpp, "_proc", None) is None:
+            raise RuntimeError("llama-server не запущен — модели в памяти нет")
         if llamacpp.installed():
             r = requests.get(_llamacpp_url() + "/v1/models", timeout=2)
             if r.ok:
@@ -943,6 +955,20 @@ def warmup(backend: str, model: str) -> bool:
     if CFG.get("llm.off", False):
         log.info("Прогрев %s/%s отменён: мозги выключены", backend, model)
         return False
+    # ═══ ВЫГРУЖЕНО РУКОЙ — НЕ ПОДНИМАТЬ НИКЕМ (06.09.2026) ═══
+    # Владелец: «нахуя она сама запускается, никто не звал». Дорог в
+    # память несколько: автопуск, переключение, импульсы. Замок ставим
+    # на единственную дверь — здесь. Метку кладёт кнопка «выгрузить», а
+    # снимает только явная «загрузить» (она стирает файл ДО вызова сюда),
+    # поэтому ручная загрузка проходит, а все самовольные — нет.
+    try:
+        if (DATA_ROOT / "data" / "llm_hard_unloaded").exists():
+            log.info("Прогрев %s/%s отменён: выгружено рукой владельца — "
+                     "поднимется только по его кнопке «загрузить»",
+                     backend, model)
+            return False
+    except Exception:
+        pass
     # ОДИН ЛОКАЛЬНЫЙ ДВИЖОК НА ВИДЕОКАРТУ (2026-08-20). Единственное место,
     # где модель СОЗНАТЕЛЬНО грузят в память, — значит, и проверять здесь.
     # Разбор случая и правило — anamorf/llm/one_local.py.
@@ -1154,8 +1180,13 @@ def unload_model(backend: str, model: str) -> bool:
         # и VRAM освобождается полностью (важно — карту делим с TTS и STT).
         try:
             from anamorf.llm import llamacpp
-            log.info("%s", llamacpp.unload())
-            return True
+            # ВОЗВРАЩАЕМ САМУ ФРАЗУ, А НЕ True (06.09.2026): вкладке нужно
+            # показать человеку, что именно произошло — выгрузили или
+            # выгружать было нечего. Голое True этой разницы не несёт, и
+            # человек жмёт кнопку по четыреста раз.
+            msg = llamacpp.unload()
+            log.info("%s", msg)
+            return msg or True
         except Exception as e:
             log.warning("llama-server: выгрузка не удалась: %s", e)
             return False
@@ -2754,7 +2785,9 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                             on_tool(name, args)
                         except Exception:
                             pass
+                    _t_tool = time.monotonic()
                     result = handspc.call(name, args)
+                    _tool_ms = int((time.monotonic() - _t_tool) * 1000)
                     # ОБРЕЗКА результата (2026-07-23): web_search/fetch_page
                     # возвращают целые страницы (десятки КБ) — и это дважды
                     # душило Сайку: раздувало промпт за окно модели
@@ -2783,11 +2816,48 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
                         # результат без слов отказа: инструменты в этом
                         # проекте при провале говорят «не нашла/не вышло/
                         # не смогла», а не бросают исключения.
-                        _res_l = str(result or "").lower()
-                        _ok = not any(w in _res_l[:80] for w in
-                                      ("не нашла", "не вышло", "не смогла",
-                                       "не понял", "нет такого", "ошибк",
-                                       "не удалось", "недоступ"))
+                        # ОТКАЗ ОПРЕДЕЛЯЕТ ОДНО МЕСТО (2026-09-05). Словарь
+                        # отказа («не нашла», «не вышло»…) раньше был
+                        # выписан прямо здесь и больше нигде — а нужен он
+                        # теперь и журналу дел. Две копии одного словаря
+                        # разъезжаются через месяц, поэтому он переехал в
+                        # anamorf/deeds.py, а тут остался вызов.
+                        from anamorf import deeds as _dd
+                        _bad, _why = _dd.looks_failed(result)
+                        _ok = not _bad
+                        # ═══ ЖУРНАЛ ДЕЛ ═══ вторая половина учёбы.
+                        # reflex_learn запоминает только УДАЧИ: фраза
+                        # дважды привела к тому же вызову — стала мгновенным
+                        # рефлексом. Провал не записывался никуда и через
+                        # минуту переставал существовать, поэтому одна и та
+                        # же ошибка повторялась бесконечно, а со стороны
+                        # это выглядело как «она не учится вообще».
+                        try:
+                            _dd.record(_tls2_txt(), name, args, _ok, _why,
+                                       took_ms=_tool_ms)
+                        except Exception:
+                            pass
+                        # ═══ ЧТО ИЗ ЭТОГО ВЫШЛО — В ЧАТ (2026-09-05) ═══
+                        # Владелец: «сделай так, чтобы я видел, как она
+                        # отрабатывает в чате: как отвечает, как вызывает
+                        # тулзы».
+                        #
+                        # ВЫЗОВ в чат уходил и раньше, а вот ОТВЕТ
+                        # инструмента знала одна модель — и пересказывала
+                        # как придётся, а то и бодрым «готово» поверх
+                        # отказа. Для рефлексов это починили ещё в августе
+                        # («молчаливый отказ запрещён»), а для вызовов
+                        # модели — нет, и получалась ровно та дыра, из-за
+                        # которой человек не мог отличить «сделала» от
+                        # «сказала, что сделала».
+                        try:
+                            if on_tool:
+                                on_tool("__result__", {
+                                    "tool": name, "ok": _ok, "ms": _tool_ms,
+                                    "text": str(result or "")[:500],
+                                    "why": _why})
+                        except Exception:
+                            pass
                         from anamorf import reflex_learn as _rl
                         from anamorf.llm import tools as _tls2
                         _born = _rl.consider(_tls2.LAST_USER.get("text", ""),
@@ -2842,6 +2912,15 @@ def chat_stream(messages, on_fallback=None, on_tool=None, image=None,
     raise LLMError(f"Ни одна LLM не ответила: {last_err}")
 
 
+def _tls2_txt() -> str:
+    """Фраза человека, из-за которой поехал этот инструмент."""
+    try:
+        from anamorf.llm import tools as _t
+        return str(_t.LAST_USER.get("text", "") or "")
+    except Exception:
+        return ""
+
+
 def _rec_reflex_miss(name, args):
     """Фраза человека, которая доехала до инструмента через LLM.
 
@@ -2883,6 +2962,17 @@ def chat_once(messages, max_len=4000) -> str:
     чтобы ускорить ответ, а наоборот». Он прав: служба объедала беседу.
     Теперь службе — другой здоровый облачный мозг, НЕ тот, что говорит с
     человеком. Некому — тогда по-старому, это редкость."""
+    # ЯДРО v2 (2026-10-09): служба — в СВОЙ слот того же локального движка.
+    # Свой слот = разговор не теряет кэш; локально = ни 429, ни облака.
+    if CFG.get("core.v2", False):
+        try:
+            from anamorf.core import engine as _ce
+            if _ce.healthy():
+                out = _ce.complete(messages, max_tokens=min(int(max_len), 1200))
+                if out.strip():
+                    return out.strip()
+        except Exception as _e2:
+            log.warning("служба через ядро v2 не вышла (%s) — по-старому", _e2)
     try:
         from anamorf.llm import brains
         cur_m = CFG.get("llm.model", "")

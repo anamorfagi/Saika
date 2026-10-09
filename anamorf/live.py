@@ -255,14 +255,67 @@ def apply_top(mod, old_src: str, new_src: str) -> tuple:
     (dev.hot_top_level), но только для модулей, где на верхнем уровне
     заведомо одни константы.
     """
+    # ═══ БЕЗОПАСНОЕ ПОДМНОЖЕСТВО ВЕРХНЕГО УРОВНЯ (2026-09-05) ═══
+    #
+    # Владелец, дословно, в третьем часу ночи: «если технология обновления
+    # не работает — ищи ещё варианты и переделывай так, чтобы это
+    # работало». И он прав: правило «не просить человека перезапускать»
+    # (AGENT_RULES.md) нарушалось не от лени, а потому что механизм честно
+    # не умел одного случая — НОВОЙ функции на верхнем уровне main.py.
+    # Помощник добавлял функцию, вотчер писал «эти нет», и дальше
+    # оставался только перезапуск.
+    #
+    # Прежний запрет был правильным по причине и слишком широким по охвату.
+    # Причина: на верхнем уровне main.py лежит не только список констант,
+    # но и ЗАПУСК ВСЕГО, а отличать одно от другого СПИСКОМ ОПАСНЫХ СЛОВ
+    # нельзя — чёрный список принципиально дырявый, и цена дырки была
+    # вторая копия системы в одном процессе (01.09.2026).
+    #
+    # Здесь другой подход: не чёрный список, а БЕЛЫЙ, и не по словам, а по
+    # разбору синтаксиса. Применяем ровно три вида кусков:
+    #   * def и async def — определение функции ничего не выполняет;
+    #   * class — то же самое;
+    #   * присваивание ЛИТЕРАЛА (число, строка, пустой/константный список,
+    #     словарь, множество, кортеж) — вычислять там нечего.
+    # Всё остальное — любой голый вызов, любой threading.Thread, любой if
+    # на верхнем уровне — не трогаем и честно называем в журнале.
+    #
+    # Дырки тут нет по построению: запуск системы — это ВЫЗОВ, а вызовов в
+    # белом списке нет вовсе. Декораторы у функций пропускаем: в этом
+    # проекте они регистрируют маршруты, и добавление маршрута на лету —
+    # ровно то, ради чего живая прививка и делалась.
     if not CFG.get("dev.hot_top_level", False):
-        changed = [k for k, v in _top_stmts(new_src).items()
-                   if (_top_stmts(old_src) if old_src else {}).get(k) != v]
-        if changed:
-            return [], ["верхний уровень (%d строк) — функции обновлены, "
-                        "эти нет: включается dev.hot_top_level, но там же "
-                        "лежит запуск системы" % len(changed)]
-        return [], []
+        new_t = _top_stmts(new_src)
+        old_t = _top_stmts(old_src) if old_src else {}
+        g = vars(mod)
+        done, left = [], []
+        for key, piece in new_t.items():
+            if old_t.get(key) == piece:
+                continue
+            short = piece.strip().splitlines()[0][:60]
+            if not _is_pure_def(piece):
+                left.append(short)
+                continue
+            before = {n: g.get(n) for n in _names_of(piece) if n in g}
+            try:
+                exec(compile(piece, "<live-top:%s>"
+                             % getattr(mod, "__name__", "?"), "exec"), g, g)
+            except Exception as e:
+                left.append("%s  (%s)" % (short, e))
+                continue
+            # живой объект пересоздавать нельзя — вернём прежний
+            for n, old_val in before.items():
+                new_val = g.get(n)
+                if old_val is not new_val and _same_kind(old_val, new_val):
+                    g[n] = old_val
+            done.append(short)
+        if left:
+            done_note = (" (безопасное подмножество применено: %d)" % len(done)
+                         if done else "")
+            return done, ["верхний уровень: %d кусков не применены — там "
+                          "вызовы, а не определения%s"
+                          % (len(left), done_note)]
+        return done, []
     new_t = _top_stmts(new_src)
     old_t = _top_stmts(old_src) if old_src else {}
     g = vars(mod)
@@ -294,6 +347,50 @@ def apply_top(mod, old_src: str, new_src: str) -> tuple:
                         log.warning("%s не пережил правку: %s", n, e)
         done.append(short)
     return done, skipped
+
+
+_PURE_ASSIGN = (
+    __import__("ast").Constant, __import__("ast").List,
+    __import__("ast").Dict, __import__("ast").Set, __import__("ast").Tuple,
+    __import__("ast").UnaryOp,
+)
+
+
+def _is_pure_def(piece: str) -> bool:
+    """Можно ли выполнить этот кусок верхнего уровня, ничего не запустив.
+
+    Белый список по разбору синтаксиса (см. большой комментарий в
+    apply_top). Разбор не удался — считаем небезопасным: сомнение всегда
+    в пользу «не трогать»."""
+    import ast
+    try:
+        tree = ast.parse(piece)
+    except Exception:
+        return False
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            continue
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            val = node.value
+            if val is None:                       # только объявление типа
+                continue
+            if isinstance(val, _PURE_ASSIGN) and _all_const(val):
+                continue
+            return False
+        return False
+    return True
+
+
+def _all_const(node) -> bool:
+    """Литерал ли это целиком — без единого вызова внутри."""
+    import ast
+    for n in ast.walk(node):
+        if isinstance(n, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom,
+                          ast.Lambda, ast.comprehension, ast.Name,
+                          ast.Attribute, ast.Subscript)):
+            return False
+    return True
 
 
 def _names_of(piece: str) -> list:

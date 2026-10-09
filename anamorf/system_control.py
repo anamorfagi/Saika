@@ -107,10 +107,84 @@ def gpu_top_processes(n=5):
             name = ",".join(parts[2:])
             mb = int(parts[1]) if parts[1].isdigit() else 0
             out.append((name, parts[0], mb))
+        # ЕСЛИ ЦИФР НЕТ — СПРАШИВАЕМ У WINDOWS (2026-09-05). Пока в этой
+        # колонке нули, план памяти слеп: он не знает, что на карте держим
+        # МЫ САМИ, и потому либо считает всё чужим, либо гадает по формуле.
+        # Цена слепоты измерена: тот же промпт на 4543 токена шёл 1004 мс на
+        # свободной карте и 28740 мс на забитой — Windows при переполнении
+        # не отказывает, а молча подкачивает через шину, и всё продолжает
+        # «работать» в тридцать раз медленнее.
+        #
+        # Сам Диспетчер задач эти цифры показывает, значит они есть: их
+        # отдаёт счётчик производительности «GPU Process Memory». Он не
+        # требует прав администратора, в отличие от per-process NVML,
+        # который на WDDM закрыт наглухо.
+        if out and not any(m for _n, _p, m in out):
+            wmb = _gpu_mem_by_pid_windows()
+            if wmb:
+                out = [(nm, pid, wmb.get(str(pid), 0)) for nm, pid, _m in out]
         out.sort(key=lambda x: -x[2])
         return out[:n]
     except Exception:
         return []
+
+
+_GPU_PIDS = {"ts": 0.0, "map": {}}
+
+
+def _gpu_mem_by_pid_windows() -> dict:
+    """{pid: МБ выделенной видеопамяти} из счётчиков Windows.
+
+    Имена экземпляров счётчика выглядят как
+    `pid_12345_luid_0x00000000_0x0000ABCD_phys_0`: у одного процесса их
+    бывает несколько (разные адаптеры и сегменты), поэтому суммируем.
+
+    Ответ кэшируем на пять секунд: запуск PowerShell стоит десятые доли
+    секунды, а спрашивают отсюда часто."""
+    if os.name != "nt":
+        return {}
+    now = time.time()
+    if now - _GPU_PIDS["ts"] < 5.0:
+        return _GPU_PIDS["map"]
+    try:
+        ps = (
+            "$ErrorActionPreference='SilentlyContinue';"
+            "(Get-Counter '\\GPU Process Memory(*)\\Local Usage'"
+            ").CounterSamples | Where-Object {$_.CookedValue -gt 0} |"
+            " ForEach-Object { $_.InstanceName + '=' + $_.CookedValue }"
+        )
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=12,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        acc = {}
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if not line.startswith("pid_") or "=" not in line:
+                continue
+            inst, _, val = line.rpartition("=")
+            pid = inst.split("_")[1]
+            try:
+                acc[pid] = acc.get(pid, 0) + int(float(val)) // (1024 * 1024)
+            except Exception:
+                continue
+        if acc:
+            _GPU_PIDS.update(ts=now, map=acc)
+        return acc
+    except Exception:
+        return {}
+
+
+def gpu_mem_ours_mb(pids=None) -> int:
+    """Сколько видеопамяти держат перечисленные процессы (по умолчанию — мы
+    сами и наш llama-server). Ноль, если Windows счётчик не отдал."""
+    m = _gpu_mem_by_pid_windows()
+    if not m:
+        return 0
+    if pids is None:
+        return sum(m.values())
+    want = {str(p) for p in pids}
+    return sum(v for k, v in m.items() if k in want)
 
 
 # собственный «мозг» Сайки — просить закрыть ЭТО глупо (это её же LLM/движок).

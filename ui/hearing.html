@@ -149,7 +149,15 @@
   #pinfo button{margin-top:8px;width:100%;font-family:var(--mono);font-size:11px;padding:7px;
     border-radius:9px;border:1px solid var(--line2);background:var(--card2);color:var(--accent);cursor:pointer}
   #pinfo .x{position:absolute;top:7px;right:11px;color:var(--faint);cursor:pointer;font-size:13px}
-  #ctrls{position:absolute;right:22px;bottom:18px;z-index:3;font-family:var(--mono);font-size:10.5px;
+  /* ПОДСКАЗКА УЕХАЛА НАВЕРХ (05.09.2026). Владелец: «как думаешь, вот
+     эти кнопки мешают друг другу?» — мешали. Подсказка стояла в правом
+     нижнем углу на bottom:18px, ровно там же, где кнопка «очистить»
+     (bottom:16px), и на широком экране под неё же залезали «снимок» и
+     «оси». Текст читался поверх кнопок, кнопки — поверх текста.
+     Кнопки остаются столбиком в углу, подсказка переезжает в правый
+     верхний: там пусто, и она никому не мешает. */
+  #ctrls{position:absolute;right:22px;top:18px;bottom:auto;z-index:3;
+    font-family:var(--mono);font-size:10.5px;
     color:var(--faint);text-align:right;line-height:1.8}
   #ctrls b{color:var(--accent);font-weight:500}
   /* Подсказка по осям стояла на том же низу, что и кнопки покрытий и
@@ -287,7 +295,7 @@
     <div id="fscale"><div id="cbar"></div><div id="flabels"></div></div>
     <div id="fbar"><span class="cap">ФЛЮКС</span><div class="grad"></div><div class="lbls" id="fbarl"></div></div>
     <div id="pinfo"></div>
-    <div id="ctrls">тяни — <b>вращать</b> · пкм/shift — <b>двигать</b><br>колесо/±/щипок — <b>зум</b> · двойной клик — <b>сброс</b></div>
+    <div id="ctrls">тяни — <b>вращать</b> · пкм/shift — <b>двигать</b><br>alt+тяни/±/щипок — <b>зум</b> · двойной клик — <b>сброс</b></div>
   </section>
 </div>
 
@@ -656,12 +664,22 @@ function applyCam(){
   camera.lookAt(tgt.x,tgt.y,tgt.z);
 }
 cv.addEventListener("contextmenu",e=>e.preventDefault());
+let zoomDrag=null;
 cv.addEventListener("pointerdown",e=>{
   camFitOn=false;
-  if(e.button===2||e.shiftKey)pan={x:e.clientX,y:e.clientY};
+  /* Alt — зум протяжкой (Блендер: Ctrl+СКМ; здесь Alt, потому что мышь
+     у нас одна и средней кнопки может не быть). Вверх — ближе, вниз —
+     дальше, шаг пропорционален текущему расстоянию: у дальней камеры
+     он крупнее, у ближней мельче, иначе вблизи всё дёргается. */
+  if(e.altKey){zoomDrag={y:e.clientY};}
+  else if(e.button===2||e.shiftKey)pan={x:e.clientX,y:e.clientY};
   else drag={x:e.clientX,y:e.clientY};
   cv.setPointerCapture(e.pointerId);});
 cv.addEventListener("pointermove",e=>{
+  if(zoomDrag){
+    dist=Math.max(1.2,Math.min(40,dist*(1+(e.clientY-zoomDrag.y)*.006)));
+    zoomDrag={y:e.clientY};return;
+  }
   if(pan){
     const k=dist*.0011;
     camera.updateMatrixWorld();
@@ -680,8 +698,21 @@ cv.addEventListener("pointermove",e=>{
   rotY-=(e.clientX-drag.x)*.0052;
   rotX=Math.max(-1.35,Math.min(1.35,rotX-(e.clientY-drag.y)*.0052));
   drag={x:e.clientX,y:e.clientY};});
-cv.addEventListener("pointerup",()=>{drag=null;pan=null;});
-cv.addEventListener("wheel",e=>{e.preventDefault();dist=Math.max(1.2,Math.min(40,dist*(1+e.deltaY*.001)));},{passive:false});
+cv.addEventListener("pointerup",()=>{drag=null;pan=null;zoomDrag=null;});
+/* ЗУМ УШЁЛ С КОЛЕСА (05.09.2026, просьба владельца: «убери приближение
+   с колесика и сделай как в блендере — альт плюс движение мыши»).
+   Причина простая: сцена занимает весь экран раздела, и колесо над ней
+   переставало листать страницу — «какого ху. колёсико не работает».
+   Колесо теперь ВСЕГДА прокрутка. Когда мы внутри панели слуха, событие
+   из iframe наружу само не выходит (так устроен браузер) — поэтому
+   пересылаем его родителю, и лист листается как везде.
+   Зум — Alt и тянуть мышью вверх/вниз, как в Блендере. */
+cv.addEventListener("wheel",e=>{
+  if(EMBED&&window.parent){
+    e.preventDefault();
+    try{window.parent.postMessage({saikaWheel:e.deltaY},"*");}catch(_){}
+  }
+},{passive:false});
 addEventListener("keydown",e=>{
   if(e.key==="+"||e.key==="=")dist=Math.max(1.2,dist*.9);
   if(e.key==="-"||e.key==="_")dist=Math.min(40,dist*1.1);

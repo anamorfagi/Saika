@@ -651,7 +651,126 @@ _LOCAL_SCHEMAS = [
             "note": {"type": "string", "description": "уточнение (необязательно)"}},
             "required": ["col", "text"]}}},
 ]
-_LOCAL_NAMES = {"devboard_read", "devboard_add"}
+_LOCAL_NAMES = {"devboard_read", "devboard_add",
+                # ═══ СОВМЕСТНАЯ РАБОТА (2026-09-05) ═══ владелец про то,
+                # как это должно выглядеть: «мы слушаем и одновременно
+                # создаём папку проекта… я в блендере сижу, прошу закинуть
+                # реф на задний фон — она параллельно закидывает реф под
+                # мою сетку… такая совместная фул-работа, где она помогает,
+                # не позволяя мне лишний раз ползать за файлами».
+                "project_start", "project_where",
+                "ref_grab", "ref_find", "ref_list",
+                "blender_new", "blender_ref", "blender_scene",
+                "delegate_task", "delegate_pending"}
+
+# ЗАЧЕМ ЭТИ ИНСТРУМЕНТЫ ОТДЕЛЬНЫМ БЛОКОМ. Они все про ОДНО состояние —
+# текущий проект: папка, рефы, сцена. Разложить их по чужим модулям
+# значило бы, что адрес «куда класть» вычисляется в пяти местах и в пятый
+# раз обязательно разойдётся с остальными четырьмя.
+_WORK_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "project_start",
+        "description": (
+            "Завести рабочий проект: создать папку с раскладкой "
+            "(рефы/блендер/экспорт/исходники) и сделать её текущей. После "
+            "этого все файлы по работе кладутся туда без переспрашивания. "
+            "Зови, когда человек говорит «давай сделаем/начнём проект», "
+            "«будем работать над…». Место (place) — его словами: «на диске "
+            "D», «в моих проектах», «здесь» (папка, открытая у него в "
+            "проводнике). Не назвал — не выдумывай, оставь пустым: "
+            "инструмент сам попросит сказать."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "имя проекта"},
+            "goal": {"type": "string",
+                     "description": "что делаем, одной фразой"},
+            "place": {"type": "string",
+                      "description": "где завести, его словами"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "project_where",
+        "description": ("Что за проект сейчас в работе, где его папка и "
+                        "сколько собрано референсов."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "ref_grab",
+        "description": (
+            "Забрать картинку с той страницы, на которую человек сейчас "
+            "смотрит, в папку «рефы» проекта. Зови на «вот это», «вот это "
+            "неплохо», «сохрани эту», «забери» — когда он показывает на "
+            "открытую страницу. Ничего не спрашивай: он уже выбрал."),
+        "parameters": {"type": "object", "properties": {
+            "why": {"type": "string",
+                    "description": "чем понравилось, его словами"},
+            "url": {"type": "string",
+                    "description": "адрес, если он назвал его прямо"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "ref_find",
+        "description": (
+            "Самой найти несколько референсов по описанию и сложить в папку "
+            "«рефы». Зови на «найди что-нибудь…», «поищи рефы…». Запрос "
+            "составляй как для поиска картинок: существительные и "
+            "признаки, без вежливости."),
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "что искать"},
+            "n": {"type": "integer", "description": "сколько штук (по умолчанию 6)"},
+            "site": {"type": "string",
+                     "description": "pinterest | freepik | artstation | google"}},
+            "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "ref_list",
+        "description": "Что уже собрано в папке референсов.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "blender_new",
+        "description": (
+            "Создать новый файл в Блендере и СРАЗУ сохранить его в папку "
+            "«блендер» текущего проекта. Зови на «открой новый проект в "
+            "блендере», «заведи сцену»."),
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "имя файла сцены"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "blender_ref",
+        "description": (
+            "Положить референс в сцену Блендера как подложку под сетку "
+            "(пустышка-картинка: не рендерится, не мешает выделению). Зови "
+            "на «закинь реф на задний фон», «поставь реф под сетку». Без "
+            "image берётся последний собранный референс."),
+        "parameters": {"type": "object", "properties": {
+            "image": {"type": "string", "description": "путь или имя файла"},
+            "axis": {"type": "string",
+                     "description": "front | side | top | back"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "blender_scene",
+        "description": ("Что сейчас в сцене Блендера: объекты, камера, "
+                        "сохранён ли файл."),
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "delegate_task",
+        "description": (
+            "Передать задачу тому, кто её потянет: Клоду на этом же "
+            "компьютере (видит экран, умеет работать в Блендере напрямую) "
+            "или другому помощнику с открытым окном. Зови для генерации "
+            "кода, моделинга, разбора проектов — всего, что у тебя идёт "
+            "часами. ПЕРЕДАВАЙ ПРОСЬБУ ЦЕЛИКОМ, словами человека: пересказ "
+            "своими словами теряет ровно ту мелочь, которая была сутью. "
+            "Отправку (send) не ставь без прямой просьбы — человек должен "
+            "увидеть текст и нажать сам."),
+        "parameters": {"type": "object", "properties": {
+            "task": {"type": "string",
+                     "description": "просьба человека целиком, его словами"},
+            "who": {"type": "string",
+                    "description": "claude | codex | kimi | deepseek | cursor"},
+            "send": {"type": "boolean",
+                     "description": "нажать отправку (только если попросили)"}},
+            "required": ["task"]}}},
+    {"type": "function", "function": {
+        "name": "delegate_pending",
+        "description": "Какие задачи переданы и ещё не закрыты.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+]
 
 # Встроенный видимый браузер (anamorf/browser_hands.py). Подключается, только
 # если внешний HandsPC НЕ запущен — дома он главнее, конфликтов нет.
@@ -992,6 +1111,23 @@ LAST_USER = {"text": ""}
 # модели, не зависит от её дисциплины.
 import re as _re_guard
 _MUTATING_INTENT = {
+    # ═══ ПЕРЕДАЧА ЗАДАЧИ — ТОЛЬКО ПО ПРЯМОЙ ПРОСЬБЕ (2026-09-05) ═══
+    # Владелец, дословно: «главное, чтобы она выполняла действительные
+    # запросы, а не то, как в прошлые разы: я говорю одно — в браузер
+    # написать или что-то сделать, — а она в твоё окно пишет какой-то
+    # текст и отправляет».
+    #
+    # Это худший из возможных отказов: она не просто не сделала просьбу,
+    # она сделала ДРУГОЕ и в чужом окне. Поэтому предохранитель тут
+    # строгий: нужно прямое указание передать — «передай», «отдай»,
+    # «спроси у клода», «пусть клод». «Напиши» и «сделай» сюда НЕ входят
+    # намеренно: именно на них она и промахивалась.
+    "delegate_task": (r"передай|переда[йч]|отдай|делегируй|перекинь\s+задач|"
+                      r"спроси\s+(у\s+)?(клод|codex|кими|kimi|дипсик|deepseek)|"
+                      r"пусть\s+(клод|codex|кими|kimi|дипсик|deepseek)|"
+                      r"скажи\s+(клод|codex|кими|kimi)|"
+                      r"(клод|codex|кими|kimi|дипсик|deepseek)\w*\s+(пуска[йю]|"
+                      r"сдела|напиш|помож)"),
     # скачивание файла на диск — только по явной просьбе про анимации
     "anim_download": r"аним|скача|загруз|жест|танц|движен|vrma",
     "bind_create":  r"бинд|хоткей|горяч|клавиш|назнач|повес|привяж|закреп|на пробел|на клавиш",
@@ -1205,6 +1341,19 @@ def _intent_ok(name: str) -> bool:
     if not pat:
         return True  # инструмент не в списке изменяющих — не наше дело
     txt = LAST_USER.get("text", "")
+    # СУДИМ ПО ТОМУ, ЧТО ОНА ПОНЯЛА (2026-09-05). Рефлекс умеет притянуть
+    # кривое слово к ближайшему командному: «аткрой браузир» -> «открой
+    # браузер». Но предохранитель смотрел на СЫРУЮ фразу, не находил в ней
+    # корня «откр» и блокировал запуск — «отказ: пользователь не просил».
+    # То есть она расслышала правильно и сама себе запретила. Починку
+    # добавляем К фразе, а не ВМЕСТО неё: так проверка становится мягче
+    # ровно на одно однозначное исправление и ни на что больше.
+    try:
+        from anamorf import reflex as _rx_fix
+        if _rx_fix.FIXED.get("raw") == txt and _rx_fix.FIXED.get("text"):
+            txt = txt + " " + _rx_fix.FIXED["text"]
+    except Exception:
+        pass
     # СОГЛАСИЕ = НАМЕРЕНИЕ (2026-07-28, реальный случай). Она спросила
     # «хочешь, включу глаза?», человек ответил «Да-да» — и предохранитель
     # зарубил вызов: в слове «да» нет корня «глаз». Короткое подтверждение
@@ -1373,6 +1522,10 @@ def _schemas_build() -> list:
         # HandsPC нет — даём встроенный видимый браузер (те же имена
         # инструментов, промпты Сайки про web_search работают как есть)
         local = local + _BROWSER_SCHEMAS
+    # инструменты совместной работы едут всегда: сеанс проекта нужен и
+    # без браузера (блендер, папки), а без них «давай сделаем проект»
+    # превращается в разговор ни о чём
+    local = local + _WORK_SCHEMAS
     if CFG.get("idle.allow_self_shutdown", True):
         local = local + [_SHUTDOWN_SCHEMA]
     # ГЛАЗА (2026-08-15). anamorf/vision.py давно умеет look_screen: снять
@@ -1635,6 +1788,87 @@ def names_index(sent: list) -> str:
             + ", ".join(sorted(n for n in rest if n)))
 
 
+def _work_call(name: str, a: dict) -> str:
+    """Инструменты совместной работы. Держатся вместе, потому что все они
+    про одно состояние — текущий проект."""
+    from pathlib import Path as _P
+    from anamorf import project as _pr
+    if name == "project_start":
+        r = _pr.start(str(a.get("name") or ""), str(a.get("goal") or ""),
+                      str(a.get("place") or ""))
+        if r.get("ask"):
+            return r["ask"]
+        if not r.get("ok"):
+            return "не вышло: " + str(r.get("error") or "неизвестно")
+        return ("Проект «%s» заведён: %s. Внутри — рефы, блендер, экспорт, "
+                "исходники. Дальше всё по этой работе кладу сюда."
+                % (r["name"], r["dir"]))
+    if name == "project_where":
+        cur = _pr.current()
+        if not cur.get("name"):
+            return ("Проекта сейчас нет. Скажи «давай новый проект» и где "
+                    "его завести.")
+        return ("«%s» — %s. Референсов собрано: %d.%s"
+                % (cur["name"], cur.get("dir", ""), len(cur.get("refs") or []),
+                   " ПАПКИ НА МЕСТЕ НЕТ — её унесли или переименовали."
+                   if cur.get("missing") else ""))
+    if name in ("ref_grab", "ref_find", "ref_list"):
+        from anamorf import ref_hands as _rh
+        if name == "ref_grab":
+            return _rh.grab(str(a.get("url") or ""), str(a.get("why") or ""))
+        if name == "ref_find":
+            return _rh.find(str(a.get("query") or ""),
+                            int(a.get("n") or 6), str(a.get("site") or ""))
+        return _rh.listing()
+    if name == "delegate_task":
+        from anamorf import delegate as _dg
+        return _dg.hand_over(str(a.get("task") or ""),
+                             str(a.get("who") or "claude"),
+                             bool(a.get("send")))
+    if name == "delegate_pending":
+        from anamorf import delegate as _dg
+        rows = _dg.pending()
+        if not rows:
+            return "Ничего не передано."
+        return "\n".join("%s -> %s: %s" % (
+            time.strftime("%H:%M", time.localtime(r["ts"])), r.get("who"),
+            str(r.get("task"))[:120]) for r in rows)
+    if name.startswith("blender_"):
+        from anamorf import blender_hands as _bh
+        if not _bh.alive():
+            return ("Блендер не отвечает. Он открыт? И нажата ли в аддоне "
+                    "BlenderMCP кнопка «Connect» — без неё канала нет.")
+        if name == "blender_scene":
+            return _bh.scene()
+        if name == "blender_new":
+            d = _pr.folder("блендер")
+            if not d:
+                return ("Сначала заведём проект — иначе некуда сохранять "
+                        "сцену. Скажи «давай новый проект» и где.")
+            return _bh.new_project(d, str(a.get("name") or
+                                          (_pr.current().get("name") or "сцена")))
+        if name == "blender_ref":
+            img = str(a.get("image") or "").strip()
+            if not img or not _P(img).exists():
+                # без имени берём последний собранный реф: «закинь реф»
+                # почти всегда про тот, что только что понравился
+                refs = (_pr.current().get("refs") or [])
+                cand = ""
+                for r in reversed(refs):
+                    f = str(r.get("file") or "")
+                    if f and _P(f).exists() and (not img or img.lower()
+                                                 in _P(f).name.lower()):
+                        cand = f
+                        break
+                if not cand:
+                    return ("Не поняла, какой реф класть, и собранных пока "
+                            "нет. Открой картинку и скажи «вот это» — "
+                            "заберу, потом положу в сцену.")
+                img = cand
+            return _bh.ref_background(img, str(a.get("axis") or "front"))
+    return ""
+
+
 def _local_call(name: str, arguments) -> str:
     import json as _json
     from anamorf import devboard
@@ -1644,6 +1878,14 @@ def _local_call(name: str, arguments) -> str:
         except Exception:
             arguments = {}
     arguments = arguments or {}
+    if name in ("project_start", "project_where", "ref_grab", "ref_find",
+                "ref_list", "blender_new", "blender_ref", "blender_scene",
+                "delegate_task", "delegate_pending"):
+        try:
+            return _work_call(name, arguments)
+        except Exception as e:
+            log.warning("инструмент совместной работы %s упал: %s", name, e)
+            return "не вышло (%s): %s" % (name, str(e)[:160])
     if name == "devboard_read":
         return devboard._render_md(devboard.get())
     if name == "devboard_add":
@@ -1878,7 +2120,11 @@ def call(name: str, arguments) -> str:
 
 
 def _call(name: str, arguments) -> str:
-    if not _intent_ok(name):
+    # ЯДРО v2 (2026-10-09): там решает модель, а риск проверяет свой слой
+    # политики (anamorf/core/registry.py). Регулярка «есть ли намерение в
+    # последней фразе» для него — вторая голова, которая рубила законные
+    # вызовы; в v2 она не применяется.
+    if not LAST_USER.get("core_v2") and not _intent_ok(name):
         log.warning("Инструмент %s заблокирован предохранителем: в фразе "
                     "пользователя (%r) нет намерения его звать",
                     name, LAST_USER.get("text", "")[:60])

@@ -251,19 +251,30 @@ def split(pcm16: np.ndarray, sr: int = SR, encoder=None):
                 # тон ровный на всю фразу — тембру тут делать нечего
                 return whole
         embs, marks = [], []
+        # ОДНИМ ПРОХОДОМ ПО КАРТЕ, А НЕ ОКНО ЗА ОКНОМ (2026-09-06). Живой
+        # замер «Слух по стадиям»: разрез 230-470 мс на 3 с звука — семь
+        # окон, семь вызовов энкодера, каждый со своим ожиданием карты и
+        # борьбой за GIL. Окна одной длины — складываем в пачку и зовём
+        # один раз; стендовый энкодер без encode_many идёт по-старому.
+        _wins, _starts = [], []
         i = 0
         while i + win <= n:
-            if rms_of.get(i, 0.0) < floor:
-                i += hop
-                continue
-            e = enc.encode(pcm16[i:i + win])
+            if rms_of.get(i, 0.0) >= floor:
+                _wins.append(pcm16[i:i + win])
+                _starts.append(i)
+            i += hop
+        _many = getattr(enc, "encode_many", None)
+        if _many is not None and len(_wins) > 1:
+            _res = _many(_wins)
+        else:
+            _res = [enc.encode(w) for w in _wins]
+        for e, st in zip(_res, _starts):
             # боевой encode отдаёт (vec, pitch); стендовый может отдать vec
             vec = e[0] if isinstance(e, tuple) else e
             if vec is None:
                 return whole
             embs.append(np.asarray(vec, dtype=np.float32))
-            marks.append(i + win // 2)          # центр окна
-            i += hop
+            marks.append(st + win // 2)          # центр окна
         if len(embs) < 3:
             return whole
         # ПОРОГ 0.35, А НЕ 0.60 (2026-08-15, тот же прокол). ECAPA-косинус

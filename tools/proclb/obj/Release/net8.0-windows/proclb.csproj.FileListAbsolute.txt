@@ -1,0 +1,15 @@
+C:\AI\Saika\tools\proclb\bin\proclb.exe
+C:\AI\Saika\tools\proclb\bin\proclb.deps.json
+C:\AI\Saika\tools\proclb\bin\proclb.runtimeconfig.json
+C:\AI\Saika\tools\proclb\bin\proclb.dll
+C:\AI\Saika\tools\proclb\bin\proclb.pdb
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.GeneratedMSBuildEditorConfig.editorconfig
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.AssemblyInfoInputs.cache
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.AssemblyInfo.cs
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.csproj.CoreCompileInputs.cache
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.sourcelink.json
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.dll
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\refint\proclb.dll
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.pdb
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\proclb.genruntimeconfig.cache
+C:\AI\Saika\tools\proclb\obj\Release\net8.0-windows\ref\proclb.dll

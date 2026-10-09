@@ -131,8 +131,8 @@ class Registry:
             self.speakers, self.pts = {}, None
             self.pts_who, self.pts_ts = [], []
 
-    def save(self):
-        if not self.dirty:
+    def save(self, force: bool = False):
+        if not self.dirty and not force:
             return
         # ПУСТОЙ РЕЕСТР НЕ ЗАТИРАЕТ НЕПУСТОЙ (27.08.2026, потеряно на себе).
         # Живая правка перечитала модуль, завела чистое состояние поверх
@@ -140,7 +140,7 @@ class Registry:
         # двенадцати. На диске должна оставаться последняя версия, в которой
         # голоса ЕСТЬ: пустой список пишем только по явному «забудь всех».
         try:
-            if not self.speakers and (DIR / "meta.json").exists():
+            if not force and not self.speakers and (DIR / "meta.json").exists():
                 _old = json.loads((DIR / "meta.json").read_text("utf-8"))
                 if _old.get("speakers"):
                     log.warning("Отпечатки: в памяти пусто, а на диске %d "
@@ -483,6 +483,102 @@ class Registry:
             self.dirty = True
             return True
         return False
+
+    def density(self, name: str) -> float:
+        """Насколько образцы внутри эталона похожи друг на друга.
+
+        Средний косинус образца к центру эталона. У одного человека это
+        0.80 и выше: он звучит по-разному, но узнаваемо. Ниже 0.70 —
+        в эталоне лежат РАЗНЫЕ люди, и центр такого облака не похож ни
+        на кого конкретно, зато похож на всех понемногу. Именно поэтому
+        «Голос 5» с плотностью 0.58 забирал себе все реплики подряд."""
+        v = self.speakers.get(name) or {}
+        X = np.asarray(v.get("embs"), np.float32)
+        if X is None or not len(X):
+            return 0.0
+        X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
+        c = X.mean(0)
+        c = c / (np.linalg.norm(c) + 1e-9)
+        return float((X @ c).mean())
+
+    def purge_mixed(self, thr: float = 0.70, dry: bool = False) -> dict:
+        """Забыть эталоны-солянки — те, в которых лежат разные люди.
+
+        ПОВОД (06.09.2026). Владелец: «ECAPA/ReDimNet — ни разу не
+        заметил, чтобы они правильно делали». Замер показал, что дело не
+        в кодировщике: между кластерами он даёт честные косинусы
+        0.12–0.38, то есть людей РАЗДЕЛЯЕТ. Беда в эталонах: они
+        набирались месяцами с роликов и кино без разбора, и десять из
+        девятнадцати оказались смесью.
+
+        Трогаем только те, что она завела САМА. Записанные вручную и
+        закреплённые остаются: они её собственность, а не мусор — если
+        такой эталон испорчен, это решение человека, а не программы."""
+        out, kept = [], []
+        for name in list(self.speakers):
+            v = self.speakers.get(name) or {}
+            if v.get("pinned") or v.get("owner") or not v.get("auto"):
+                kept.append(name)
+                continue
+            d = self.density(name)
+            if d < thr:
+                out.append({"name": name, "dens": round(d, 2),
+                            # ЛОВУШКА numpy (06.09): `массив or []`
+                            # спрашивает у массива «ты истина?», а он
+                            # отвечает исключением. Роут падал 500-й.
+                            "n": (0 if v.get("embs") is None
+                                  else int(len(v.get("embs")))),
+                            "heard": int((self.stat.get(name) or {}).get("n", 0) or 0)})
+                if not dry:
+                    self.forget(name)
+            else:
+                kept.append(name)
+        if out and not dry:
+            self.dirty = True
+            try:
+                self.save()
+            except Exception:
+                pass
+        return {"ok": True, "removed": out, "n": len(out),
+                "kept": kept, "thr": thr}
+
+    def purge_ghosts(self, max_embs: int = 4, dry: bool = False) -> dict:
+        """Убрать голоса-призраки, которых она завела сама и больше не
+        слышала ни разу.
+
+        ПОВОД (05.09.2026). Владелец, глядя на панель голосов после
+        ролика: «ебать он голосов тут нахуячил» — четырнадцать карточек
+        при пяти живых людях в кадре. И видно, что это не разные люди:
+        у девяти из них стояло «2 образца · слышала 0 раз · сама завела».
+        Такой кластер рождается на одном обрывке — смех зала, двое
+        говорят разом, нож посреди слова — объявляется человеком и
+        больше не совпадает никогда, потому что совпадать не с чем.
+
+        Признак призрака строгий, чтобы не задеть настоящих:
+          • завела сама (auto), не закреплён, не владелец;
+          • узнан ноль раз ПОСЛЕ появления (stat.n == 0);
+          • образцов не больше max_embs — то есть один эпизод звука.
+        Всё, что хоть раз совпало, остаётся: значит, человек есть."""
+        out = []
+        for name in list(self.speakers):
+            v = self.speakers.get(name) or {}
+            if not v.get("auto") or v.get("pinned") or v.get("owner"):
+                continue
+            n_heard = int((self.stat.get(name) or {}).get("n", 0) or 0)
+            _emb = v.get("embs")
+            n_emb = 0 if _emb is None else int(len(_emb))   # см. ловушку numpy выше
+            if n_heard == 0 and n_emb <= max_embs:
+                out.append({"name": name, "embs": n_emb})
+                if not dry:
+                    self.forget(name)
+        if out and not dry:
+            self.dirty = True
+            try:
+                self.save()
+            except Exception:
+                pass
+        return {"ok": True, "removed": out, "n": len(out),
+                "left": len(self.speakers)}
 
     def drop_points(self, who: str):
         """Убрать с карты точки одного голоса."""

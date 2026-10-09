@@ -277,9 +277,15 @@ def stretch(text: str, pcm16, sr: int, words=None):
             if not pl:
                 return word
             c, dur = pl
-            extra = max(0.0, dur - 2 * per_letter)
+            # ПОРОГ ЕСТЕСТВЕННОЙ ГЛАСНОЙ (06.09.2026): в выразительной речи
+            # (озвучка аниме) ударная гласная держится 0.25-0.4 с, и по
+            # старому порогу 0.15 с тянулось почти каждое слово
+            # («Посмооооотри», «Вееееерно» — журнал 22:10). Тянем только то,
+            # что длиннее stretch_floor_s, по букве на step.
+            floor_s = float(CFG.get("stt.stretch_floor_s", 0.4))
+            extra = max(0.0, dur - floor_s)
             k = min(cap, int(extra / step))
-            if k < 2:
+            if k < 1:
                 return word
             idx = min(len(word) - 1, int(c / w_sec * len(word)))
             # ближайшая тянущаяся буква к центру плато. При равной близости
@@ -304,11 +310,31 @@ def stretch(text: str, pcm16, sr: int, words=None):
         ws = [w for w in (words or [])
               if w.get("t0") is not None and w.get("t1") is not None]
         if ws:
+            # КРАЙНИЕ СЛОВА КУСКА (06.09.2026, фильм): CTC приписывает первому
+            # слову тишину/музыку перед речью («После» 2.0 с, «Алло» 3.3 с)
+            # и тянет его зря. Крайнее слово мерим не длиннее 1.0 с от
+            # ближней к речи стороны; под музыкой плато — это музыка, порог
+            # растяжки выше на 0.3 с.
+            _mus = 0.0
+            try:
+                from anamorf import hearing as _hr
+                _mus = max([float(p) for n, p in (_hr.now() or []) if n == "музыка"] or [0.0])
+            except Exception:
+                _mus = 0.0
             out = []
-            for w in ws:
-                a = int(float(w["t0"]) * sr)
-                b = int(float(w["t1"]) * sr)
-                out.append(_do(w["w"], x[max(0, a):min(len(x), b)]))
+            n = len(ws)
+            for i, w in enumerate(ws):
+                t0, t1 = float(w["t0"]), float(w["t1"])
+                if n >= 2 and i == 0 and t1 - t0 > 1.0:
+                    t0 = t1 - 1.0
+                if n >= 2 and i == n - 1 and t1 - t0 > 1.0:
+                    t1 = t0 + 1.0
+                a = int(t0 * sr)
+                b = int(t1 * sr)
+                seg = x[max(0, a):min(len(x), b)]
+                if _mus >= 0.5 and (t1 - t0) < float(CFG.get("stt.stretch_floor_s", 0.4)) + 0.6:
+                    out.append(w["w"]); continue
+                out.append(_do(w["w"], seg))
             return " ".join(out)
         toks = text.split()
         if len(toks) <= 2 and sec > 0.8:

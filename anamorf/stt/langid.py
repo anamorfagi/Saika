@@ -42,7 +42,19 @@ def _load():
         with TORCH_GATE:
             from faster_whisper import WhisperModel
             import torch
-            dev = "cuda" if torch.cuda.is_available() else "cpu"
+            # ОПРЕДЕЛИТЕЛЬ ЯЗЫКА НА ПРОЦЕССОР (2026-09-05). whisper-tiny
+            # крошечный, на процессоре он считает язык за десятки
+            # миллисекунд — но на видеокарте он занимает не память, а
+            # ВЫЧИСЛИТЕЛЬ, и делает это на КАЖДОМ куске речи. Пока он и
+            # два движка распознавания толкаются на карте, llama-server не
+            # получает её вовсе: замер той ночи — prompt eval 74 токена в
+            # секунду вместо четырёх с половиной тысяч. Мозг молчал не
+            # потому, что сломан, а потому что до него не доходила очередь.
+            dev = str(CFG.get("stt.langid_device", "cpu") or "cpu").lower()
+            if dev == "auto":
+                dev = "cuda" if torch.cuda.is_available() else "cpu"
+            if dev == "cuda" and not torch.cuda.is_available():
+                dev = "cpu"
             name = CFG.get("stt.langid.model", "tiny")
             S["model"] = WhisperModel(
                 name, device=dev,

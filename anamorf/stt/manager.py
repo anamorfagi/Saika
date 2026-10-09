@@ -8,6 +8,7 @@
 из fallback_order, а «доктор» в фоне пытается починить сломанный.
 """
 import logging
+import re
 import threading
 import time
 
@@ -55,9 +56,48 @@ _JUNK_EXACT = [
 ]
 
 
+def _loop_junk(text: str) -> str:
+    """Петля-галлюцинация: движок сорвался и печатает одно и то же.
+
+    Живой случай 05.09 (ролик ДНК): faster_whisper выдал «Аааааа…» на
+    двести знаков и хвост «Продолжение следует». Прежний фильтр штампов
+    его пропускал — штамп был, но длина текста в двадцать раз больше
+    штампа, а проверка требовала «почти ничего кроме него».
+
+    Человек так не говорит. Три признака петли, любой достаточен:
+      • один символ подряд больше 12 раз («ааааааааааааа»);
+      • короткий кусок (1-8 знаков) размножен и занимает больше 60%
+        текста («да-да-да-да-да…», «нет нет нет нет»);
+      • одно слово подряд четыре раза и больше.
+    Возвращает причину строкой или "" — для лога, чтобы в отчёте было
+    видно, ЧТО именно отфильтровано, а не просто «мусор»."""
+    t = (text or "").strip()
+    if len(t) < 20:
+        return ""
+    if re.search(r"(.)\1{12,}", t):
+        return "один знак подряд 13+ раз"
+    m = re.search(r"(.{1,8}?)\1{4,}", t)
+    if m and len(m.group(0)) >= len(t) * 0.6:
+        return "кусок «%s» размножен на %d%% текста" % (
+            m.group(1).strip()[:12], int(100 * len(m.group(0)) / len(t)))
+    w = [x for x in re.split(r"\s+", t.lower()) if x]
+    if len(w) >= 4:
+        run = best = 1
+        for i in range(1, len(w)):
+            run = run + 1 if w[i] == w[i - 1] else 1
+            best = max(best, run)
+        if best >= 4:
+            return "слово подряд %d раз" % best
+    return ""
+
+
 def _is_junk(text: str) -> bool:
     low = (text or "").lower().strip(" .,!?…*«»\"'-")
     if not low:
+        return True
+    _loop = _loop_junk(text)
+    if _loop:
+        log.info("STT: петля-галлюцинация (%s): %r", _loop, (text or "")[:60])
         return True
     # реплики целиком в звёздочках/скобках — «*смех*», «(музыка)»
     raw = (text or "").strip()
@@ -71,6 +111,13 @@ def _is_junk(text: str) -> bool:
         p = str(phrase).lower().strip()
         # галлюцинация = фраза-штамп и почти ничего кроме неё
         if p and p in low and len(low) <= len(p) + 12:
+            return True
+    # ХВОСТ-ШТАМП (05.09). «…аааа Продолжение следует...» — штамп сидит в
+    # конце длинной петли. Петлю уже отсекли выше; здесь добираем случай,
+    # когда петли нет, а штамп занимает весь хвост осмысленного текста.
+    for phrase in list(junk) + _JUNK_DEFAULT:
+        p = str(phrase).lower().strip()
+        if p and len(p) >= 10 and low.endswith(p) and len(low) <= len(p) * 2:
             return True
     return False
 
@@ -154,7 +201,14 @@ class VadSegmenter:
         и вышло: ручки стали свойствами `_silence_ms` и прочими, а живой
         сегментатор помнил старые имена. Свойство лезло за несуществующим
         полем, падало, и нарезка вставала — при живом звуке ноль фраз."""
+        # НОВЫЕ ПОЛЯ ТОЖЕ ДОСТРАИВАЕМ (06.09): wall_samples и потолок по
+        # часам появились этой правкой, а живой сегментатор переживает её
+        # вместе со своим состоянием — без этого он падал бы на первом же
+        # кадре, и нарезка встала бы намертво.
+        if not hasattr(self, "wall_samples"):
+            self.wall_samples = 0
         for name, d in (("silence_ms", 700), ("min_speech_ms", 300),
+                        ("max_wall_s", 7.0),
                         ("max_segment_s", 12)):
             if not hasattr(self, "_" + name):
                 setattr(self, "_" + name,
@@ -184,6 +238,15 @@ class VadSegmenter:
         self._min_speech_ms = self._num(v, 300)
 
     @property
+    def max_wall_s(self):
+        """Потолок куска по стенным часам, вместе с паузами. 0 — выключен."""
+        return self._knob("max_wall_s", getattr(self, "_max_wall_s", 7.0), 7.0)
+
+    @max_wall_s.setter
+    def max_wall_s(self, v):
+        self._max_wall_s = self._num(v, 7.0)
+
+    @property
     def max_segment_s(self):
         return self._knob("max_segment_s",
                           getattr(self, "_max_segment_s", 12), 12)
@@ -200,6 +263,7 @@ class VadSegmenter:
         self.in_speech = False
         self.silence_samples = 0
         self.speech_samples = 0
+        self.wall_samples = 0      # отсчёты С НАЧАЛА КУСКА, включая паузы
 
     def _eff_threshold(self):
         # КОГДА РЕШАЕТ НЕЙРОНКА, ПОРОГ НЕ РАСТЁТ (2026-08-15). Адаптация
@@ -303,8 +367,16 @@ class VadSegmenter:
                         # словами не станет: в том же замере ни один
                         # кадр не был пропущен при низкой вероятности.
                         if self.in_speech:
-                            is_voice = p >= off
-                            _why = "нейронка (держим)"
+                            # ГРОМКО — ЗНАЧИТ ЕЩЁ ГОВОРЯТ (06.09.2026). Под
+                            # музыкой и на крике нейронка даёт 0.05-0.1 на
+                            # живой речи (замер tools/vad_replay.py: ролик
+                            # ДНК, 0.2-1.1 с) — фраза рвалась на «Пизно.»
+                            # длиной 1.1 с. Пока звук громче порога в
+                            # loud_hold_x раз, фразу не закрываем: закроет
+                            # пауза по энергии или потолок длины.
+                            _hold = float(CFG.get("stt.vad.loud_hold_x", 0.0) or 0.0)
+                            is_voice = p >= off or (_hold > 0 and rms >= thr * _hold)
+                            _why = "нейронка (держим)" if p >= off else "громко (держим)"
                         elif p >= on:
                             is_voice = True
                             _why = "нейронка"
@@ -375,6 +447,9 @@ class VadSegmenter:
 
         if self.in_speech:
             self.buffer.append(pcm16)
+            # стенные часы куска: сюда идёт КАЖДЫЙ кадр внутри куска,
+            # и речь, и паузы между словами (см. потолок ниже)
+            self.wall_samples += len(pcm16)
 
         # ═══ ГРАНИЦА ПО ПАУЗЕ, А НЕ ПО СЕКУНДОМЕРУ (2026-08-16) ═══
         # Владелец, дословно: «можешь деление делать не по времени, а
@@ -393,22 +468,68 @@ class VadSegmenter:
         # духом, всё равно упрётся в потолок — но упрётся он ПОСЛЕ того,
         # как будут перебраны все настоящие паузы, и нож придётся на самую
         # глубокую из них, а не на случайную миллисекунду.
+        # ═══ РАМПА СЧИТАЕТ ТОТ ПОТОЛОК, КОТОРЫЙ УПАДЁТ ПЕРВЫМ (06.09.2026) ═══
+        # Владелец: «фразы нормально не пишет, разрывает и не дописывает»,
+        # «упускает слова». В его снимке ВСЕ реплики длиной 6.0-7.4 с —
+        # то есть каждая до одной обрезана потолком, ни одна не закрыта
+        # по паузе.
+        #
+        # Причина в том, что мягкий рез был привязан к max_segment_s,
+        # который считает ОТСЧЁТЫ РЕЧИ, а гильотина падает по max_wall_s,
+        # который считает ВРЕМЯ. В студии говорят без пауз: время
+        # набирается втрое быстрее речи, стенной потолок приходит первым,
+        # и рампа не успевает даже начаться — она в этот момент считает,
+        # что до конца ещё далеко. Нож падал на случайной миллисекунде.
+        #
+        # Считаем близость к ОБОИМ потолкам и берём худшую. Тогда к концу
+        # куска требование к паузе честно съезжает до soft_gap_ms, и рез
+        # приходится на настоящий межсловный вдох.
         need_ms = self.silence_ms
         try:
-            soft_from = self.max_segment_s * float(
-                CFG.get("stt.vad.soft_cut_from", 0.5))
+            soft_at = float(CFG.get("stt.vad.soft_cut_from", 0.5))
             soft_gap = float(CFG.get("stt.vad.soft_gap_ms", 100))
             spoken_s = self.speech_samples / float(self.sr)
-            if self.in_speech and spoken_s > soft_from and soft_gap < need_ms:
-                frac = min(1.0, (spoken_s - soft_from)
-                           / max(0.1, self.max_segment_s - soft_from))
-                need_ms = self.silence_ms + (soft_gap - self.silence_ms) * frac
+            wall_s = self.wall_samples / float(self.sr)
+            fr = 0.0
+            if self.max_segment_s > 0:
+                a = self.max_segment_s * soft_at
+                if spoken_s > a:
+                    fr = max(fr, (spoken_s - a)
+                             / max(0.1, self.max_segment_s - a))
+            if self.max_wall_s > 0:
+                a = self.max_wall_s * soft_at
+                if wall_s > a:
+                    fr = max(fr, (wall_s - a)
+                             / max(0.1, self.max_wall_s - a))
+            if self.in_speech and fr > 0 and soft_gap < need_ms:
+                need_ms = self.silence_ms + (soft_gap - self.silence_ms) * min(1.0, fr)
         except Exception:
             need_ms = self.silence_ms
         end_by_silence = (self.in_speech and
                           self.silence_samples >= self.sr * need_ms / 1000)
         end_by_length = (self.in_speech and
                          self.speech_samples >= self.sr * self.max_segment_s)
+        # ═══ ПОТОЛОК ПО ЧАСАМ, А НЕ ПО РЕЧИ (06.09.2026) ═══
+        # Владелец на ролике: «транскриб начерно процентов 60 пропускает»
+        # и «очень медленно». В ленте при этом висели куски по 31.0, 14.9,
+        # 12.5 секунды — при потолке в шесть.
+        #
+        # Противоречия нет: max_segment_s считает ОТСЧЁТЫ РЕЧИ, а не время.
+        # В студии говорят без пауз, но громкость скачет, и часть кадров
+        # нарезка честно считает «не речь» — они в потолок не идут. Кусок
+        # растёт по стенным часам, речь копится медленно, и до шести
+        # секунд «речи» может пройти полминуты. Результат ровно тот, что
+        # он видит: текст приходит через тридцать секунд (медленно), кусок
+        # рвётся ножом посреди слова, а движок на таком монстре уходит в
+        # longform и теряет края (пропуски).
+        #
+        # Потолок по стенным часам этого не допускает вовсе: сколько бы
+        # речи ни насчиталось, кусок не длиннее max_wall_s. Задержка
+        # сверху ограничена по-настоящему.
+        end_by_wall = (self.in_speech and self.max_wall_s > 0 and
+                       self.wall_samples >= self.sr * self.max_wall_s)
+        if end_by_wall:
+            end_by_length = True
 
         if end_by_silence or end_by_length:
             segment = np.concatenate(self.buffer) if self.buffer else None
@@ -419,6 +540,7 @@ class VadSegmenter:
             #   short  — закрыли по укороченной (рампой) паузе: он просто
             #            вдохнул между словами, мысль продолжается;
             #   length — нож по потолку, оборвано где попало.
+            self.wall_samples = 0
             full_gap = self.sr * self.silence_ms / 1000
             if end_by_silence and self.silence_samples >= full_gap:
                 self.last_cut = "pause"
@@ -426,7 +548,34 @@ class VadSegmenter:
                 self.last_cut = "short"
             else:
                 self.last_cut = "length"
+            # ═══ СЛОВО НА СТЫКЕ НЕ ВЫБРАСЫВАЕМ (06.09.2026) ═══
+            # Владелец: «упускает слова». Когда нож падает по потолку, он
+            # почти всегда режет СЕРЕДИНУ слова: первая половина уходит в
+            # закрытый кусок, вторая начинает следующий. Ни та, ни другая
+            # словом не звучит, движок пишет мусор или молчит — слово
+            # исчезает совсем, хотя человек его произнёс.
+            #
+            # Поэтому при резе по потолку (но НЕ по паузе — там на стыке
+            # тишина, и переносить нечего) отдаём начало следующего куска
+            # последние carry_ms звука. Слово оказывается целиком хотя бы
+            # в одной из половин. Платим за это повтором доли секунды на
+            # шве: увидеть слово дважды не страшно, потерять — страшно.
+            _carry = None
+            try:
+                if end_by_length and segment is not None:
+                    _cm = float(CFG.get("stt.vad.carry_ms", 260))
+                    _cn = int(self.sr * _cm / 1000)
+                    if _cn > 0 and len(segment) > _cn:
+                        _carry = segment[-_cn:].copy()
+            except Exception:
+                _carry = None
             self.reset()
+            if _carry is not None:
+                # преролл — штатный механизм «звук до начала речи»; кладём
+                # перенос именно в него, чтобы он попал в следующий кусок
+                # ровно так же, как обычный подхват перед фразой
+                self.preroll = [_carry]
+                self.preroll_samples = len(_carry)
             try:
                 from anamorf.stt import neuro_vad
                 neuro_vad.reset()   # хвост прошлой фразы не влияет на новую
@@ -438,6 +587,12 @@ class VadSegmenter:
 
 
 class STTManager:
+    # подсказки от вызывающего: из какого канала кусок и сколько
+    # таких же ждёт в очереди. Ставятся снаружи перед разбором —
+    # менеджер сам про очередь ничего не знает и знать не должен.
+    src_hint = ""
+    queue_hint = 0
+
     def __init__(self, on_problem=None):
         self.instances = {}
         self.health = {name: "unknown" for name in ALL_ENGINES}
@@ -473,6 +628,14 @@ class STTManager:
     def set_engine(self, name):
         if name in self.OFF:              # «ничего не выбрано» — слух выкл
             CFG.set("stt.engine", "off")
+            # ВЫБОР ЧЕЛОВЕКА ОТМЕНЯЕТ ЗАПИСКУ (2026-09-18). У озвучки это
+            # сделано с 22.08, у слуха забыли: stt.engine_was оставался жить,
+            # и bringup._up_hear() включал слух обратно «как было». Владелец
+            # выключал перед выходом и находил включённым.
+            try:
+                CFG.set("stt.engine_was", "")
+            except Exception:
+                pass
             self.vad.reset()
             return
         if name not in ALL_ENGINES:
@@ -613,15 +776,34 @@ class STTManager:
         # тогда работаем как раньше.
         _chain = list(self._healthy_chain())
         _lang, _lang_p = None, 0.0
+        # ЯЗЫК СПРАШИВАЕМ НЕ ВСЕГДА (05.09). Живая строка из журнала:
+        # «Слух: язык "ko" (66%) — отдаю движку faster_whisper» — на
+        # полутора секундах смеха из ролика. Определитель языка на такой
+        # длине угадывает, а не определяет: полсекунды «ха-ха» одинаково
+        # похожи на корейский, венгерский и что угодно ещё. Цена ошибки
+        # высокая — кусок уезжает в чужой тяжёлый движок, тот срывается в
+        # петлю, очередь растёт.
+        #   • короче двух секунд — не спрашиваем вовсе;
+        #   • меньше 80% уверенности — остаёмся на своём движке;
+        #   • звук из компьютера — там русская речь, спрашивать незачем.
+        _sec_lid = len(segment) / float(sr or 16000)
+        _lid_ok = (_sec_lid >= float(CFG.get("stt.langid_min_s", 2.0) or 2.0)
+                   and not str(self.src_hint or "").startswith(("sys", "app:")))
         try:
+            if not _lid_ok:
+                raise StopIteration
             from anamorf.stt import langid as _lid
             _lang, _lang_p = _lid.detect(segment, sr)
+            if _lang_p < float(CFG.get("stt.langid_min_p", 0.80) or 0.80):
+                _lang, _lang_p = None, 0.0
             if _lang:
                 _want = _lid.engine_for(_lang)
                 if _want and _chain and _want != _chain[0]:
                     _chain = [_want] + [c for c in _chain if c != _want]
                     log.info("Слух: язык «%s» (%.0f%%) — отдаю движку %s",
                              _lang, _lang_p * 100, _want)
+        except StopIteration:
+            pass
         except Exception as _le:
             log.debug("маршрут по языку: %s", _le)
         for name in _chain:
@@ -668,16 +850,52 @@ class STTManager:
     # расшифровывает — один проход. Определённый язык кладём в реплику:
     # по нему интерфейс поставит метку, а маршрутизатор дальше решит,
     # кому отдавать следующие куски этого голоса.
-    def _second_opinion(self, results, segment, sr, used):
+    # ЧТО МЫ УЗНАЛИ 05.09 (ролик ДНК, живой скрин владельца).
+    # Второе мнение задумывалось под один случай: ВЛАДЕЛЕЦ сказал фразу
+    # по-английски, GigaAM уложил её в русскую фонетику. Кусок короткий,
+    # очередь пустая, цена — полсекунды.
+    #
+    # На ролике всё вывернулось наизнанку. Там смех зала, крики, двое
+    # говорят разом — плотность слов падает честно, речи там и правда
+    # мало. Условие срабатывало почти на каждом куске, whisper получал
+    # СЕМНАДЦАТЬ секунд звука, и на них же срывался в петлю («Аааааа…
+    # Продолжение следует»). В чате владелец видел одну и ту же реплику
+    # дважды — gigaam и faster_whisper — а очередь росла до 25 секунд.
+    #
+    # Отсюда четыре запрета. Каждый закрывает свой наблюдавшийся случай:
+    #   • канал: звук из компьютера — это не владелец, язык там русский,
+    #     переспрашивать некого;
+    #   • длина: whisper зовём только на короткий кусок. На длинном он и
+    #     дороже, и срывается — оба наблюдения из одного лога;
+    #   • очередь: если мы уже отстаём, второе мнение делает хуже ровно
+    #     тому, ради чего оно затевалось — тексту на экране;
+    #   • смех и возгласы: «[смех]», «Ха-ха», «Ой» — это НЕ низкая
+    #     плотность из-за чужого языка, это низкая плотность по существу.
+    def _second_opinion(self, results, segment, sr, used, src=""):
         try:
             if not CFG.get("stt.multilang", True):
                 return results
             if used == "faster_whisper":
                 return results
+            if (src or self.src_hint) == "sys":
+                return results
             sec = len(segment) / float(sr or 16000)
             if sec < float(CFG.get("stt.multilang_min_s", 0.8) or 0.8):
                 return results
+            _cap = float(CFG.get("stt.multilang_max_s", 4.0) or 4.0)
+            if sec > _cap:
+                log.debug("второе мнение: кусок %.1fс длиннее потолка %.1fс "
+                          "— не переспрашиваю", sec, _cap)
+                return results
+            _q = int(self.queue_hint or 0)
+            if _q > int(CFG.get("stt.multilang_max_q", 0) or 0):
+                log.debug("второе мнение: в очереди %d — не до переспросов", _q)
+                return results
             txt = (results[0].get("text") if results else "") or ""
+            _low = txt.lower()
+            if any(x in _low for x in ("ха-ха", "ха -ха", "хах", "смех",
+                                       "ой", "ай", "ого", "ух ты", "мм")):
+                return results
             words = len([w for w in txt.split() if w.strip(".,!?…-")])
             dens = words / max(sec, 0.1)
             thr = float(CFG.get("stt.multilang_density", 1.0) or 1.0)
@@ -820,7 +1038,17 @@ class STTManager:
         # в UI кладём человеческую причину, а не сырой стек-трейс
         self.last_error[name] = diag["human"]
         self.last_diag[name] = diag
-        log.error("STT %s сломался [%s]: %s", name, diag["category"], error)
+        # ПУСТОЕ СООБЩЕНИЕ — ТОЖЕ УЛИКА, И ЕЁ НАДО ПОКАЗАТЬ (06.09.2026).
+        # Живой случай: в логе висело «STT gigaam сломался [unknown]: » с
+        # пустым хвостом, и по нему было не понять ничего. А это был
+        # NotImplementedError() — у класса движка пропал метод transcribe
+        # (я сам сломал класс кривой вставкой), и звал он заглушку базы.
+        # str() у такого исключения пуст, repr() называет его по имени.
+        # Час поисков стоил одной строки.
+        _err = str(error)
+        if not _err.strip():
+            _err = repr(error)
+        log.error("STT %s сломался [%s]: %s", name, diag["category"], _err)
         if self.on_problem:
             self.on_problem("stt." + name, diag["human"], diag["action"], diag)
         threading.Thread(target=self._repair, args=(name, diag),

@@ -39,7 +39,10 @@ _ALLOWED_PREFIX = (
     "dialog.live_context", "transcript.",
 )
 # отдельные точечные ключи вне префиксов
-_ALLOWED_EXACT = ("tts.headphones",)
+# tts.engine / llm.off — режим стенда слуха (06.09.2026): пульт с «off»
+# лежал молча «не в белом списке», а озвучка каждый перезапуск 105 с
+# компилировалась на той же карте, где в это время шёл слух (3-6 с/фразу)
+_ALLOWED_EXACT = ("tts.headphones", "tts.engine", "llm.off")
 
 
 def _allowed(key: str) -> bool:
@@ -98,8 +101,29 @@ def _apply(data: dict) -> dict:
             "at": time.strftime("%H:%M:%S")}
 
 
+STAMP = PATH.parent / "knobs_applied.json"
+
+
+def _stamp_read():
+    """Время пульта, который уже применяли. Нужно, чтобы старый слепок не воскресал."""
+    try:
+        return float(json.loads(STAMP.read_text("utf-8")).get("mtime", 0.0))
+    except Exception:
+        return 0.0
+
+
+def _stamp_write(mt):
+    try:
+        STAMP.write_text(json.dumps({"mtime": mt, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
+                                    ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _loop():
-    last = 0.0
+    # 2026-09-18: было last = 0.0, поэтому наблюдатель применял пульт сразу после
+    # старта, даже если файл не менялся неделями, и затирал выбор владельца.
+    last = _stamp_read()
     while True:
         time.sleep(2.0)
         try:
@@ -111,6 +135,7 @@ def _loop():
             if mt <= last:
                 continue
             last = mt
+            _stamp_write(mt)
             data = json.loads(PATH.read_text("utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("ожидаю словарь ключ-значение")
@@ -128,6 +153,38 @@ def _loop():
             except Exception:
                 pass
             log.warning("Пульт: файл не применился (%s)", e)
+
+
+def apply_now() -> dict:
+    """Применить пульт СЕЙЧАС, синхронно — до автопуска тяжёлых моделей.
+    Живой случай 06.09.2026: «tts.engine: off» в пульте применялся через
+    полторы минуты после старта, когда Qwen3-TTS уже 105 с компилировался
+    на той же карте, и слух в это время шёл по 3-6 с на фразу."""
+    try:
+        if not PATH.exists():
+            return {}
+        mt = PATH.stat().st_mtime
+        # 2026-09-18. Раньше этот проход был безусловным, и слепок пульта от
+        # 06.09 при КАЖДОМ запуске перезаписывал конфиг: слух насильно в gigaam,
+        # озвучка в off. Владелец выключал их перед выходом и находил включёнными.
+        # Пульт — это «нажали кнопку», а не «состояние системы»: применяем только
+        # то, что появилось после прошлого применения.
+        if mt <= _stamp_read():
+            log.info("Пульт: файл не менялся с прошлого применения (%s) — "
+                     "настройки владельца не трогаю",
+                     time.strftime("%d.%m %H:%M", time.localtime(mt)))
+            return {}
+        data = json.loads(PATH.read_text("utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        res = _apply(data)
+        _stamp_write(mt)
+        log.info("Пульт: применён до автопуска (%d ключей)",
+                 len(res.get("applied") or {}))
+        return res
+    except Exception as e:
+        log.warning("Пульт: ранний проход не удался (%s)", e)
+        return {}
 
 
 def start():

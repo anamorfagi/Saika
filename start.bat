@@ -123,6 +123,14 @@ if exist "%HANDS%" (
     if errorlevel 1 powershell -NoProfile -Command "Start-Process -WindowStyle Hidden cmd -ArgumentList '/c','\"%HANDS%\" > \"%~dp0logs\handspc.log\" 2>&1'"
 )
 
+:: ---------- start jobs agent (ruki proekta) ----------
+:: Ispolnitel zadaniy: smotrit papku jobs\ i vypolnyaet tolko razreshennye
+:: zadaniya (probe, build, exe, research, ping, script, git, hello).
+:: Zhivet na golom stdlib, poetomu idet cherez osnovnoy venv proekta, a ne
+:: cherez HandsPC - tot na etoy mashine ni razu ne podnimalsya (net .venv).
+set "JOBSAGENT=%~dp0HandsPC\jobs_agent.py"
+if exist "%JOBSAGENT%" powershell -NoProfile -Command "Start-Process -WindowStyle Hidden '%~dp0.venv\Scripts\python.exe' -ArgumentList '-u','%JOBSAGENT%' -RedirectStandardOutput '%~dp0logs\jobs_agent.log' -RedirectStandardError '%~dp0logs\jobs_agent.err.log'"
+
 :: ---------- top up per-feature dependencies ----------
 :: 2026-07-25. first_run.py runs ONCE, so anything added to the project
 :: later stays without its libraries on an already-configured machine -
@@ -147,8 +155,24 @@ echo [*] Starting Saika... (Ctrl+C to exit)
 :: novuyu ne plodim - inache seriya kreshey zasypaet brauzer vkladkami
 if defined SAIKA_OPENED (set "SAIKA_AUTO_OPEN=0") else (set "SAIKA_AUTO_OPEN=1")
 set "SAIKA_OPENED=1"
+:: SKOLKO ONA PRORABOTALA - eto glavnoe otlichie petli ot raboty
+:: (05.09.2026). Nizhe schetchik samoperezapuskov ostanavlival vsyo posle
+:: dvadtsati raz - i segodnya ostanovil: za dolguyu sessiyu nabralos 21
+:: USPESHNYH perezapuska (kazhdaya pravka koda - eto perezapusk), i
+:: launcher schel eto krugom. Schetchik ne sbrasyvalsya NIKOGDA.
+:: Petlya - eto BYSTRYE povtory. Esli ona prorabotala bolshe dvuh minut,
+:: eto ne petlya, i schetchik nado obnulit.
+for /f "tokens=1-4 delims=:.," %%a in ("!TIME!") do set /a T0=(((%%a*60)+1%%b %% 100)*60+1%%c %% 100)
 "%VPY%" -m anamorf.main
 set CODE=%errorlevel%
+for /f "tokens=1-4 delims=:.," %%a in ("!TIME!") do set /a T1=(((%%a*60)+1%%b %% 100)*60+1%%c %% 100)
+set /a LIVED=!T1!-!T0!
+if !LIVED! LSS 0 set /a LIVED=!LIVED!+86400
+if !LIVED! GEQ 120 (
+    if !SELFRESTARTS! GTR 0 echo [i] Prorabotala !LIVED! sek - eto ne petlya, schetchik perezapuskov obnulen.
+    set SELFRESTARTS=0
+    set RESTARTS=0
+)
 if %CODE%==0 goto end
 :: kod 7 - ona sama poprosila perezapusk (besshovnoe obnovlenie koda,
 :: komanda restart). Eto NE padenie: ne tratim popytki i ne zovem doktora.

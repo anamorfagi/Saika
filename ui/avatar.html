@@ -995,9 +995,33 @@ addEventListener('wheel', e=>{ view.zoom = clampZoom(
   });
 })();
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+/* ═══ СВЕТ И ПУЛЬТ ВНЕШНОСТИ (04.09.2026) ═══════════════════════════════
+   Раньше свет был вшит тремя строками, и в интерфейсе от него не было ни
+   одной ручки: «в блоке внешка даже и близко нет такого» (владелец про
+   подробные настройки у Astra). Держим источники в переменных и принимаем
+   значения снаружи — из раздела «Лицо» новой оболочки, каналом
+   avatar_settings, тем же, что уже возит sway/breath для 2D. */
+const amb = new THREE.AmbientLight(0xffffff, 0.75); scene.add(amb);
 const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(.6,1.6,1.2); scene.add(key);
 const rim = new THREE.DirectionalLight(0xbfd4ff, 0.5);  rim.position.set(-.8,1.2,-.9); scene.add(rim);
+/* Живые ручки. Значения приходят из конфига (avatar.look.*) — здесь их
+   умолчания, ровно те, что были вшиты до этой правки. */
+const LOOK = {bright: 1, ambient: 0.75, azim: 30, elev: 55,
+              blink: 1, lipsync: 1, lip_ms: 0, head: 1, eyes: 0.5};
+function applyLook(p){
+  for (const k in (p || {})) if (LOOK[k] !== undefined && p[k] != null) LOOK[k] = +p[k];
+  amb.intensity = LOOK.ambient * LOOK.bright;
+  key.intensity = 1.15 * LOOK.bright;
+  rim.intensity = 0.50 * LOOK.bright;
+  const a = LOOK.azim * Math.PI/180, e = LOOK.elev * Math.PI/180;
+  key.position.set(Math.sin(a)*Math.cos(e)*1.8, Math.sin(e)*1.8, Math.cos(a)*Math.cos(e)*1.8);
+  rim.position.set(-Math.sin(a)*1.4, Math.cos(e)*1.2, -Math.cos(a)*1.4);
+}
+fetch('/api/avatar/library').then(r => r.json()).then(d => {
+  const st = d.settings || {}, p = {};
+  for (const k in LOOK) if (st['avatar.look.' + k] != null) p[k] = st['avatar.look.' + k];
+  applyLook(p);
+}).catch(() => {});
 
 /* ---------- загрузка VRM (+ смена наряда, 2026-07-25) ----------
    Наряд = отдельный .vrm целиком (VRoid обычным экспортом не хранит
@@ -1517,6 +1541,9 @@ function connectWS(){
     else if (m.type === 'avatar_settings'){
       if (m['avatar.2d.sway'] != null) flatCfg.sway = +m['avatar.2d.sway'];
       if (m['avatar.2d.breath'] != null) flatCfg.breath = +m['avatar.2d.breath'];
+      const p = {};
+      for (const k in LOOK) if (m['avatar.look.' + k] != null) p[k] = m['avatar.look.' + k];
+      if (Object.keys(p).length) applyLook(p);
     }
   }catch(e){} };
   ws.onclose = ()=> setTimeout(connectWS, 2000);   // сервер перезапустили — переподключаемся
@@ -1570,7 +1597,7 @@ function updateGaze(t, talking, dt){
   if (t > gaze.next){
     // основной режим — СЛЕДИТЬ ЗА ЗРИТЕЛЕМ; отвод взгляда — редкое событие
     // (в основном глазами, голова почти не участвует — см. клампы ниже)
-    const big = Math.random() < (talking ? 0.05 : 0.12);
+    const big = Math.random() < (talking ? 0.05 : 0.12) * (1.6 - LOOK.eyes);
     if (big){                                   // отвод взгляда
       gaze.ox = (Math.random()*2-1)*0.55; gaze.oy = -0.05-Math.random()*0.25;
       gaze.next = t + 0.8 + Math.random()*1.4;
@@ -1645,12 +1672,15 @@ function updateGaze(t, talking, dt){
                          camera.position.z - (view.z || 0));
   const relPitch = Math.atan2(camera.position.y - (PIVOT.y + (view.y || 0)),
                               Math.max(0.2, _dh));
-  const follow = view.headFollow !== false;
+  /* Поворот головы и зрительный контакт — две разные ручки. head:
+     насколько она вообще доворачивается к зрителю (0 — смотрит прямо).
+     eyes: как редко отводит взгляд. */
+  const follow = view.headFollow !== false && LOOK.head > 0;
   // РАМКИ ШИРЕ, НО ЧЕЛОВЕЧЕСКИЕ: комфортный поворот головы у людей ~45°
   // вбок и ~25-30° вверх-вниз, дальше идёт корпус. Было 35 и 14 — узко,
   // отсюда и ощущение, что углов не хватает.
-  const camYaw   = follow ? clamp(relYaw,   -R(45), R(45)) : 0;
-  const camPitch = follow ? clamp(relPitch, -R(28), R(28)) : 0;
+  const camYaw   = follow ? clamp(relYaw,   -R(45), R(45)) * LOOK.head : 0;
+  const camPitch = follow ? clamp(relPitch, -R(28), R(28)) * LOOK.head : 0;
   // ДОВОРОТ К ЗРИТЕЛЮ — ТОЛЬКО ГОЛОВА И ШЕЯ (2026-08-14: «чё она
   // выгибается назад? и странно наклонена на прямом взгляде»).
   // Я подмешал угол камеры в ОБЩИЕ panYaw/panPitch, а их ниже потребляют
@@ -1756,11 +1786,11 @@ function loop(){
     // «кривой» рот — оставляем еле заметную вариацию формы, а огибающую
     // берём как есть. Кивки при речи — АДДИТИВНО к позе (setRot её
     // перезаписывал -> голова дёргалась на границах реплик).
-    const talking = performance.now() - audioTs < 300;
+    const talking = LOOK.lipsync > 0 && (performance.now() - audioTs - LOOK.lip_ms) < 300;
     // чувствительность: RMS реального звука тихий (~0.05-0.2), поэтому
     // усиление большое + сжатие сверху (sqrt), чтобы тихие звуки открывали
     // рот заметно, а громкие не упирались в максимум
-    const target = talking ? Math.min(0.95, Math.sqrt(audioLevel*4.5)) : 0;
+    const target = talking ? Math.min(0.95, Math.sqrt(audioLevel*4.5) * LOOK.lipsync) : 0;
     const spd = target > mouth ? 20 : 10;             // атака/спад
     mouth += (target - mouth) * (1 - Math.exp(-dt*spd));
     if (mouth > 0.015){
@@ -1816,7 +1846,7 @@ function loop(){
 
     // моргание (иногда двойное — живее)
     blinkT >= 0 ? blinkT += dt : null;
-    if (blinkT < 0 && t > nextBlink){ blinkT = 0; }
+    if (LOOK.blink > 0 && blinkT < 0 && t > nextBlink){ blinkT = 0; }
     if (blinkT >= 0){
       expr('blink', Math.sin(Math.min(blinkT/0.12,1)*Math.PI));
       if (blinkT > 0.14){ blinkT = -1; expr('blink',0);

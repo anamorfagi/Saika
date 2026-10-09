@@ -293,6 +293,16 @@ def call(payload: dict):
         return {"result": f"Ошибка инструмента {name}: {e}"}
 
 
+# ---------------- руки проекта: исполнитель заданий ----------------
+# Живёт в jobs_agent.py. Поднимается вместе с HandsPC, поэтому отдельный запуск не нужен.
+try:
+    import jobs_agent
+    TOOLS["run_job"] = {"fn": jobs_agent.tool_run_job, "schema": jobs_agent.TOOL_SCHEMA}
+    jobs_agent.start()
+except Exception as _e:                       # руки не поднялись — остальные инструменты работают
+    log.warning("исполнитель заданий не запустился: %s", _e)
+
+
 if __name__ == "__main__":
     # уже запущен (start.bat Сайки стартует нас не глядя) — тихо выходим
     import socket

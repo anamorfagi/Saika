@@ -20,6 +20,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Потолок версий: любая автоматическая установка обязана его соблюдать, иначе
+# починка одного пакета поднимает соседний и ломает рабочую систему (NumPy 2.5
+# убил голос 2026-09-18). Подробности и причины — в самом файле.
+CONSTRAINTS = ROOT / "setup" / "constraints.txt"
+
+
+def _pip_args():
+    """Аргументы ограничения для pip. Нет файла — ставим как раньше, но честно молчим."""
+    return ["-c", str(CONSTRAINTS)] if CONSTRAINTS.exists() else []
+
+
 REPORT_PATH = ROOT / "logs" / "doctor_report.json"
 
 PKG_FIX = {
@@ -86,7 +97,7 @@ def _import_ok_sub(module):
 
 def _pip_install(pkg):
     def f():
-        subprocess.run([sys.executable, "-m", "pip", "install", pkg],
+        subprocess.run([sys.executable, "-m", "pip", "install", pkg, *_pip_args()],
                        check=False)
     return f
 
@@ -119,7 +130,7 @@ def _pip_fix(module, pkg):
             except md.PackageNotFoundError:
                 extra = []                                  # вообще не стоял
             subprocess.run([sys.executable, "-m", "pip", "install", d,
-                            *extra], check=False)
+                            *extra, *_pip_args()], check=False)
     return f
 
 
@@ -167,6 +178,36 @@ def _llamacpp_ready():
         return True, f"установлен{' (' + ver + ')' if ver else ''}, не запущен"
 
 
+def _llm_backend():
+    """Что выбрано мозгами в конфиге: llamacpp, ollama, lmstudio или cloud."""
+    try:
+        from anamorf.config import CFG
+        return str(CFG.get("llm.backend", "llamacpp")).strip().lower()
+    except Exception:
+        return "llamacpp"
+
+
+def _cloud_backend_ok():
+    """Облако выбрано мозгами — значит важно не «жив ли сервис», а есть ли ключ."""
+    try:
+        from anamorf.config import CFG
+        provider = str(CFG.get("llm.cloud.provider", "")) or "не указан"
+        model = str(CFG.get("llm.cloud.model", "")) or "модель не указана"
+    except Exception as e:
+        return False, "конфиг не читается: %s" % e
+    key = ""
+    try:
+        import json as _json
+        secrets = _json.loads((ROOT / "secrets.json").read_text(encoding="utf-8"))
+        llm = secrets.get("llm", {})
+        key = (llm.get("cloud_keys") or {}).get(provider) or llm.get("cloud_api_key") or ""
+    except Exception:
+        pass
+    if not key:
+        return False, "%s / %s — ключа нет в secrets.json" % (provider, model)
+    return True, "%s / %s, ключ на месте" % (provider, model)
+
+
 def _start_ollama():
     if shutil.which("ollama"):
         subprocess.Popen(["ollama", "serve"],
@@ -186,6 +227,13 @@ def _ollama_has_model():
 
 def _pull_default_model():
     subprocess.run(["ollama", "pull", "qwen2.5:7b-instruct"], check=False)
+
+
+def _fix_numpy_for_numba():
+    """2026-09-18: переустановка editable-пакетов подтянула NumPy 2.5, а numba
+    держит потолок 2.4 — и Qwen3-TTS отвалился на голое edge. Верхнюю границу
+    ставим явно, иначе следующая же автопочинка сломает голос снова."""
+    subprocess.run([sys.executable, "-m", "pip", "install", "numpy", *_pip_args()], check=False)
 
 
 def _voice_ready():
@@ -291,7 +339,7 @@ def _editable_ok():
 
 def _fix_editable():
     for mod, path, extras in _editable_broken():
-        subprocess.run([sys.executable, "-m", "pip", "install", "-e",
+        subprocess.run([sys.executable, "-m", "pip", "install", *_pip_args(), "-e",
                         f"{ROOT / path}{extras}", "--no-deps"], check=False)
     # если из-за этого TTS раньше переключили на запасной — вернём qwen3
     try:
@@ -446,18 +494,27 @@ def run_checks(fix=False):
     report.append(_check("PyTorch CUDA", False, _cuda_ok))
     report.append(_check("Editable-пакеты (qwen_tts, gigaam)", False,
                          _editable_ok, _fix_editable, fix))
-    report.append(_check("Qwen3-TTS", False, _qwen_tts_ok))
+    report.append(_check("Qwen3-TTS", False, _qwen_tts_ok, _fix_numpy_for_numba, fix))
     report.append(_check("Голос Сайки", False, _voice_ready))
     report.append(_check("STT-движок", True, _stt_engine_valid))
     report.append(_check("ffmpeg", False,
                          lambda: (bool(shutil.which("ffmpeg")), "в PATH")))
-    ollama = _check("Ollama", False, _ollama_running, _start_ollama, fix)
-    report.append(ollama)
-    if ollama["status"] == "ok":
-        report.append(_check("Модель в Ollama", False, _ollama_has_model,
-                             _pull_default_model, fix))
-    report.append(_check("LM Studio", False, _lmstudio_running))
+    # Движок мозгов (2026-09-18). Раньше доктор безусловно спрашивал Ollama и
+    # LM Studio, да ещё и сам поднимал Ollama с закачкой модели при --fix. Проект
+    # держит СВОЙ движок (llama.cpp), а чужие программы запускает только владелец
+    # и только когда сам захочет. Поэтому: llama.cpp показываем всегда, остальные —
+    # ровно тогда, когда на них указывает llm.backend, и никогда не трогаем.
     report.append(_check("Свой движок (llama.cpp)", False, _llamacpp_ready))
+    backend = _llm_backend()
+    if backend == "ollama":
+        ollama = _check("Ollama (выбрана в llm.backend)", True, _ollama_running)
+        report.append(ollama)
+        if ollama["status"] == "ok":
+            report.append(_check("Модель в Ollama", False, _ollama_has_model))
+    elif backend == "lmstudio":
+        report.append(_check("LM Studio (выбрана в llm.backend)", True, _lmstudio_running))
+    elif backend == "cloud":
+        report.append(_check("Облачный движок", True, _cloud_backend_ok))
 
     REPORT_PATH.parent.mkdir(exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2),

@@ -145,7 +145,15 @@ def _visible_rect(hwnd: int):
     неё свечение заезжало на соседний экран."""
     try:
         import ctypes
+        import os
         from ctypes import wintypes
+        # СВОИ ОКНА — НЕ ЦЕЛЬ (2026-10-09, «рамка покадрово падает вниз как
+        # DVD»): подпись рамки стала «активным окном», рамку навели на неё
+        # же, подпись встала на 6 пикс ниже — и так каждые 100 мс.
+        _pid = wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(int(hwnd), ctypes.byref(_pid))
+        if int(_pid.value) == os.getpid():
+            return None
         r = wintypes.RECT()
         hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
             ctypes.c_void_p(int(hwnd)), ctypes.c_uint(9),   # EXTENDED_FRAME
@@ -403,6 +411,17 @@ def _loop():
         lbl = tk.Label(cap, text="", font=("Segoe UI", 9, "bold"),
                        padx=9, pady=3, fg="#141414", bg="#ff9a3c")
         lbl.pack()
+        cap.update_idletasks()
+        # подпись тоже не берёт фокус (была окном «tk», в которое уходил
+        # Ctrl+W вместо браузера) и не ловит мышь
+        try:
+            import ctypes as _ct
+            _top = _hwnds(cap)[-1]
+            _cur = _ct.windll.user32.GetWindowLongW(_top, -20)
+            _ct.windll.user32.SetWindowLongW(
+                _top, -20, _cur | 0x00000080 | 0x08000000 | 0x00000020)
+        except Exception as _ce:
+            log.debug("подпись: no-activate не встал: %s", _ce)
         cap.withdraw()
 
         st = {"until": 0.0, "shown": False, "hwnd": 0, "rect": None,
@@ -448,7 +467,13 @@ def _loop():
         def apply(job):
             rect = job["rect"]
             if job["hwnd"]:
-                rect = _visible_rect(job["hwnd"]) or rect
+                _r = _visible_rect(job["hwnd"])
+                if _r:
+                    rect = _r
+                else:
+                    job["hwnd"] = 0          # своё/мёртвое окно — не следим
+            if not rect:
+                return
             rect = _clamp_to_screen(rect)
             st.update(until=time.time() + job["ms"] / 1000.0, shown=True,
                       life=max(0.5, job["ms"] / 1000.0), fade=1.0,

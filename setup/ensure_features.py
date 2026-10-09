@@ -369,7 +369,11 @@ def pip_install(pkgs) -> bool:
     tmp = ROOT / ".pip_tmp"
     tmp.mkdir(exist_ok=True)
     env = dict(os.environ, TMP=str(tmp), TEMP=str(tmp))
-    cmd = [PY, "-m", "pip", "install", *pkgs, "--timeout", "180",
+    # Потолок версий из setup/constraints.txt: дотяжка одной фичи не должна
+    # поднимать чужие пакеты — так в 2026-09 уехал NumPy и умер голос.
+    _cons = ROOT / "setup" / "constraints.txt"
+    _lim = ["-c", str(_cons)] if _cons.exists() else []
+    cmd = [PY, "-m", "pip", "install", *pkgs, *_lim, "--timeout", "180",
            "--retries", "5"]
     print("    >", " ".join(pkgs))
     try:

@@ -407,7 +407,26 @@ def _ensure_page(ctx):
         alive = ctx["browser"].is_connected()
     if not alive:
         _reset_ctx(ctx)
-        args = ["--window-size=1200,800", "--lang=ru-RU"]
+        args = ["--window-size=1200,800", "--lang=ru-RU",
+                # «ВОССТАНОВИТЬ СТРАНИЦЫ?» (2026-10-09, скрин владельца): после
+                # жёсткого перезапуска Сайки профиль помечен «упал», и пузырь
+                # ложился поверх страницы — поиск не находил строку ввода и
+                # висел 30 с таймаута. Пузырь гасим и флагом, и правкой профиля.
+                "--hide-crash-restore-bubble", "--disable-session-crashed-bubble",
+                "--no-default-browser-check", "--no-first-run"]
+        try:
+            import json as _js
+            import os
+            _pref = os.path.join(_profile_dir(), "Default", "Preferences")
+            if os.path.exists(_pref):
+                with open(_pref, encoding="utf-8") as _f:
+                    _pj = _js.load(_f)
+                _pj.setdefault("profile", {})["exit_type"] = "Normal"
+                _pj["profile"]["exited_cleanly"] = True
+                with open(_pref, "w", encoding="utf-8") as _f:
+                    _js.dump(_pj, _f)
+        except Exception as _pe:
+            log.debug("профиль браузера: метка «упал» не снята: %s", _pe)
         # НАСТОЯЩИЙ CHROME, А НЕ CHROMIUM (2026-08-14, живой скриншот: она
         # ДОШЛА до конца — открыла YouTube, кликнула второй ролик — и
         # получила «Что-то пошло не так. Обновите страницу». Это не её
@@ -964,6 +983,106 @@ def open_url(url: str) -> str:
     return result
 
 
+def current_page() -> dict:
+    """НА ЧТО ОН СЕЙЧАС СМОТРИТ (2026-09-05).
+
+    Владелец: «я открываю нужную страницу с понравившимся рефом, говорю
+    "вот это неплохо" — она скачивает моментально сама». Чтобы «вот это»
+    вообще имело смысл, нужно уметь ответить на вопрос «а что сейчас
+    открыто» — и ответить БЕЗ вопросов к человеку.
+
+    Берём АКТИВНУЮ вкладку его Chrome, а не последнюю, которую открывала
+    сама: он в этот момент ходит по вкладкам руками, и «вот это» — про ту,
+    что перед глазами. Отдаём адрес, заголовок и разметку: разметка нужна,
+    чтобы найти на странице ту самую большую картинку."""
+    if not available() or not _chromium_present():
+        return {}
+
+    def job(ctx):
+        page = _ensure_page(ctx)
+        cur = page
+        # активная вкладка = видимая. Playwright сам её не отмечает,
+        # спрашиваем у страницы, не спрятана ли она.
+        try:
+            for pg in list(page.context.pages):
+                try:
+                    if pg.evaluate("document.visibilityState") == "visible":
+                        cur = pg
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            html = cur.content()
+        except Exception:
+            html = ""
+        return {"url": cur.url, "title": (cur.title() or "")[:200],
+                "html": html[:600000]}
+
+    try:
+        return _post(job, timeout=40) or {}
+    except Exception as e:
+        log.debug("активная вкладка не прочиталась: %s", e)
+        return {}
+
+
+def page_html(url: str) -> str:
+    """Разметка названной страницы (для разбора картинок)."""
+    if not available() or not _chromium_present():
+        return ""
+
+    def job(ctx):
+        page = _ensure_page(ctx)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(500)
+        try:
+            return page.content()[:600000]
+        except Exception:
+            return ""
+
+    try:
+        return _post(job, timeout=60) or ""
+    except Exception as e:
+        log.debug("страница не прочиталась: %s", e)
+        return ""
+
+
+def open_and_read(url: str, scrolls: int = 3) -> str:
+    """Открыть в ВИДИМОМ окне, прокрутить и отдать разметку.
+
+    Прокрутка обязательна: на досках вроде Pinterest картинки
+    подгружаются по мере пролистывания, и без неё в разметке лежит
+    десяток превью вместо полусотни настоящих ссылок. Человек при этом
+    видит, как она листает, — это его окно, и происходящее в нём не
+    должно быть для него сюрпризом."""
+    if not available() or not _chromium_present():
+        return ""
+
+    def job(ctx):
+        page = _ensure_page(ctx)
+        page.goto(url, wait_until="domcontentloaded", timeout=40000)
+        page.wait_for_timeout(1200)
+        for _ in range(max(0, int(scrolls))):
+            try:
+                page.mouse.wheel(0, 2200)
+                page.wait_for_timeout(900)
+            except Exception:
+                break
+        try:
+            return page.content()[:900000]
+        except Exception:
+            return ""
+
+    try:
+        out = _post(job, timeout=120) or ""
+    except Exception as e:
+        log.debug("поиск рефов не открылся: %s", e)
+        return ""
+    _mark_used()
+    return out
+
+
 def _http_fetch(url: str, cap: int = 2800) -> str:
     """Быстрое фоновое чтение страницы обычным HTTP (без браузера).
     Так «читается куча сайтов одновременно»: сеть — не GPU, параллельные
@@ -1211,14 +1330,21 @@ def research(query: str) -> str:
     def sjob(ctx):
         return _do_search(ctx, query)
 
-    try:
-        items = _post(sjob, timeout=60)
-    except Exception as e:
-        if _launch_failed(e):
-            _install_bg()
-            return INSTALLING_MSG
-        raise
-    _mark_used()
+    # БЕЗ ТЕАТРА (2026-10-09, владелец: «после запроса в браузере дак-дак
+    # врубается»). Данные и так берутся из ddgs + параллельного HTTP, а
+    # видимое окно с набором в DuckDuckGo было только показом: оно
+    # выскакивало поверх, отнимало фокус и 5–30 с. Окно — только запаска.
+    theater = bool(CFG.get("browser.theater", False))
+    items = [] if theater else _ddgs_results(query)
+    if not items:
+        try:
+            items = _post(sjob, timeout=60)
+        except Exception as e:
+            if _launch_failed(e):
+                _install_bg()
+                return INSTALLING_MSG
+            raise
+        _mark_used()
     if not items:
         return "Выдача не распарсилась — попробуй web_search или другой запрос."
 
@@ -1236,7 +1362,7 @@ def research(query: str) -> str:
     pages = []
     with ThreadPoolExecutor(max_workers=12) as pool:
         futures = {pool.submit(_http_fetch, r["url"]): r for r in cands}
-        if cands:
+        if cands and theater:
             def show(ctx, u=cands[0]["url"]):
                 page = _ensure_page(ctx)
                 page.goto(u, wait_until="domcontentloaded", timeout=20000)
@@ -1306,7 +1432,7 @@ def research(query: str) -> str:
     shown = ""
     try:
         top_r, top_t = pages[0]
-        passage = _best_passage(top_t, query)
+        passage = _best_passage(top_t, query) if theater else ""
         if passage:
             _post(lambda c, u=_fragment_url(top_r["url"], passage): (
                 _ensure_page(c).goto(u, wait_until="domcontentloaded",
@@ -1667,9 +1793,11 @@ def type_into_search(text: str, submit: bool = True) -> str:
     return f"Вписала «{text}» в поиск сайта. Что на странице:\n\n{out}"
 
 
-def tabs(action: str, index: int = 0):
+def tabs(action: str, index: int = 0, match: str = ""):
     """Вкладки в СВОЁМ окне. Здесь всё своё: ни чужого чата не закроешь,
-    ни рабочей страницы человека (2026-08-13)."""
+    ни рабочей страницы человека (2026-08-13).
+    match (2026-10-09) — закрыть вкладку, у которой это слово в адресе или
+    заголовке; не нашлось — ничего не закрываем и так и говорим."""
     if not available() or not _chromium_present():
         return None
     a = (action or "").lower()
@@ -1679,6 +1807,28 @@ def tabs(action: str, index: int = 0):
         bctx = ctx["ctx"]
         pages = [p for p in bctx.pages if not p.is_closed()]
         cur = pages.index(page) if page in pages else 0
+        if match and a in ("close", "закрыть"):
+            m = match.lower()
+            hit = [p for p in pages
+                   if m in (p.url or "").lower() or m in (p.title() or "").lower()]
+            if not hit:
+                return None
+            t = hit[0].title()[:60] or hit[0].url[:60]
+            if len(pages) == 1:
+                # последняя вкладка — закрываем окно целиком (2026-10-09:
+                # «about:blank» висел пустым окном поверх всего)
+                try:
+                    ctx["ctx"].close()
+                except Exception:
+                    pass
+                _reset_ctx(ctx)
+                STATE["open"] = False
+                return f"Закрыла вкладку «{t}» — она была последней, моё окно тоже закрыла."
+            else:
+                hit[0].close()
+                ctx["page"] = None
+                _ensure_page(ctx)
+            return f"Закрыла вкладку «{t}» (в своём окне)."
         if a in ("open", "new", "открыть"):
             ctx["page"] = bctx.new_page()
             ctx["page"].bring_to_front()

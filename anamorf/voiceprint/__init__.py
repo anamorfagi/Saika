@@ -206,6 +206,24 @@ def _wake_ok() -> bool:
     return True
 
 
+# ═══ ИЗ КАКОГО КАНАЛА ПРИШЁЛ ЗВУК (05.09.2026) ═══
+# Защита «не знакомиться, пока играет медиа» уже была — и промахнулась:
+# она СПРАШИВАЕТ Windows, играет ли что-нибудь (pc_control.audio_playing),
+# а на машине владельца звук идёт через виртуальное устройство, и ответ
+# приходит «нет». Живой журнал за минуту: «познакомилась сама — Голос 17»,
+# «Голос 18», «Голос 19» — все трое дикторы из ролика.
+#
+# Спрашивать надо не систему, а себя: кусок пришёл С КОЛОНОК или С
+# МИКРОФОНА. Это знает тот, кто его принёс, и это факт, а не догадка.
+# Тот же приём, что закрыл «она отвечает телевизору»: решает КАНАЛ.
+SRC = {"v": "mic"}
+
+
+def set_src(src: str):
+    """Отметить канал текущего куска: "mic" или "sys" (звук из компьютера)."""
+    SRC["v"] = str(src or "mic")
+
+
 def feed(pcm16: np.ndarray):
     """Зовётся из вебсокета на каждый чанк. ОБЯЗАН быть мгновенным."""
     if not enabled() or S.thread is None:
@@ -601,6 +619,44 @@ def clear_map():
     refit()
     log.info("Карта голосов очищена: убрано точек %d", n)
     return {"ok": True, "removed": n, **status()}
+
+
+def forget_all():
+    """НАЧИСТО (2026-09-06, владелец: «все голоса из системы выпиливай,
+    будем работать на перезапусках, пока не добьёмся отличного»).
+    Забыть всех: эталоны, статистику, точки карты, дорожки. Свой голос
+    она выучит заново сама (voiceprint-self), владелец — печатью."""
+    # ПОДПИСАННЫЕ ВЛАДЕЛЬЦЕМ ИМЕНА ПЕРЕЖИВАЮТ ЧИСТКУ (2026-09-06): его клик
+    # «это Снейл» — это обучение, и стирать его на каждом перезапуске —
+    # значит не учиться. Стираем только автоматические «Голос N».
+    names = [n for n, v in S.reg.speakers.items()
+             if not v.get("pinned") and n.startswith("Голос ")]
+    kept = [n for n in S.reg.speakers if n not in names]
+    for n in names:
+        try:
+            S.reg.forget(n)
+        except Exception as e:
+            log.debug("не забылся %s: %s", n, e)
+    if kept:
+        log.info("Голоса: оставила подписанные — %s", ", ".join(kept[:10]))
+    try:
+        S.reg.clear_points()
+    except Exception:
+        pass
+    S.reg.dirty = True
+    S.reg.save(force=True)
+    try:
+        from anamorf.voiceprint import tracks as _trk
+        _trk.TRACKS.reset()
+    except Exception:
+        pass
+    try:
+        refit()
+    except Exception:
+        pass
+    log.warning("Голоса стёрты начисто: забыто %d (%s)", len(names),
+                ", ".join(names[:8]) + ("…" if len(names) > 8 else ""))
+    return {"ok": True, "forgotten": names, **status()}
 
 
 def forget(name: str):
@@ -1001,8 +1057,12 @@ def _process(win: np.ndarray, rms: float):
         # слышит, но человеком в комнате он не является). Пока из микшера
         # идёт звук чужой программы, новых знакомств не заводим —
         # узнавание УЖЕ знакомых при этом работает как раньше.
-        _from_speakers = False
-        if CFG.get("voiceprint.no_meet_while_media", True):
+        _from_speakers = SRC.get("v") == "sys"
+        if _from_speakers:
+            # звук из колонок: узнавание УЖЕ знакомых работает как обычно,
+            # молчит только знакомство с новыми
+            S.unk = S.unk[-10:]
+        if not _from_speakers and CFG.get("voiceprint.no_meet_while_media", True):
             try:
                 from anamorf import pc_control as _pcm
                 _from_speakers, _src = _pcm.audio_playing()

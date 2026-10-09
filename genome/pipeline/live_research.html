@@ -1,0 +1,53 @@
+<!--LIVERES-->
+<style>
+/* ЖИВОЙ РАЗБОР во вкладке «Геном»: улики идут из идущего анализа, гены набирают вес на глазах */
+#liveRes{position:fixed;left:18px;bottom:62px;z-index:60;width:min(460px,40vw);max-height:46vh;overflow:auto;display:none;
+  background:rgba(14,12,18,.93);border:1px solid rgba(207,174,112,.35);border-radius:12px;padding:10px 12px;font:11.5px/1.45 var(--fm,monospace);color:#cfc6b4}
+#liveRes h4{margin:0 0 6px;font:600 12px var(--fm,monospace);color:#e8dcc0;display:flex;gap:8px;align-items:center}
+#liveRes h4 i{width:8px;height:8px;border-radius:50%;background:#cfae70;animation:lrp 1.2s infinite}
+#liveRes.done h4 i{background:#7fc79a;animation:none}
+@keyframes lrp{50%{opacity:.3}}
+#liveRes .lr{padding:4px 0;border-top:1px solid rgba(255,255,255,.06)}
+#liveRes .lr b{color:#e8dcc0;font-weight:600}
+#liveRes .lr s{text-decoration:none;color:#cfae70}
+#liveRes .lr q{display:block;opacity:.7;quotes:none}
+</style>
+<script>
+(function(){
+  // ---- учебный блок: как ген набирает вес вживую ----
+  // Анализ пишет каждую принятую улику событием в chars/<прогон>/events.jsonl: ген, значение, уверенность, цитата.
+  // Студия раз в 2 с забирает новые (/api/live/<персонаж>?after=номер) и вливает их в открытый геном тем же
+  // правилом, что живой поток: v = среднее с весом уверенности, c растёт как у независимых свидетелей.
+  // Спираль подсвечивает свежий ген и поворачивается к нему; панель слева внизу показывает, что изменилось и почему.
+  var после=0,job="",лента=[],затронуто={},очередь=[];
+  function esc(x){return String(x).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+  function панель(){var p=document.getElementById("liveRes");if(!p){p=document.createElement("div");p.id="liveRes";document.body.appendChild(p)}return p}
+  function тик(){
+    if(typeof CUR==="undefined"||typeof byId==="undefined")return;
+    fetch("/api/live/"+encodeURIComponent(CUR)+"?after="+после).then(function(r){return r.json()}).then(function(d){
+      var p=панель();
+      if(!d||!d.job){p.style.display="none";return}
+      if(d.job!==job){job=d.job;после=d.from||0;лента=[];затронуто={};}
+      var n=0;
+      (d.items||[]).forEach(function(e){после=Math.max(после,e.seq);var G=byId[e.gene];if(!G)return;
+        var v0=G.v||0,c0=G.c||0,m=apiMerge(v0,c0,+e.v||0,Math.max(.1,Math.min(.8,+e.c||.3)));
+        G.v=+m[0].toFixed(3);G.c=+m[1].toFixed(3);   // округление: иначе на спирали «+0.6316546762589929»
+        G.ev=(G.ev||[]).concat([["w",String(e.quote||"").slice(0,240)+" — живой разбор"]]);
+        LIVE.on=true;LIVE.now=(LIVE.now||0)+1;LIVE.recent[e.gene]=LIVE.now;затронуто[e.gene]=1;n++;
+        лента.unshift({ген:G.name||e.gene,v0:v0,v1:G.v,c1:G.c,q:e.quote,why:e.reason});очередь.push(e.gene)});
+      if(n){try{applyContour();refreshStats();renderObs()}catch(x){}}
+      if(лента.length>40)лента.length=40;
+      p.className=d.done?"done":"";p.style.display="block";
+      p.innerHTML='<h4><i></i>живой разбор · '+esc(d.state||"")+' · улик '+d.total+' · генов затронуто '+Object.keys(затронуто).length+'</h4>'+
+        (лента.length?"":'<div class="lr">'+(d.done?"разбор закончен — геном влит в карточку":"идёт поиск и чтение источников, улик ещё нет")+'</div>')+
+        лента.slice(0,8).map(function(x){return '<div class="lr"><b>'+esc(x.ген)+'</b> <s>'+x.v0.toFixed(2)+' → '+x.v1.toFixed(2)+'</s> · уверенность '+x.c1.toFixed(2)+
+          '<q>«'+esc(String(x.q||"").slice(0,160))+'»</q>'+(x.why?'<q>'+esc(String(x.why).slice(0,140))+'</q>':"")+'</div>'}).join("");
+    }).catch(function(){});
+  }
+  // спираль поворачивается к свежему гену, но не чаще раза в 1.5 с и не когда человек сам водит мышью по спирали
+  var трогал=0;addEventListener("pointerdown",function(){трогал=Date.now()},true);
+  setInterval(function(){if(!очередь.length||Date.now()-трогал<8000||typeof select!=="function")return;var g=очередь.shift();var i=all.findIndex(function(x){return x.id===g});if(i>=0)try{select(i)}catch(x){}},1500);
+  тик();setInterval(тик,2000);
+})();
+</script>
+<!--/LIVERES-->

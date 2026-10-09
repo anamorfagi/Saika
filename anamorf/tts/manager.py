@@ -117,6 +117,22 @@ def _triton_ok() -> bool:
         return False
 
 
+def _restore_dtype(torch, prev):
+    """Вернуть глобальный default dtype. torch держит его ОДИН НА
+    ПРОЦЕСС: TTS честно хочет bfloat16, слух честно хочет float32, и оба
+    правы. Значит тот, кто меняет, обязан вернуть — иначе сосед падает с
+    «RNN input dtype does not match weight dtype», и виноватым выглядит
+    он."""
+    try:
+        if torch.get_default_dtype() != prev:
+            log.warning("Qwen3-TTS: загрузчик сменил глобальный dtype на "
+                        "%s — возвращаю %s, чтобы не ронять слух и "
+                        "отпечаток", torch.get_default_dtype(), prev)
+            torch.set_default_dtype(prev)
+    except Exception:
+        pass
+
+
 class Qwen3Engine:
     name = "qwen3"
 
@@ -236,7 +252,14 @@ class Qwen3Engine:
 
             cfg = CFG.get("tts.qwen3", {})
             attn = cfg.get("attn", "auto")
-            kwargs = dict(device_map="cuda:0", dtype=torch.bfloat16)
+            # ГРУЗИМ В ОЗУ, ПЕРЕВОДИМ В bf16, И ТОЛЬКО ПОТОМ — НА КАРТУ
+            # (2026-09-06). Прямая загрузка на cuda шла в float32 (запор
+            # глобального dtype ради слуха), а перевод в bf16 уже на карте
+            # оставлял за собой 3.7 ГБ дырок в одном куске аллокатора,
+            # которые не отдать. В ОЗУ места хватает (47 ГБ), а карта видит
+            # сразу готовые 3.6 ГБ вместо 7.3.
+            kwargs = dict(dtype=torch.bfloat16)
+            _target_dev = "cuda:0"
             tried = ["flash_attention_2", "sdpa"] if attn == "auto" else [attn]
 
             model_id = cfg.get("model", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
@@ -263,15 +286,53 @@ class Qwen3Engine:
             if not model:
                 raise RuntimeError(f"Qwen3-TTS не загрузился: {last}")
 
+            # ═══ ВЕСА В bf16 ЯВНО, А НЕ ЧЕРЕЗ ГЛОБАЛЬНОЕ УМОЛЧАНИЕ (2026-09-06) ═══
+            # Слух запирает torch.set_default_dtype на float32 (иначе он
+            # падал с «RNN input dtype bfloat16»). Побочка, которую я не
+            # заметил: transformers делает dtype=bfloat16 именно через
+            # set_default_dtype, запор его глушит — и Qwen3-TTS 1.7B
+            # молча собирался в float32: 7.4 ГБ видеопамяти вместо 3.7.
+            # Виталя видел «12 ГБ выделено» при выключенных мозгах — это
+            # оно. Теперь тип задаём самим весам, глобальное умолчание
+            # не трогаем вовсе.
             try:
-                if torch.get_default_dtype() != _prev_dtype:
-                    log.warning("Qwen3-TTS: загрузчик сменил глобальный "
-                                "dtype на %s — возвращаю %s, чтобы не "
-                                "ронять слух и отпечаток",
-                                torch.get_default_dtype(), _prev_dtype)
-                    torch.set_default_dtype(_prev_dtype)
-            except Exception:
-                pass
+                _want = kwargs.get("dtype", torch.bfloat16)
+                _cast = 0
+                for _m in (getattr(model, "model", None),
+                           getattr(getattr(model, "model", None),
+                                   "speech_tokenizer", None)):
+                    _inner = getattr(_m, "model", _m)
+                    if _inner is not None and hasattr(_inner, "to"):
+                        for _prm in _inner.parameters():
+                            if _prm.is_floating_point() and _prm.dtype != _want:
+                                _cast += _prm.numel()
+                        _inner.to(dtype=_want)
+                        _inner.to(_target_dev)
+                for _w in (model, getattr(model, "model", None),
+                           getattr(getattr(model, "model", None),
+                                   "speech_tokenizer", None)):
+                    if _w is not None and "device" in getattr(_w, "__dict__", {}):
+                        _w.device = torch.device(_target_dev)
+                if _cast:
+                    log.info("Qwen3-TTS: %.2f млрд весов перевела в %s в ОЗУ "
+                             "и подняла на карту", _cast / 1e9,
+                             str(_want).replace("torch.", ""))
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            except Exception as _e:
+                log.warning("Qwen3-TTS: не смогла привести веса к bf16: %r", _e)
+
+            # Возврат типа сразу после загрузки. Он НЕ закрывает вопрос
+            # целиком: дальше идёт компиляция и прогрев — самая долгая
+            # часть запуска, минуты, — и подменить умолчание может ещё и
+            # она. Прикрыть это отсюда одним finally нельзя честно:
+            # load() длинный, и резать его вслепую я сегодня уже пробовал.
+            # Поэтому вторая защита стоит на стороне слуха: там вызов
+            # обёрнут в _dtype_race, который переживает подмену, случись
+            # она хоть между установкой типа и самим вызовом.
+            _restore_dtype(torch, _prev_dtype)
             ref_wav = resolve(CFG.get("tts.voice_ref_wav"))
             ref_text = CFG.get("tts.voice_ref_text", "")
             if not ref_wav.exists() or not ref_text:
@@ -413,6 +474,19 @@ class Qwen3Engine:
                         log.info("Qwen3-TTS: прогрев закончен за %.0fс — "
                                  "дальше говорю своим голосом",
                                  time.time() - self.warm_started)
+                        # Прогрев оставляет за собой кэш аллокатора на
+                        # гигабайты — отдаём карте, слуху и мозгам он нужнее.
+                        try:
+                            import torch as _tc
+                            _r0 = _tc.cuda.memory_reserved()
+                            _tc.cuda.empty_cache()
+                            log.info("Qwen3-TTS: после прогрева вернула карте "
+                                     "%.2f ГБ кэша (резерв %.2f -> %.2f ГБ)",
+                                     (_r0 - _tc.cuda.memory_reserved()) / 2**30,
+                                     _r0 / 2**30,
+                                     _tc.cuda.memory_reserved() / 2**30)
+                        except Exception:
+                            pass
                     finally:
                         self.warming = False
                 except Exception as e:
@@ -1522,7 +1596,11 @@ class TTSManager:
                     if hasattr(eng, "is_warming") else False
             except Exception:
                 warming[name] = False
+        # enabled ОТДАЁТСЯ НАРУЖУ (2026-09-18): без него интерфейс не мог
+        # узнать, включена ли озвучка, и рисовал тумблер всегда включённым —
+        # человек выключал, после перезапуска видел «включено» и не верил системе.
         return {"current": self.current_name, "health": self.health,
+                "enabled": bool(CFG.get("tts.enabled", True)),
                 "engines": list(self.engines), "loaded": loaded,
                 # ЧТО СЕЙЧАС ГРЕЕТСЯ (2026-08-15). Без этого поля интерфейс
                 # не может отличить «готов» от «веса легли, но компилируется»

@@ -996,7 +996,20 @@ def windows(include_minimized=True) -> list:
             # Себя в списке своих рук быть не должно: это как хватать себя
             # за руку вместо предмета.
             if _is_mine(title):
-                return True
+                # НО: «ANAMORF - Google Chrome» — это обычно ЕГО Chrome, где
+                # её интерфейс просто активная вкладка (2026-10-09, проверено
+                # по UIA: в окне ещё «Эльза Гранхирт», «Яндекс»). Выкидывать
+                # окно целиком = «браузера человека нет», и вкладки в нём
+                # не закрыть. Браузерное окно оставляем, помечаем.
+                _p0 = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(_p0))
+                try:
+                    import psutil as _ps0
+                    _pn0 = _ps0.Process(_p0.value).name().lower()
+                except Exception:
+                    _pn0 = ""
+                if _pn0 not in _BROWSER_EXE:
+                    return True
             r = wintypes.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(r))
             rect = (r.left, r.top, r.right, r.bottom)
@@ -1148,6 +1161,83 @@ def screen_map() -> str:
 import os as _os
 
 
+def _close_tab_uia(keys, screen: int = 0) -> str:
+    """Закрыть вкладку браузера человека кнопкой «Закрыть» на ней самой.
+    '' — не нашлось/не вышло (тогда пробуем клавишами)."""
+    keys = [k.lower() for k in keys if k and len(k) >= 2]
+    if not keys:
+        return ""
+
+    def job():
+        from pywinauto import Desktop
+        for w in browser_windows(screen):
+            try:
+                win = Desktop(backend="uia").window(handle=int(w["hwnd"]))
+                items = win.descendants(control_type="TabItem")
+            except Exception:
+                continue
+            for it in items:
+                nm = it.window_text() or ""
+                low = nm.lower()
+                if "anamorf" in low or "сайка" in low:
+                    continue                      # своё лицо не трогаем
+                if not any(k in low for k in keys):
+                    continue
+                btn = [b for b in it.descendants(control_type="Button")]
+                if not btn:
+                    continue
+                btn[-1].invoke()
+                time.sleep(0.5)
+                left = [x.window_text() for x in
+                        win.descendants(control_type="TabItem")]
+                clean = re.sub(r'^Вкладка "|" использует.*$', "", nm)[:60]
+                if nm in left:
+                    return f"Нажала «Закрыть» на «{clean}», но вкладка осталась."
+                return f"Закрыла вкладку «{clean}»."
+        return ""
+
+    try:
+        from anamorf import ui_hands as _uh
+        r = _uh._guarded(job, "закрыть вкладку")
+        return r if isinstance(r, str) and r.startswith(("Закрыла", "Нажала")) else ""
+    except Exception as e:
+        log.debug("UIA-закрытие вкладки: %s", e)
+        return ""
+
+
+_HELPER_PIDS: dict = {}
+
+
+def is_helper_browser(pid: int) -> bool:
+    """Окно её СЛУЖЕБНОГО Chrome (Playwright, профиль data/browser_profile).
+
+    2026-10-09, стенд v2h: у служебного и у человеческого Chrome один и тот
+    же chrome.exe и заголовок «… - Google Chrome». tabs_list читал её окно
+    с DuckDuckGo («1. Chrome 2. Edge 3. Safari…»), find «ya.ru» попадал на
+    «ya.ru at DuckDuckGo», а close закрывал её вкладку и рапортовал
+    «закрыла». Отличаем по командной строке процесса: профиль на диске."""
+    pid = int(pid or 0)
+    if not pid:
+        return False
+    if pid in _HELPER_PIDS:
+        return _HELPER_PIDS[pid]
+    mine = False
+    try:
+        import psutil
+        p = psutil.Process(pid)
+        for q in (p, p.parent()):
+            if q is None:
+                continue
+            cl = " ".join(q.cmdline()).lower()
+            if "browser_profile" in cl or "--remote-debugging-pipe" in cl:
+                mine = True
+                break
+    except Exception:
+        pass
+    _HELPER_PIDS[pid] = mine
+    return mine
+
+
 def _is_self_window(w: dict) -> bool:
     """Окно, без которого Сайка умрёт или ослепнет: её собственная консоль
     (тот же PID, что у сервера, или родительский cmd из start.bat) и
@@ -1159,6 +1249,9 @@ def _is_self_window(w: dict) -> bool:
         pass
     title = (w.get("title") or "").lower()
     proc = (w.get("proc") or "").lower()
+    # её служебный Chrome — не браузер человека (см. is_helper_browser)
+    if "chrome" in proc and is_helper_browser(w.get("pid", 0)):
+        return True
     # окно её веб-интерфейса: заголовок вкладки содержит адрес или имя
     if "127.0.0.1:8765" in title or "сайка —" in title \
             or title.startswith("сайка"):
@@ -1659,6 +1752,33 @@ def _phrase() -> str:
         return ""
 
 
+def _aim(w, what: str = "работаю"):
+    """ПОКАЗАТЬ ЧЕЛОВЕКУ, КУДА СЕЙЧАС ПОЙДЁТ ДЕЙСТВИЕ (2026-09-05).
+
+    Владелец: «проверь, чтобы каждое действие — куда она смотрит, будь то
+    окно или диалоговое окошко — подсвечивала рамочкой; так мы дадим
+    понять человеку, куда смотрит и что делает модель».
+
+    Свечение уже было, но звалось из немногих мест: прицел перед вводом
+    текста, чтение экрана, браузер. А обычные операции с окнами — фокус,
+    свернуть, развернуть, закрыть, расставить — происходили молча. Со
+    стороны это худший вид непрозрачности: что-то произошло, а куда
+    именно смотрела модель, узнать нельзя, и если она промахнулась окном,
+    человек поймёт это в лучшем случае через минуту.
+
+    Здесь одна строка на каждое действие. Рамка живёт секунду с
+    небольшим — достаточно, чтобы взгляд успел, и мало, чтобы не мешать.
+    Ошибки глушим молча: подсветка — это рассказ о работе, и она не имеет
+    права эту работу сорвать."""
+    try:
+        if not w or not isinstance(w, dict):
+            return
+        from anamorf import highlight
+        highlight.show_window(w, what)
+    except Exception as e:
+        log.debug("рамка не показалась: %s", e)
+
+
 def _match(query: str):
     """Найти окно по куску заголовка или имени процесса (+русские алиасы).
     «Это же окно», «его», «обратно» — окно, с которым работали последней."""
@@ -1991,6 +2111,7 @@ def window_minimize(query: str) -> str:
     w = _match(query)
     if not w:
         return f"Не нашла окно «{query}»."
+    _aim(w, "сворачиваю")
     _touch(w)   # помним: «это же окно» — про него
     _, _, user32 = _win32()
     user32.ShowWindow(w["hwnd"], 6)                # SW_MINIMIZE
@@ -2175,6 +2296,7 @@ def window_focus(query: str) -> str:
         except Exception:
             pass
     w = _match(query)
+    _aim(w, "смотрю сюда")
     if not w:
         return f"Не нашла окно «{query}»."
     _touch(w)   # помним: «это же окно» — про него
@@ -2196,6 +2318,7 @@ def window_maximize(query: str = "", full: bool = False) -> str:
     могла». Без query берём то окно, что сейчас впереди — «разверни это»
     произносится куда чаще, чем «разверни блокнот»."""
     w = _match(query) if query else _foreground()
+    _aim(w, "разворачиваю")
     if not w:
         return f"Не нашла окно «{query}»." if query else "Не вижу активного окна."
     _touch(w)   # помним: «это же окно» — про него
@@ -2238,6 +2361,7 @@ def window_restore(query: str = "") -> str:
     в ответ пришло «вернула к обычному размеру». Отвечаем по факту того,
     что было ДО действия."""
     w = _match(query) if query else _foreground()
+    _aim(w, "возвращаю")
     if not w:
         return "Не нашла такое окно."
     _touch(w)   # помним: «это же окно» — про него
@@ -2287,11 +2411,101 @@ def _default_target():
     return None
 
 
+def dialog_of(pid: int, exclude_hwnd: int = 0) -> dict:
+    """НАЙТИ ДИАЛОГОВОЕ ОКОШКО, КОТОРОЕ ОТКРЫЛА ЭТА ЖЕ ПРОГРАММА.
+
+    Владелец, глядя на живой экран (05.09.2026): «что-то мне подсказывает,
+    вряд ли она сможет закрыть» — а на экране блокнот с вопросом «сохранить
+    изменения?».
+
+    До этого в такой ситуации она говорила: «окно всё ещё на экране — либо
+    оно спрашивает про несохранённое, либо игнорирует просьбы». То есть
+    ГАДАЛА вслух. Человек в этот момент смотрит на экран и видит ответ
+    прямо перед собой; ассистент, у которого есть глаза, обязан посмотреть,
+    а не перечислять гипотезы.
+
+    Ищем окно того же процесса, которого не было секунду назад, и читаем с
+    него текст и надписи на кнопках. Дальше решение принимает человек — но
+    уже зная, ЧТО именно спрашивают и какие есть варианты.
+
+    Возвращает {hwnd, title, text, buttons, rect} или пустой словарь."""
+    try:
+        import ctypes
+        from ctypes import wintypes as wt
+        _, _, user32 = _win32()
+        found = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+        def _cb(hwnd, _lp):
+            try:
+                if not user32.IsWindowVisible(hwnd) or hwnd == exclude_hwnd:
+                    return True
+                p = wt.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+                if int(p.value) != int(pid):
+                    return True
+                n = user32.GetWindowTextLengthW(hwnd)
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                found.append((hwnd, buf.value))
+            except Exception:
+                pass
+            return True
+
+        user32.EnumWindows(_cb, 0)
+        if not found:
+            return {}
+        # диалог — самое маленькое из окон процесса: у него нет ни меню,
+        # ни рабочей области, только вопрос и кнопки
+        def _area(h):
+            r = wt.RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            return max(1, (r.right - r.left) * (r.bottom - r.top)), r
+        found.sort(key=lambda x: _area(x[0])[0])
+        hwnd, title = found[0]
+        area, r = _area(hwnd)
+        # надписи внутри: текст вопроса и кнопки
+        texts, buttons = [], []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+        def _kid(ch, _lp):
+            try:
+                cls = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(ch, cls, 64)
+                n = user32.GetWindowTextLengthW(ch)
+                if not n:
+                    return True
+                b = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(ch, b, n + 1)
+                t = (b.value or "").strip()
+                if not t:
+                    return True
+                c = (cls.value or "").lower()
+                if "button" in c and len(t) < 40:
+                    buttons.append(t)
+                elif len(t) < 300:
+                    texts.append(t)
+            except Exception:
+                pass
+            return True
+
+        user32.EnumChildWindows(hwnd, _kid, 0)
+        return {"hwnd": int(hwnd), "title": title,
+                "text": " / ".join(texts[:4]),
+                "buttons": buttons[:6],
+                "rect": (int(r.left), int(r.top),
+                         int(r.right - r.left), int(r.bottom - r.top))}
+    except Exception as e:
+        log.debug("диалог не нашёлся: %s", e)
+        return {}
+
+
 def window_close(query: str) -> str:
     """WM_CLOSE — вежливая просьба закрыться. Программа успеет спросить про
     несохранённое; принудительно ничего не снимаем (это system_control.kill,
     и он требует подтверждения)."""
     w = _match(query)
+    _aim(w, "закрываю")
     if not w:
         return f"Не нашла окно «{query}»."
     _touch(w)   # помним: «это же окно» — про него
@@ -2316,11 +2530,25 @@ def window_close(query: str) -> str:
     if gone:
         return (f"Закрыла «{w['title'][:60]}» — проверила, окна на экране "
                 "больше нет.")
+    # НЕ ЗАКРЫЛОСЬ — СМОТРИМ, ПОЧЕМУ, А НЕ ПЕРЕЧИСЛЯЕМ ГИПОТЕЗЫ
+    # (2026-09-05). Раньше здесь стояло «либо спрашивает про
+    # несохранённое, либо игнорирует» — то есть она гадала вслух, стоя
+    # перед экраном, где ответ написан буквами.
+    d = dialog_of(w.get("pid", 0), w["hwnd"])
+    if d and (d.get("buttons") or d.get("text")):
+        _aim({"hwnd": d["hwnd"], "title": d["title"],
+              "rect": d.get("rect")}, "оно спрашивает")
+        btn = ", ".join("«%s»" % b for b in d.get("buttons", [])) or "нет кнопок"
+        return (f"«{w['title'][:50]}» не закрылось: программа спросила. "
+                f"Окошко «{d['title'][:40]}»: {d.get('text', '')[:160]} "
+                f"Кнопки: {btn}. Я его подсветила на экране. Скажи человеку, "
+                f"ЧТО именно спрашивают, и спроси, что нажать — сама я за "
+                f"него про несохранённое не решаю.")
     return (f"Попросила «{w['title'][:60]}» закрыться, но окно ВСЁ ЕЩЁ на "
-            "экране — проверила сама. Либо оно спрашивает про несохранённое, "
-            "либо игнорирует просьбы (VPN и трей-программы так любят). "
-            "Скажи это человеку честно; жёстко снять можно только по его "
-            "прямой просьбе — «убей процесс такой-то».")
+            "экране — проверила сама, диалога с вопросом рядом нет. Значит "
+            "программа просто игнорирует просьбу (VPN и трей-программы так "
+            "любят). Скажи это человеку честно; жёстко снять можно только по "
+            "его прямой просьбе — «убей процесс такой-то».")
 
 
 def minimize_all(keep: str = "") -> str:
@@ -2449,6 +2677,7 @@ def window_place(query: str, position: str = "center",
     # после разговора про хром означает «его же», а не «ничего» (живой
     # промах 2026-07-29: пустой match -> «Не нашла окно „"»)
     w = _match(query) if (query or "").strip() else _default_target()
+    _aim(w, "расставляю")
     if not w:
         if (query or "").strip():
             return f"Не нашла окно «{query}»."
@@ -2654,6 +2883,11 @@ def _pycaw_volume():
         from pycaw.api.endpointvolume import IAudioEndpointVolume
         from pycaw.utils import AudioUtilities
     dev = AudioUtilities.GetSpeakers()
+    # НОВЫЙ pycaw (2026-10-09, стенд: «'AudioDevice' object has no attribute
+    # 'Activate'» — громкость не ставилась вовсе): GetSpeakers() теперь
+    # отдаёт обёртку, у которой регулятор уже готов в .EndpointVolume
+    if hasattr(dev, "EndpointVolume"):
+        return dev.EndpointVolume
     iface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
     import comtypes
     return comtypes.cast(iface, comtypes.POINTER(IAudioEndpointVolume))
@@ -3026,13 +3260,12 @@ def _ensure_browser_front():
     вперёд и перепроверяем. Не нашли — честный отказ, клавиши не жмём.
     Возвращает (ок, где/почему)."""
     ok, title = _front_is_browser()
-    if ok:
+    _fw = _foreground() or {}
+    if ok and not is_helper_browser(_fw.get("pid", 0)):
         return True, title
     try:
-        for w in windows(include_minimized=True):
-            hay = ((w.get("title") or "") + " "
-                   + (w.get("proc") or "")).lower()
-            if any(k in hay for k in _BROWSER_HINT):
+        for w in browser_windows():
+            if True:
                 import ctypes
                 u = ctypes.windll.user32
                 if w.get("minimized"):
@@ -3063,6 +3296,9 @@ def _own_tab(a: str, index: int):
 
 _CHROMIUM = ("chrome", "chromium", "edge", "opera", "yandex", "brave",
              "vivaldi")
+_BROWSER_EXE = {"chrome.exe", "msedge.exe", "firefox.exe", "browser.exe",
+                "opera.exe", "brave.exe", "vivaldi.exe", "chromium.exe",
+                "librewolf.exe", "waterfox.exe", "arc.exe"}
 
 
 def browser_windows(screen: int = 0) -> list:
@@ -3071,9 +3307,13 @@ def browser_windows(screen: int = 0) -> list:
     out = []
     for w in windows(include_minimized=True):
         hay = ((w.get("proc") or "") + " " + (w.get("title") or "")).lower()
-        cls = (w.get("cls") or "").lower()
-        if not (any(k in hay for k in _BROWSER_HINT)
-                or cls in ("chrome_widgetwin_1", "mozillawindowclass")):
+        # ПО ИМЕНИ ПРОЦЕССА, А НЕ ПО КЛАССУ ОКНА (2026-10-09): класс
+        # Chrome_WidgetWin_1 у ЛЮБОГО Electron — десктопный Claude, Discord,
+        # VS Code. Проверка вернула «браузер человека: Claude» — так адрес
+        # ютуба и печатался в чат Клода (конфуз 2026-08-23).
+        proc = (w.get("proc") or "").lower()
+        if proc not in _BROWSER_EXE and not (
+                not proc and any(k in hay for k in _BROWSER_HINT)):
             continue
         if _is_self_window(w):
             continue
@@ -3228,10 +3468,63 @@ def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
     except Exception:
         screen = 0
 
+    # ЗАКРЫТЬ НАЗВАННУЮ ВКЛАДКУ (ядро v2, 2026-10-09). Раньше close с
+    # name/site проваливался мимо: name-ветка знала только find, а site
+    # шёл в «открыть адрес» — и закрывалась (или открывалась!) не та
+    # вкладка. Теперь: сперва перейти на неё, проверить заголовок, потом
+    # Ctrl+W и проверить, что заголовок сменился. Не нашла — ничего не жму.
+    if a in ("close", "закрыть") and (name or site or url):
+        key = name or site or url
+        key = re.sub(r"^https?://(www\.)?", "", key).split("/")[0]
+        # 1) КНОПКА «ЗАКРЫТЬ» НА САМОЙ ВКЛАДКЕ через UIA — не зависит от
+        # фокуса (живой промах 09.10: впереди оказалась её рамка «tk», и
+        # Ctrl+W ушёл в никуда). Проверка — вкладка исчезла из ленты.
+        try:
+            _q, _ = _canon_tab_name(key)
+        except Exception:
+            _q = key
+        _ur = _close_tab_uia([key, _q], screen)
+        if _ur:
+            return _ur
+        got = tab("find", index, name=key, screen=screen) \
+            if browser_windows(screen) else "браузера человека нет"
+        if not got.startswith("Перешла"):
+            # может, она открывала это в СВОЁМ окне
+            try:
+                from anamorf import browser_hands as _bh
+                own = _bh.tabs("close", 0, match=key) if _bh.is_open() else None
+                if own:
+                    return own
+            except Exception as _oe:
+                log.debug("свои вкладки: %s", _oe)
+            return (f"Вкладку «{key}» не нашла — ничего не закрыла. "
+                    f"({got[:120]})")
+        # окно браузера, а не «что впереди» (впереди бывает её рамка tk)
+        _bw = browser_windows(screen)
+        hw = int(_bw[0]["hwnd"]) if _bw else 0
+        if hw:
+            _force_front(hw)
+        before = _title_of(hw) if hw else ""
+        try:
+            import keyboard
+            keyboard.send("ctrl+w")
+        except Exception as e:
+            return f"Нашла «{key}», но клавиатура не отдалась: {e}"
+        time.sleep(0.4)
+        after = _title_of(hw) if hw else ""
+        if before and after == before:
+            return (f"Нажала Ctrl+W на «{before[:60]}», но вкладка осталась "
+                    "— не закрылась.")
+        return f"Закрыла вкладку «{before[:60] or key}»."
+
     # ПОКАЗАЛИ ПАЛЬЦЕМ — ЗНАЧИТ, В ЕГО ОКНО. Своё окно Playwright годится
     # для «полистай/закрой» без уточнений, но когда человек назвал экран,
     # сайт или вкладку — речь про ЕГО браузер, и лезть в своё нельзя.
-    if not (screen or name or site or url):
+    # 2026-10-09: и только если её окно ВПЕРЕДИ. Стенд v2h: find перевёл
+    # человека на его вкладку, следующий голый close ушёл в её окно.
+    _fg = _foreground() or {}
+    if not (screen or name or site or url) and (
+            is_helper_browser(_fg.get("pid", 0)) or not browser_windows()):
         own = _own_tab(a, index)
         if own is not None:
             return own
@@ -3363,6 +3656,14 @@ def tab(action: str = "", index: int = 0, name: str = "", site: str = "",
         keyboard.send("ctrl+t")
         return f"Открыла новую вкладку ({where})."
     if a in ("close", "закрыть"):
+        # своя вкладка-интерфейс впереди — Ctrl+W отрубит ей лицо
+        try:
+            _, _, _u = _win32()
+            if _is_mine(_title_of(int(_u.GetForegroundWindow() or 0))):
+                return ("Впереди вкладка с моим же интерфейсом — её не закрываю. "
+                        "Скажи, какую вкладку закрыть (по названию).")
+        except Exception:
+            pass
         keyboard.send("ctrl+w")
         return f"Закрыла вкладку ({where})."
     if a in ("next", "следующая"):
@@ -3546,10 +3847,41 @@ def find_folder(query: str, drive: str = "", depth: int = 3) -> list:
     return out
 
 
+
+_KNOWN_DIRS = {"загрузки": "{374DE290-123F-4565-9164-39C4925E467B}",
+               "загрузка": "{374DE290-123F-4565-9164-39C4925E467B}",
+               "downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
+               "рабочий стол": "Desktop", "desktop": "Desktop",
+               "документы": "Personal", "мои документы": "Personal",
+               "documents": "Personal", "изображения": "My Pictures",
+               "картинки": "My Pictures", "pictures": "My Pictures",
+               "музыка": "My Music", "music": "My Music",
+               "видео": "My Video", "videos": "My Video"}
+
+
+def known_dir(name: str) -> str:
+    """«Загрузки», «рабочий стол», «Desktop» -> настоящий путь из реестра
+    (2026-10-09, стенд: модель искала C:\\Users\\Вит\\Desktop шесть раз
+    подряд — папок пользователя инструменты не знали вовсе)."""
+    k = re.sub(r"^(?:папк\w*\s+)?", "", (name or "").lower()).strip(" «»\"'./\\")
+    v = _KNOWN_DIRS.get(k)
+    if not v:
+        return ""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as h:
+            path = winreg.QueryValueEx(h, v)[0]
+        path = os.path.expandvars(path)
+        return path if os.path.isdir(path) else ""
+    except Exception:
+        return ""
+
 def folder_list(path: str = "") -> str:
     """Что внутри текущей папки (или указанной). Глаза прогулки: человек
     ведёт голосом и должен слышать, куда можно шагнуть (2026-07-29)."""
     p = (path or "").strip()
+    p = known_dir(p) or p                     # «рабочий стол» -> настоящий путь
     base = Path(p) if p and Path(p).is_absolute() else None
     if base is None:
         cur = here()
@@ -3716,6 +4048,22 @@ def open_folder(path: str = "") -> str:
         _L = _dm.group(1).lower()
         p = _lat.get(_L, _L).upper() + ":\\"
 
+    # ИЗВЕСТНЫЕ ПАПКИ ПОЛЬЗОВАТЕЛЯ (2026-10-09, стенд: «открой Загрузки» ->
+    # «папки Загрузки тут нет» — искала подпапку в рабочей директории).
+    _known = {"загрузки": "Downloads", "загрузка": "Downloads",
+              "downloads": "Downloads", "документы": "Personal",
+              "мои документы": "Personal", "documents": "Personal",
+              "рабочий стол": "Desktop", "desktop": "Desktop",
+              "изображения": "My Pictures", "картинки": "My Pictures",
+              "pictures": "My Pictures", "музыка": "My Music",
+              "music": "My Music", "видео": "My Video", "videos": "My Video"}
+    _kn = re.sub(r"^(?:папк\w*\s+)?", "", p.lower()).strip(" «»\"'.")
+    if _kn in _known:
+        try:
+            os.startfile("shell:" + _known[_kn])   # noqa: S606
+            return f"Открыла папку «{p}» в проводнике."
+        except Exception as e:
+            log.warning("известная папка %s не открылась: %s", p, e)
     # «ОТКРОЙ РАБОЧУЮ ПАПКУ» — ЭТО КОРЕНЬ, А НЕ ПОИСК ПО ИМЕНИ (2026-08-13,
     # живой отказ: она приняла «рабочую папку» за НАЗВАНИЕ и пошла искать
     # подпапку с таким именем, потом «Рабочий стол» — обе не нашлись, и

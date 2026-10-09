@@ -1,0 +1,67 @@
+# ПОТОЛОК ВЕРСИЙ — закон для любой автоматической установки (2026-09-18).
+#
+# Зачем этот файл появился. Доктор чинил битые пути editable-пакетов и вызвал
+# обычный `pip install` без ограничений. pip воспользовался случаем и поднял
+# NumPy до 2.5, а numba держит потолок 2.4 — Qwen3-TTS умер, голос Сайки молча
+# уехал на edge. То есть ПОЧИНКА СЛОМАЛА рабочую систему, и заметно это стало
+# только по строчке в логе. Прибивать один NumPy бесполезно: завтра так же
+# уедет torch и утащит CUDA.
+#
+# Правило: каждый pip внутри setup/ идёт с `-c setup/constraints.txt`.
+# Тогда автопочинка физически не может поднять версию выше согласованной —
+# она чинит то, что просили, и не трогает остальное.
+#
+# Откуда числа: requirements.txt, то есть версии, на которых Сайка работает.
+# Меняешь здесь — меняешь и там, это одна пара.
+#
+# Совместимости, которые нельзя выводить из requirements и надо помнить:
+numba<0.63         # верхняя граница под numpy 1.26
+scipy<1.18         # оборванная установка 1.18 уронила слух, уши и голос (2026-08)
+
+# --- точные версии рабочего окружения ---
+apscheduler==3.11.3
+chromadb==1.5.9
+comtypes==1.4.16
+cryptography==49.0.0
+ddgs==9.15.0
+dxcam==0.3.0
+edge-tts==7.2.8
+fastapi==0.139.0
+faster-whisper==1.2.1
+gigaam==0.1.0
+huggingface-hub==0.36.2
+jinja2==3.1.6
+keyboard==0.13.5
+laion-clap==1.1.7
+mss==10.2.0
+noisereduce==3.0.3
+numpy==1.26.4
+opencv-python==4.13.0.92
+panns-inference==0.1.1
+piper-tts==1.6.0
+playwright==1.61.0
+psutil==7.2.2
+pycaw==20251023
+pygrabber==0.2
+pyside6-addons==6.11.1
+pywhispercpp==1.5.0
+pywin32==312
+pywinauto==0.6.9
+qrcode==8.2
+qwen-tts==0.0.4
+rapidocr-onnxruntime==1.4.4
+requests==2.34.2
+silero-vad==6.2.1
+sounddevice==0.5.5
+soundfile==0.14.0
+soxr==1.1.0
+speechbrain==1.1.0
+tone==0.1.0
+torch==2.13.0+cu130
+trafilatura==2.2.0
+transformers==4.57.3
+umap-learn==0.5.12
+uvicorn==0.51.0
+vosk==0.3.45
+windows-capture==2.0.0
+winsdk==1.0.0b10

@@ -370,6 +370,32 @@ class Encoder:
 
         return _Wrap(m, dev), dev
 
+    def encode_many(self, chunks):
+        """Пачка окон ОДНОЙ длины -> список (вектор, тон). Один проход по
+        карте вместо N — для разрезания по сменам голоса (stt/turns.py).
+        Разной длины или без нейросети — по одному, как encode()."""
+        chunks = list(chunks or [])
+        if not chunks:
+            return []
+        if self._sb is None or len({len(c) for c in chunks}) != 1:
+            return [self.encode(c) for c in chunks]
+        try:
+            xs = np.stack([np.asarray(c, dtype=np.float32) / 32768.0
+                           for c in chunks])
+            with self._lock:
+                t = self._torch.from_numpy(xs)
+                with self._torch.no_grad():
+                    if getattr(self, "_dev", "cpu") != "cpu":
+                        t = t.to(self._dev)
+                    emb = self._sb.encode_batch(t).cpu().numpy()
+            emb = np.asarray(emb, dtype=np.float32).reshape(len(chunks), -1)
+            return [(_unit(emb[i]), _pitch(xs[i])[0])
+                    for i in range(len(chunks))]
+        except Exception as e:
+            log.warning("%s пачкой споткнулась (%s) — по одному",
+                        self.backend, e)
+            return [self.encode(c) for c in chunks]
+
     def encode(self, pcm16: np.ndarray):
         """int16 моно 16кГц -> (вектор единичной длины, высота тона в Гц)."""
         x = np.asarray(pcm16, dtype=np.float32) / 32768.0

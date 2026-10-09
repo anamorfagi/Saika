@@ -560,6 +560,11 @@ def web_open(site: str, query: str = "", browser: str = "") -> str:
     дальше человек говорит «какой клип» — и это уже click()."""
     s = _clean(site).lower().rstrip("/")
     q = _clean(query)
+    # служебные адреса — не сайт и не поисковый запрос (09.10: «about:blank»
+    # превратился в поиск Google в браузере человека)
+    if s.startswith(("about:", "chrome:", "edge:", "file:")):
+        return (f"«{s}» — служебная страница браузера, не сайт; открывать её "
+                "нечего. Если речь о моём служебном окне — это close_browser.")
     if not s:
         # Пустой вызов — обычное дело, когда человек сказал «открой
         # браузер» без адреса. Раньше это молча возвращало вопрос в
@@ -652,29 +657,58 @@ def web_open(site: str, query: str = "", browser: str = "") -> str:
                 r"в\s+(этой|текущ\w+|той\s+же)\s*(вкладк\w+)?|"
                 r"\bздесь\b|\bсюда\b|не\s+открыв\w*\s+нов\w+|"
                 r"в\s+этом\s+окне", _said or "", _re.I))
+            # «В НОВОМ/ОТДЕЛЬНОМ ОКНЕ» — именно новое окно ЕГО браузера
+            # (Ctrl+N), а не вкладка и не её служебное окно (2026-10-09).
+            if _re.search(r"(нов\w+|отдельн\w+)\s+(окн\w+|браузер\w*)",
+                          _said or "", _re.I):
+                w0 = _wins[0]
+                if _pcw._force_front(int(w0.get("hwnd") or 0)):
+                    import keyboard as _kb
+                    import time as _tm
+                    _kb.send("ctrl+n")
+                    _tm.sleep(0.6)
+                    if _pcw._type(url):
+                        _kb.send("enter")
+                        return (f"Открыла {url} в новом окне твоего браузера. "
+                                "Подожди секунду-другую, потом see() покажет, "
+                                "что на странице.")
             r = _pcw.tab("open" if _here else "new", url=url)
-            if r and "не" not in r[:12].lower():
+            # ОТКАЗ ОКНА ЧЕЛОВЕКА — НЕ ОТВЕТ (2026-10-09, стенд): «Впереди сейчас
+            # Claude… адрес печатать некуда» уходило наверх как результат, а
+            # проверка искала «не» только в первых 12 буквах. Отказ — идём
+            # дальше: своё окно или системный браузер.
+            _fail = ("некуда", "не нашла", "не смогла", "ничего не открыла",
+                     "не браузер", "не отдалась")
+            if r and not any(f in r.lower() for f in _fail) \
+                    and "не" not in r[:12].lower():
                 return r + (" Подожди секунду-другую, потом see() покажет, "
                             "что на странице.")
             log.debug("окно человека не приняло адрес (%s) — иду к себе", r)
     except Exception as e:
         log.debug("web_open: браузер человека недоступен (%s)", e)
-    try:
-        from anamorf import browser_hands
-        if browser_hands.available() and browser_hands._chromium_present():
-            return browser_hands.open_url(url)
-    except Exception as e:
-        log.debug("web_open: своё окно недоступно (%s) — иду системным", e)
+    # БРАУЗЕР ЧЕЛОВЕКА ЗАКРЫТ — ЗАПУСКАЕМ ЕГО ЖЕ, А НЕ СВОЁ ОКНО (2026-10-09,
+    # владелец: «в открытом естественно… модель же должна понимать
+    # контекст»). Сайт он будет смотреть сам — значит, в своём браузере с
+    # аккаунтами и закладками. Системный браузер по умолчанию = его браузер;
+    # если он уже открыт, Windows просто добавит вкладку. Служебное окно —
+    # только когда системный не поднялся.
     try:
         if _IS_WIN:
             os.startfile(url)               # noqa: S606 — браузер по умолчанию
         else:
             import subprocess
             subprocess.Popen(["xdg-open", url])
-        return (f"Открыла {url} в системном браузере (своё окно недоступно). "
-                "Подожди секунду-другую, потом see() покажет, что на странице.")
+        return (f"Открыла {url} в твоём браузере. Подожди секунду-другую, "
+                "потом see() покажет, что на странице.")
+    except Exception as e:
+        log.debug("web_open: системный браузер не поднялся (%s) — своё окно", e)
+    try:
+        from anamorf import browser_hands
+        if browser_hands.available() and browser_hands._chromium_present():
+            return browser_hands.open_url(url) + " (в моём служебном окне — твой браузер не открылся)"
     except Exception as e:
         return f"Не смогла открыть {url}: {e}"
+    return f"Не смогла открыть {url}: ни твой браузер, ни моё окно не поднялись."
 
 
 # ──────────────────── дерево элементов окна (UIA) ────────────────────

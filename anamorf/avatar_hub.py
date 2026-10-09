@@ -215,6 +215,20 @@ SETTINGS = (
     ("avatar.look_at_cursor", True, bool),
     ("avatar.2d.sway", 1.0, float),        # сила покачивания у 2D
     ("avatar.2d.breath", 1.0, float),      # дыхание в покое
+    # ═══ ВНЕШНОСТЬ 3D — ЖИВЫЕ РУЧКИ (04.09.2026) ═══════════════════════
+    # Свет, моргание, липсинк и взгляд были вшиты в ui/avatar.html
+    # константами: в интерфейсе от них не было ни одной ручки, и владелец
+    # прав — «в блоке внешка даже и близко нет такого». Значения едут в
+    # рендер каналом avatar_settings, тем же, что уже возит sway/breath.
+    ("avatar.look.bright", 1.0, float),    # общая яркость сцены
+    ("avatar.look.ambient", 0.75, float),  # рассеянный свет
+    ("avatar.look.azim", 30.0, float),     # направление света, градусы
+    ("avatar.look.elev", 55.0, float),     # высота источника, градусы
+    ("avatar.look.blink", 1.0, float),     # автоморгание (0 — выключено)
+    ("avatar.look.lipsync", 1.0, float),   # сила липсинка
+    ("avatar.look.lip_ms", 0.0, float),    # смещение липсинка, мс
+    ("avatar.look.head", 1.0, float),      # насколько доворачивает голову
+    ("avatar.look.eyes", 0.5, float),      # зрительный контакт
 )
 
 

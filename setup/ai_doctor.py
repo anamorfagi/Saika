@@ -65,6 +65,9 @@ editable-пакеты в third_party/).
 
 Правила:
 - максимум 5 действий;
+- НИКОГДА не поднимай версию пакета выше потолка из constraints.txt. Если
+  проблема выглядит как «нужна версия свежее» — это не починка, а поломка
+  соседнего пакета: напиши note владельцу, а не ставь новую версию;
 - СНАЧАЛА сверься со шпаргалкой известных проблем (она в контексте) — если
 симптом там есть, применяй её решение, не изобретай своё;
 - чини только то, что реально видно в отчёте/логах, не выдумывай;
@@ -144,6 +147,14 @@ def collect_context():
     if ki.exists():
         issues = ki.read_text(encoding="utf-8")
 
+    # Потолок версий и фактическое расхождение. Без этого Беймакс «чинит»
+    # вслепую и поднимает версии, ломая соседние пакеты — так умер голос.
+    limits = ""
+    cons = ROOT / "setup" / "constraints.txt"
+    if cons.exists():
+        limits = cons.read_text(encoding="utf-8")
+    drift = _version_drift()
+
     bad = failed_features()
     setup_tail = ""
     slog = ROOT / "logs" / "setup.log"
@@ -151,7 +162,10 @@ def collect_context():
         setup_tail = slog.read_text(encoding="utf-8",
                                     errors="ignore")[-2500:]
 
-    ctx = (f"ШПАРГАЛКА ИЗВЕСТНЫХ ПРОБЛЕМ:\n{issues}\n\n"
+    ctx = (f"ПОТОЛОК ВЕРСИЙ (setup/constraints.txt) — НАРУШАТЬ НЕЛЬЗЯ:\n{limits}\n\n"
+           f"ЧТО СЕЙЧАС СТОИТ НЕ ПО ПОТОЛКУ:\n"
+           f"{chr(10).join(drift) if drift else 'расхождений нет'}\n\n"
+           f"ШПАРГАЛКА ИЗВЕСТНЫХ ПРОБЛЕМ:\n{issues}\n\n"
            f"ЧТО НЕ ВСТАЛО ПРИ ЗАПУСКЕ:\n"
            f"{json.dumps(bad, ensure_ascii=False, indent=1) if bad else 'всё встало'}\n\n"
            f"ХВОСТ ЛОГА УСТАНОВКИ setup.log:\n{setup_tail or '(пусто)'}\n\n"
@@ -160,6 +174,46 @@ def collect_context():
            f"КОНФИГ:\n{cfg}\n\n"
            f"ХВОСТ ЛОГА saika.log:\n{log_tail}")
     return report, ctx
+
+
+def _version_drift():
+    """Что реально стоит против того, что согласовано. Настоящие числа, не слова:
+    строка вида «numpy: стоит 2.5.0, положено ==1.26.4»."""
+    cons = ROOT / "setup" / "constraints.txt"
+    if not cons.exists():
+        return []
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+    except ImportError:
+        return []
+    out = []
+    for line in cons.read_text(encoding="utf-8").splitlines():
+        s = line.split("#")[0].strip()
+        if not s:
+            continue
+        name = re.split(r"[=<>!~]", s, 1)[0].strip()
+        want = s[len(name):].strip()
+        try:
+            have = version(name)
+        except PackageNotFoundError:
+            continue
+        except Exception:
+            continue
+        if want.startswith("==") and have != want[2:].strip():
+            out.append(f"{name}: стоит {have}, положено {want}")
+        elif want.startswith("<") and not want.startswith("<="):
+            cap = want[1:].strip()
+            if _ver_tuple(have) >= _ver_tuple(cap):
+                out.append(f"{name}: стоит {have}, потолок {want}")
+    return out
+
+
+def _ver_tuple(v):
+    parts = []
+    for chunk in str(v).split("."):
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
 
 
 def has_problems(report):
@@ -259,7 +313,11 @@ def execute(act) -> str:
                 and not p.strip().startswith("-") and _pkg_ok(p)]
         if pkgs:
             _log(f"[fix] pip install {' '.join(pkgs)}")
-            _pip("install", *pkgs, "--timeout", "180", "--retries", "5")
+            # Беймаксу тоже нельзя поднимать версии выше согласованных:
+            # он чинит систему, а не пересобирает её на своё усмотрение.
+            _cons = ROOT / "setup" / "constraints.txt"
+            _lim = ["-c", str(_cons)] if _cons.exists() else []
+            _pip("install", *pkgs, *_lim, "--timeout", "180", "--retries", "5")
     elif a == "pip_force_reinstall":
         pkgs = [p for p in act.get("packages", [])
                 if isinstance(p, str) and SAFE_PKG.match(p)

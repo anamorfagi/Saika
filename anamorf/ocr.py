@@ -67,7 +67,9 @@ def _winrt_read(img) -> str:
         raise RuntimeError(_ENG["why"] or "Windows-OCR недоступен")
     h, w = img.shape[:2]
     bgra = np.dstack([img, np.full((h, w), 255, np.uint8)])
-    buf = CryptographicBuffer.create_from_byte_array(list(bgra.tobytes()))
+    # winsdk ожидает bytes-like буфер. Список чисел выглядит похожим, но
+    # реальный Windows Runtime отклоняет его ещё до запуска OCR.
+    buf = CryptographicBuffer.create_from_byte_array(bgra.tobytes())
     bmp = SoftwareBitmap.create_copy_from_buffer(
         buf, BitmapPixelFormat.BGRA8, w, h)
 

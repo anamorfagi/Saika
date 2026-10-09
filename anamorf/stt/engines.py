@@ -18,6 +18,7 @@
 import json
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,10 @@ from anamorf.stt.base import STTEngine, pcm16_to_float
 from anamorf.stt.external import ExternalEngine
 
 log = logging.getLogger("saika.stt")
+
+# тайминги слов последнего прямого распознавания (на поток) — см. GigaAMEngine._align
+import threading as _thr_align
+LAST_WORDS = _thr_align.local()
 
 
 def _to_wav_tempfile(pcm16: np.ndarray, sample_rate: int) -> str:
@@ -62,7 +67,7 @@ class FasterWhisperEngine(STTEngine):
             self.model = WhisperModel(cfg.get("model", "large-v3-turbo"),
                                       device="cpu", compute_type="int8")
 
-    def transcribe(self, pcm16, sample_rate):
+    def transcribe(self, pcm16, sample_rate, language="cfg"):
         self.load()
         audio = pcm16_to_float(pcm16)
         # ГАЛЛЮЦИНАЦИИ НА ТИШИНУ — БОЛЕЗНЬ ИМЕННО WHISPER (2026-07-29).
@@ -89,20 +94,19 @@ class FasterWhisperEngine(STTEngine):
         # секундам и тут же расшифровывает — один проход вместо двух.
         # Определённый язык кладём в last_lang: маршрутизатор выше по
         # стеку использует его, чтобы решить, кому отдать следующий кусок.
-        _lang = CFG.get("stt.language", "ru")
+        # language="auto" — whisper сам определяет язык (второе ухо на чужой речи)
+        _lang = CFG.get("stt.language", "ru") if language == "cfg" else language
         if str(_lang).lower() in ("auto", "", "none"):
             _lang = None
+        # VAD-ФИЛЬТР ВЫКЛЮЧЕН ПО УМОЛЧАНИЮ (2026-09-06): он выкидывал крик
+        # и смех как «не речь» — и целые куски ролика уходили пустыми.
+        # Нарезку делает наш сегментатор, второй VAD внутри не нужен.
         kw = dict(language=_lang,
-                  beam_size=1, vad_filter=True,
-                  # ПОСЛОВНАЯ УВЕРЕННОСТЬ (2026-08-15, владелец: «как в
-                  # прогах, где языку учат — подсвечивать слова, которые
-                  # человек нечётко произнёс»). Приёмы таких приложений
-                  # (GOP, форс-алайнмент по фонемам) требуют ЭТАЛОННОГО
-                  # текста — в свободной речи его нет. Честный аналог без
-                  # эталона: вероятность каждого слова у самого декодера.
-                  # Слово, в котором модель не уверена, почти всегда и
-                  # есть смазанное/нечёткое — его и подсветит интерфейс.
-                  word_timestamps=bool(cfg.get("word_conf", True)),
+                  beam_size=int(cfg.get("beam", 1)),
+                  vad_filter=bool(cfg.get("vad_filter", False)),
+                  word_timestamps=bool(cfg.get("word_conf", False)),
+                  # подсказка декодеру: без неё whisper ставит звёздочки в мате
+                  initial_prompt=(cfg.get("prompt") or None),
                   condition_on_previous_text=False,
                   no_speech_threshold=float(cfg.get("no_speech_threshold", 0.5)),
                   log_prob_threshold=float(cfg.get("log_prob_threshold", -0.8)),
@@ -116,8 +120,12 @@ class FasterWhisperEngine(STTEngine):
                     self.last_lang = getattr(_info, "language", None)
                     self.last_lang_p = float(
                         getattr(_info, "language_probability", 0.0) or 0.0)
+                    # вся раскладка вероятностей языков — чтобы второе ухо
+                    # могло проверить «а не испанский ли это» по контексту
+                    self.last_lang_probs = dict(getattr(_info, "all_language_probs", None) or [])
                 except Exception:
                     self.last_lang, self.last_lang_p = None, 0.0
+                    self.last_lang_probs = {}
             except TypeError:
                 # старая сборка faster-whisper без части порогов — работаем
                 # как раньше, фразы-штампы всё равно отсеет _is_junk
@@ -228,6 +236,90 @@ def _gigaam_no_ffmpeg(gigaam):
     return n
 
 
+# ═══ ГЛОБАЛЬНЫЙ ТИП ЗАЩЁЛКНУТ НА float32 (06.09.2026) ═══════════════════
+# Четыре раза за сегодня слух падал с «RNN input dtype (torch.bfloat16)
+# does not match weight dtype (torch.float32)». Я дважды чинил это по
+# месту — ставил тип перед работой, потом добавил повтор при гонке. И
+# оба раза мимо: в логе НЕТ ни одной записи о повторе, то есть падало не
+# на том вызове, который я обернул. Искать все вызовы по одному —
+# бесконечная игра в догонялки.
+#
+# Поэтому чиню не следствие, а возможность. torch держит default dtype
+# один на процесс; слуху нужен float32, и никому другому глобально менять
+# его незачем — модели, которым нужен bfloat16, получают его аргументом
+# при загрузке (dtype=...), а не через глобальную настройку. Перехватываем
+# сеттер: попытку поставить не-float32 записываем в лог и не выполняем.
+# Кто пытался — видно по стеку, так что это ещё и диагностика.
+def _lock_float32():
+    try:
+        import torch as _t
+        if getattr(_t, "_saika_dtype_locked", False):
+            return
+        _orig = _t.set_default_dtype
+
+        def _guarded(dt):
+            if dt is not _t.float32:
+                import traceback
+                who = "".join(traceback.format_stack(limit=4)[:-1])[-300:]
+                log.warning("Кто-то ставит глобальный dtype %s — не даю, "
+                            "слуху нужен float32. Откуда:\n%s", dt, who)
+                return
+            return _orig(dt)
+
+        _t.set_default_dtype = _guarded
+        _t._saika_dtype_locked = True
+        _orig(_t.float32)
+        log.info("Глобальный тип защёлкнут на float32 — слух больше не "
+                 "падает от чужих загрузчиков")
+    except Exception as e:
+        log.debug("защёлка dtype не поставилась: %s", e)
+
+
+_lock_float32()
+
+
+def _dtype_race(fn, *a, **kw):
+    """Позвать fn, переживая ЧУЖУЮ ПОДМЕНУ ГЛОБАЛЬНОГО ТИПА (06.09.2026).
+
+    torch держит default dtype ОДИН НА ПРОЦЕСС. TTS честно хочет
+    bfloat16, слух честно хочет float32, и оба правы. Пока Qwen3-TTS
+    компилируется и прогревается — а это минуты, — он трогает это
+    умолчание, и тензор, рождённый в GigaAM в ту же миллисекунду,
+    выходит не того типа: «RNN input dtype (torch.bfloat16) does not
+    match weight dtype (torch.float32)».
+
+    Прежнее лечение ставило тип ДО работы и один раз повторяло после
+    падения. Этого мало: подмена может случиться МЕЖДУ установкой и
+    вызовом, и тогда повтор падает вторым разом, ошибка уходит наверх,
+    движок помечается сломанным, и слух сваливается на запасной — у
+    владельца это выглядело как «GIGAAM · 84.2 с» с текстом «кому
+    поехали».
+
+    Это гонка, а гонку не лечат одной попыткой. Три захода с короткой
+    паузой: окно подмены измеряется миллисекундами, а компиляция TTS
+    случается раз за запуск. Если не помогло и трижды — ошибка идёт
+    наверх честно, значит дело не в типе."""
+    import torch as _t
+    last = None
+    for i in range(3):
+        try:
+            if _t.get_default_dtype() is not _t.float32:
+                _t.set_default_dtype(_t.float32)
+        except Exception:
+            pass
+        try:
+            return fn(*a, **kw)
+        except RuntimeError as e:
+            if "does not match weight dtype" not in str(e):
+                raise
+            last = e
+            log.warning("GigaAM: гонка за глобальный dtype, заход %d/3", i + 1)
+            time.sleep(0.05)
+    raise last
+
+
+
+
 class GigaAMEngine(STTEngine):
     name = "gigaam"
     kind = "buffered"
@@ -304,11 +396,45 @@ class GigaAMEngine(STTEngine):
             self.model = gigaam.load_model(model_name)
 
     def transcribe(self, pcm16, sample_rate):
+        # ═══ ЧУЖОЙ ГЛОБАЛЬНЫЙ DTYPE ЛЕЧИМ ДО, А НЕ ПОСЛЕ (06.09.2026) ═══
+        # Живой лог: «STT gigaam сломался: RNN input dtype (torch.bfloat16)
+        # does not match weight dtype (torch.float32)». Причина известна и
+        # описана ниже: загрузчик Qwen3-TTS переключает ТОРЧУ УМОЛЧАНИЕ на
+        # bfloat16, и наш входной тензор рождается не того типа.
+        #
+        # Лечение стояло в except — то есть срабатывало ПОСЛЕ падения, а
+        # падение к тому времени уже помечало движок сломанным, и слух
+        # уходил на запасной. У владельца это выглядело как «ГОЛОС 4 ·
+        # VOSK · 84.2 с» и текст «кому поехали» вместо речи: мусорная
+        # малая модель на куске в полторы минуты.
+        #
+        # Ставим тип ДО работы. Стоит наносекунды, зато класс ошибки
+        # закрыт целиком, а не по факту каждого падения.
+        try:
+            import torch as _t
+            if _t.get_default_dtype() is not _t.float32:
+                _t.set_default_dtype(_t.float32)
+        except Exception:
+            pass
         self.load()
+        # ═══ ПРЯМО ИЗ ПАМЯТИ, БЕЗ ВРЕМЕННОГО WAV (2026-09-06) ═══
+        # Замер в живом процессе: через файл 109 мс, из памяти 83 мс на
+        # тот же кусок — файл на диск, чтение обратно, ресемпл ради
+        # ничего. Ниже старый путь остаётся запасным: если прямой вызов
+        # споткнулся (длинный кусок, чужой dtype) — идём через файл, как
+        # раньше, со всеми его защитами.
+        if int(sample_rate) == 16000:
+            try:
+                _txt = _dtype_race(self._transcribe_direct, pcm16)
+                if _txt is not None:
+                    return _txt
+            except Exception as _de:
+                log.debug("GigaAM: прямой вызов не вышел (%r) — через файл",
+                          _de)
         path = _to_wav_tempfile(pcm16, sample_rate)
         try:
             try:
-                result = self.model.transcribe(path)
+                result = _dtype_race(self.model.transcribe, path)
             except RuntimeError as e:
                 # ЧУЖОЙ ГЛОБАЛЬНЫЙ DTYPE (2026-08-15, живой лог 13:19:26).
                 # Пока грузится Qwen3-TTS, его загрузчик меняет torch-овский
@@ -361,6 +487,81 @@ class GigaAMEngine(STTEngine):
             return getattr(result, "text", result if isinstance(result, str) else str(result)).strip()
         finally:
             Path(path).unlink(missing_ok=True)
+
+    def _transcribe_direct(self, pcm16):
+        """Тензор из int16 -> энкодер -> декодер. Возвращает None, если
+        кусок длиннее предела короткой дорожки (тогда — файл и longform)."""
+        import torch
+        LAST_WORDS.words = None
+        m = self.model
+        x = np.asarray(pcm16, dtype=np.float32) / 32768.0
+        if x.size == 0:
+            return ""
+        _lim = int(getattr(__import__("gigaam.model", fromlist=["x"]),
+                           "LONGFORM_THRESHOLD", 25 * 16000))
+        if x.size > _lim:
+            return None
+        dev = m._device
+        wav = torch.from_numpy(x).to(dev).to(m._dtype).unsqueeze(0)
+        ln = torch.full([1], wav.shape[-1], device=dev)
+        with torch.inference_mode():
+            enc, el = m.forward(wav, ln)
+            text = m._decode(enc, el, ln, False)[0][0]
+            # ТАЙМИНГИ СЛОВ ИЗ CTC (06.09.2026): кадр 40 мс, argmax по
+            # голове — то же, что жадное декодирование, только с номером
+            # кадра у каждого куска слова. Нужны, чтобы поставить «…»
+            # ровно там, где слово запикали (stt/beep.py). Кладём в
+            # thread-local: движок зовут два рабочих потока разом.
+            try:
+                self._align(m, enc, x.size / 16000.0)
+            except Exception:
+                LAST_WORDS.words = None
+        return (text or "").strip()
+
+    def _align(self, m, enc, sec):
+        import torch
+        LAST_WORDS.words = None
+        head = getattr(m, "head", None)
+        dec = getattr(m, "decoding", None)
+        tok = getattr(dec, "tokenizer", None)
+        if head is None or tok is None or not hasattr(tok, "id_to_str"):
+            return
+        lp = head(enc)
+        if lp.dim() != 3:
+            return
+        lp0 = lp[0]
+        ids = lp0.argmax(-1).tolist()
+        if not ids:
+            return
+        # УВЕРЕННОСТЬ СЛОВА (06.09.2026): вероятность лучшей метки в кадре
+        # (голова отдаёт log-softmax). Среднее по кадрам слова — честная
+        # мера «расслышал / домыслил»: нужна, чтобы второе ухо заменяло
+        # только НЕуверенные обрывки («мо деньг»), а не спорило с ясным.
+        try:
+            mx = lp0.max(-1).values
+            conf = (mx.exp() if float(mx.max()) <= 0.0 else mx).tolist()
+        except Exception:
+            conf = [1.0] * len(ids)
+        fps = len(ids) / max(sec, 0.04)
+        blank = int(getattr(dec, "blank_id", len(ids) and 0))
+        words, cur, prev = [], None, None
+        for f, i in enumerate(ids):
+            if i == blank or i == prev:
+                prev = i
+                continue
+            prev = i
+            piece = str(tok.id_to_str(i))
+            if piece.startswith("\u2581") or cur is None:
+                if cur and cur[0]:
+                    words.append((cur[0], cur[1], cur[2], round(sum(cur[3]) / len(cur[3]), 2)))
+                cur = [piece.replace("\u2581", ""), f / fps, (f + 1) / fps, [float(conf[f])]]
+            else:
+                cur[0] += piece
+                cur[2] = (f + 1) / fps
+                cur[3].append(float(conf[f]))
+        if cur and cur[0]:
+            words.append((cur[0], cur[1], cur[2], round(sum(cur[3]) / len(cur[3]), 2)))
+        LAST_WORDS.words = words
 
     def _by_pieces(self, pcm16, sample_rate, seconds=20):
         """Разрезать длинную запись самим и склеить расшифровку.

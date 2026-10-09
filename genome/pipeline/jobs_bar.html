@@ -1,0 +1,73 @@
+<!--JOBS-->
+<style>
+/* ПОЛОСА ФОНОВЫХ РАБОТ над полем ввода чата: что ассистент делает прямо сейчас, по правде из /api/jobs */
+#jobsBar{display:flex;flex-direction:column;gap:6px;padding:0 14px 8px}
+#jobsBar .jctl{display:flex;align-items:center;gap:8px;font:11px var(--fm,monospace);color:#9a927f}
+#jobsBar select{background:rgba(255,255,255,.04);color:#e8dcc0;border:1px solid rgba(255,255,255,.1);border-radius:6px;font:11px var(--fm,monospace);padding:2px 4px;max-width:260px}
+#jobsBar .jb{border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.025);font:11.5px/1.45 var(--fm,monospace);color:#cfc6b4}
+#jobsBar .jh{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer}
+#jobsBar .jh i{width:8px;height:8px;border-radius:50%;flex:none;background:#888}
+#jobsBar .jb[data-s="идёт"] .jh i{background:#cfae70;animation:jbp 1.2s infinite}
+#jobsBar .jb[data-s="готово"] .jh i{background:#7fc79a}
+#jobsBar .jb[data-s="прервано"] .jh i,#jobsBar .jb[data-s="ошибка"] .jh i{background:#d4574e}
+#jobsBar .jb[data-s="мало данных"] .jh i{background:#d49a4e}
+@keyframes jbp{50%{opacity:.3}}
+#jobsBar .jh b{color:#e8dcc0;font-weight:600;white-space:nowrap}
+#jobsBar .jh span{white-space:nowrap}
+#jobsBar .jh{flex-wrap:wrap;row-gap:2px}
+#jobsBar .jp{padding:0 10px 7px;font:11px var(--fm,monospace);color:#cfc6b4}
+#jobsBar .jp i{display:block;height:4px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:4px;overflow:hidden}
+#jobsBar .jp i b{display:block;height:100%;background:#cfae70;transition:width .6s}
+#jobsBar .jr{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 7px}
+#jobsBar .jr i{font-style:normal;padding:1px 7px;border-radius:9px;border:1px solid rgba(255,255,255,.12);opacity:.55}
+#jobsBar .jr i.ok{opacity:1;border-color:rgba(127,199,154,.6);color:#9fe0b4}
+#jobsBar .jr b{font-weight:600;color:#cfae70;margin-left:4px}
+#jobsBar .jb[data-s="влито"] .jh i{background:#7fc79a}
+#jobsBar .jh em{font-style:normal;opacity:.65;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#jobsBar .jh u{text-decoration:none;opacity:.5;padding:0 2px}
+#jobsBar .jl{display:none;max-height:220px;overflow:auto;padding:0 10px 8px;border-top:1px solid rgba(255,255,255,.06)}
+#jobsBar .jb.open .jl{display:block}
+#jobsBar .jl div{padding:2px 0;opacity:.85}
+#jobsBar .jl span{color:#6bbeb4;margin-right:6px}
+</style>
+<script>
+(function(){
+  // скрытые крестиком завершённые работы помним в браузере (только удобство, не данные)
+  var скрыто={};try{скрыто=JSON.parse(localStorage.getItem("jobsHidden")||"{}")}catch(e){}
+  var открыт={};
+  // ---- учебный блок: модель анализа ----
+  // Анализ персонажа — сотни вызовов модели. Поэтому модель для него выбирается отдельно от чата и видна здесь;
+  // «как в чате» — берётся та, что выбрана внизу чата. Выбор лежит в logs/research_model.json (его читает chat.py).
+  var модели=[],выбранная={};
+  fetch("/api/keys").then(function(r){return r.json()}).then(function(d){(d.providers||[]).forEach(function(p){(p.models||[""]).forEach(function(m){модели.push({p:p.id,m:m})})})}).catch(function(){});
+  fetch("/api/research_model").then(function(r){return r.json()}).then(function(o){выбранная=o||{}}).catch(function(){});
+  function селектор(){return '<div class="jctl">модель анализа: <select id="jbModel"><option value="">как в чате</option>'+модели.map(function(x){var v=x.p+"|"+x.m;return '<option value="'+esc(v)+'"'+(выбранная.provider===x.p&&выбранная.model===x.m?" selected":"")+'>'+esc(x.p+" · "+(x.m||"по умолчанию"))+'</option>'}).join("")+'</select></div>'}
+  document.addEventListener("change",function(e){if(e.target.id!=="jbModel")return;var v=e.target.value.split("|");
+    выбранная=v[0]?{provider:v[0],model:v[1]||""}:{};fetch("/api/research_model",{method:"POST",body:JSON.stringify(выбранная)})});
+  function расход(u,j){if(!u)return "";var т=(u.prompt||0)+(u.completion||0);return " · вызовов "+(u.calls||0)+" · токенов "+(т>=1000?Math.round(т/1000)+"k":т)+(j&&j.rub!=null?" · поиск ≈"+(j.rub_search!=null?j.rub_search:"?")+" из "+(j.budget||50)+" ₽ · работа ≈"+(j.rub_work!=null?j.rub_work:"?")+" ₽":"")}
+  // ---- учебный блок: жив или завис ----
+  // У идущего прогона показываем, сколько секунд нет новых событий. До минуты — норма (модель думает, сайт отвечает).
+  // Больше минуты — жёлтым: процесс жив, но ждёт сеть или модель; это правда, а не «всё хорошо».
+  function тишина(п){var t=new Date(String(п.at||"").replace(" ","T"));if(isNaN(t))return "";var с=Math.round((Date.now()-t)/1000);
+    return с<15?"":(с<60?" · тишина "+с+" с":" · <span style=\"color:#e0b45a\">тишина "+Math.floor(с/60)+":"+String(с%60).padStart(2,"0")+" — ждёт сайт или модель</span>")}
+  function esc(x){return String(x).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+  function прошло(с){var t=new Date(String(с).replace(" ","T"));if(isNaN(t))return "";var m=Math.max(0,Math.round((Date.now()-t)/1000));return Math.floor(m/60)+":"+String(m%60).padStart(2,"0")}
+  function рисовать(список){var dock=document.getElementById("sideDock");if(!dock)return;var bar=document.getElementById("jobsBar");
+    if(!bar){bar=document.createElement("div");bar.id="jobsBar";var f=dock.querySelector("footer");if(!f)return;f.parentNode.insertBefore(bar,f)}
+    var видимые=список.filter(function(j){return !скрыто[j.job]});
+    if(document.activeElement&&document.activeElement.id==="jbModel")return;   // не перерисовывать, пока открыт список
+    var показан={};
+    bar.innerHTML=видимые.map(function(j){var п=j.последние[j.последние.length-1]||{};var гот="";
+      if(j.гот&&!показан[j.id]){показан[j.id]=1;гот='<div class="jr" title="анализ завершён, когда все этапы зелёные">'+j.гот.этапы.map(function(x){return '<i class="'+(x.ок?"ok":"")+'" title="'+esc(x.ч)+'">'+esc(x.э)+'</i>'}).join("")+'<b>персонаж готов: '+j.гот.готово+' из '+j.гот.всего+' · дальше: '+esc(j.гот.дальше)+'</b></div>'}
+      return '<div class="jb'+(открыт[j.job]?" open":"")+'" data-s="'+esc(j.сост)+'" data-j="'+esc(j.job)+'"><div class="jh"><i></i><b>'+esc(j.имя)+'</b><span>'+esc(j.вид||"анализ")+'</span>'+
+        '<span>'+esc(j.сост)+(j.сост==="идёт"?" · "+прошло(j.started)+(j.вид==="автопилот"?"":тишина(п)):"")+' · <b>'+esc(j.model||"?")+'</b>'+(j.вид==="проверка"||j.вид==="автопилот"||j.вид==="корпус"?esc(" · вызовов "+((j.usage||{}).calls||0)+(j.rub!=null?" · ≈"+j.rub+" ₽":"")):' · источников '+j.источников+' · реплик ~'+j.реплик+esc(расход(j.usage,j)))+'</span>'+
+        '<em>'+esc((п.stage?п.stage+": ":"")+(п.message||""))+'</em>'+(j.сост!=="идёт"?'<u title="убрать из полосы" data-x>×</u>':"")+'</div>'+(j.прогресс&&j.сост==="идёт"?'<div class="jp">прогон анализа: шаг '+j.прогресс.номер+' из '+j.прогресс.из+' · <b>'+esc(j.прогресс.имя)+'</b>'+(j.прогресс.внутри?' · '+esc(j.прогресс.внутри):'')+' · '+j.прогресс.процент+'%'+(j.прогресс.осталось!=null?' · осталось ≈ '+j.прогресс.осталось+' мин':'')+'<i><b style="width:'+j.прогресс.процент+'%"></b></i></div>':'')+(j.вид==="автопилот"&&j.сост==="идёт"&&/прогон анализа|сверяю|Собираю/.test(п.message||"")?'<div class="jp">автопилот ждёт: '+esc(п.message)+'</div>':'')+гот+
+        '<div class="jl">'+j.последние.slice().reverse().map(function(e){return '<div><span>'+esc(String(e.at||"").slice(11,19))+' '+esc(e.stage)+'</span>'+esc(e.message)+'</div>'}).join("")+'</div></div>'}).join("")}
+  document.addEventListener("click",function(e){var jb=e.target.closest&&e.target.closest("#jobsBar .jb");if(!jb)return;var id=jb.getAttribute("data-j");
+    if(e.target.hasAttribute("data-x")){скрыто[id]=1;try{localStorage.setItem("jobsHidden",JSON.stringify(скрыто))}catch(x){}jb.remove();return}
+    открыт[id]=!открыт[id];jb.classList.toggle("open")});
+  function опрос(){fetch("/api/jobs").then(function(r){return r.json()}).then(рисовать).catch(function(){})}
+  опрос();setInterval(опрос,3000);
+})();
+</script>
+<!--/JOBS-->

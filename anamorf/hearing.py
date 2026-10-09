@@ -115,8 +115,86 @@ _ONOMA = {
 # висит, пока он длится, и снимается, когда он ушёл. Наружу уезжает
 # только ИЗМЕНЕНИЕ картины; звук мигает на границе порога — держим его
 # в картине ещё пару секунд (linger), чтобы метка не дрожала.
-_active = {}          # low-имя -> {"ru","en","ono","p","last"}
+# ═══ ЗВУКИ ЧЕЛОВЕКА — КАК ИХ СЛЫШИТ ЧЕЛОВЕК (06.09.2026) ═══
+# Владелец, о разметке ролика: «правильнее делает разметки смеха… крика…
+# чтобы вы именно звуки прям как люди воспринимали не как текст а как
+# звуки», «система должна определять от звуков природы до искусственных и
+# отмечать в ролике это где что она услыхала».
+#
+# Живой замер (tools/sound_probe.py, первые 20 с ролика ДНК, окно 1 с):
+#   крик Снейла на 6.5-7.5 с уши назвали «Animal 0.63 · Dog 0.29 ·
+#   Wail, moan 0.14 · Groan 0.34 · Screaming 0.12»; смех на 9.5 —
+#   «Laughter 0.17»; запиканное слово на 16.0 — «Beep, bleep 0.44».
+# То есть слышат всё, но: (1) человеческий вопль спектрально похож на
+# собачий вой, и родовой «зверь» берёт больше баллов; (2) смех и крик
+# редко набирают общий порог 0.2-0.35 — у них свои, ниже. Поэтому:
+#   - у каждого человеческого звука СВОЙ порог (таблица ниже);
+#   - если в окне есть человеческий звук — «животные» в этом окне молчат:
+#     в комнате с людьми вопль — это человек, а не собака;
+#   - у каждой метки есть РОД (kind): «миг» — разовое (крик, смех, чих,
+#     пик), уходит в ленту отметкой на месте; «фон» — длящееся (музыка,
+#     дождь, клавиатура), живёт в чате как состояние, пока звучит.
+_HUMAN_EV = {
+    "screaming": ("крик", 0.10), "yell": ("крик", 0.10),
+    "shout": ("крик", 0.12), "bellow": ("крик", 0.12),
+    "wail, moan": ("крик", 0.12), "groan": ("крик", 0.20),
+    "children shouting": ("крик", 0.15), "whoop": ("крик", 0.12),
+    "laughter": ("смех", 0.12), "giggle": ("смех", 0.10),
+    "chuckle, chortle": ("смех", 0.10), "belly laugh": ("смех", 0.10),
+    "snicker": ("смех", 0.10), "baby laughter": ("смех", 0.10),
+    "crying, sobbing": ("плач", 0.20), "baby cry, infant cry": ("плач", 0.20),
+    "cough": ("кашель", 0.30), "sneeze": ("чих", 0.30),
+    "whistling": ("свист", 0.30), "singing": ("пение", 0.35),
+    "applause": ("аплодисменты", 0.25), "clapping": ("хлопки", 0.30),
+    "cheering": ("ликование", 0.20), "gasp": ("вздох испуга", 0.25),
+    "beep, bleep": ("пик", 0.20), "busy signal": ("пик", 0.25),
+}
+_NATURE = ("fire", "crackle", "rain", "wind", "water", "stream", "river",
+           "waves", "ocean", "thunder", "bird", "chirp", "insect", "cricket",
+           "frog", "owl", "rustling", "leaves", "waterfall", "drip", "snow")
+_ANIMAL = ("animal", "dog", "domestic animals", "wild animals", "bark",
+           "howl", "bow-wow", "yip", "whimper", "growling", "cat", "meow",
+           "caterwaul", "roar", "livestock")
+_MOMENT = ("крик", "смех", "плач", "кашель", "чих", "свист", "хлопки",
+           "аплодисменты", "ликование", "вздох испуга", "пик", "щелчок",
+           "стук", "хлопок двери", "звон стекла", "звон осколков", "бух",
+           "шлеп", "чоп", "бульк")
+
+
+# ЗВУК — БУКВАМИ (06.09.2026, владелец: «я хлопнул в ладоши или чихнул —
+# это можно отобразить „хлоп-хлоп" или „апчхи"»). Для человеческих
+# звуков — своя запись голосом, как её написал бы человек в чате.
+_HUMAN_ONO = {"крик": "а-а-а!", "смех": "ха-ха", "плач": "у-у-у",
+              "кашель": "кхе-кхе", "чих": "апчхи", "свист": "фьюить",
+              "хлопки": "хлоп-хлоп", "аплодисменты": "хлоп-хлоп-хлоп",
+              "пик": "пи-и-п", "вздох испуга": "ах"}
+
+
+def _kind(ru: str) -> str:
+    return "миг" if ru in _MOMENT else "фон"
+
+
+def _human_events(tags):
+    """-> [(ru, p)] человеческие звуки из окна по своим порогам."""
+    out = {}
+    for name, p in tags:
+        low = str(name).lower()
+        hit = _HUMAN_EV.get(low)
+        if hit and float(p) >= hit[1]:
+            ru = hit[0]
+            if float(p) > out.get(ru, 0.0):
+                out[ru] = float(p)
+    return sorted(out.items(), key=lambda kv: -kv[1])
+
+
+_active = {}          # low-имя -> {"ru","en","ono","p","last"}  (канал по умолчанию)
 _last_sent = None     # какой набор ключей уже показан
+# ПО КАНАЛАМ (06.09.2026): ролик из петли и голос из Discord — разные
+# комнаты. Раньше их куски по 100 мс перемежались в одном буфере, и окно
+# в секунду было винегретом из двух источников — уши слышали «скретч» и
+# «гудок». Теперь у каждого канала свой буфер, своё окно, свои метки.
+_active_by = {}       # src -> {low: ent}
+_last_by = {}         # src -> keys
 
 # РОДОВЫЕ МЕТКИ МОЛЧАТ, КОГДА ЕСТЬ ЧАСТНАЯ (2026-08-15, живой случай:
 # губная трель дала «собака 44% · Animal 44% · Domestic animals 35%» —
@@ -210,9 +288,43 @@ def _spectral_veto(tags, chunk):
         return tags
 
 
-def _feed_sounds(tags):
-    global _last_sent
+def _feed_sounds(tags, rms=None, src=None):
+    global _last_sent, _active
     now = time.time()
+    if src is None:
+        src = STATE.get("src", "")
+    # музыка в канале → узнавание (Shazam) и караоке; см. music_id.maybe
+    try:
+        from anamorf import music_id as _mid
+        _mp = max([float(p) for n, p in (tags or []) if str(n).lower() in ("music", "музыка")] or [0.0])
+        _mid.maybe(src or "mic", _mp)
+    except Exception:
+        pass
+    _active = _active_by.setdefault(src, {})
+    _last_sent = _last_by.get(src)
+    # ТИШИНА — ЭТО ТИШИНА (06.09.2026). Владелец: «я сижу в наушниках,
+    # слышу тишину, а он у нас слышит огонь». Классификатор на шумовом
+    # полу честно находит «огонь» (шипение) и «пулемёт» (щелчки шумодава
+    # Discord) — человек ниже порога слышимости не слышит ничего. Ниже
+    # уровня — новых меток не заводим, старые сами гаснут по linger.
+    if rms is None:
+        try:
+            _b = _bufs.get(src, _buf)[-int(float(CFG.get("hearing.window_s", WINDOW_S)) * SR_IN):]
+            rms = float(np.sqrt(np.mean(_b ** 2))) if _b.size else 0.0
+        except Exception:
+            rms = None
+    STATE["rms"] = rms
+    if rms is not None and rms < float(CFG.get("hearing.feed_min_rms", 0.006)):
+        tags = []
+    # ШУМ МИКРОФОНА — ПОСТОЯННАЯ МЕТКА (06.09.2026). Владелец: «если система
+    # слышит шумы из микро, такое состояние с ней всегда — могла бы просто
+    # постоянную метку иметь „шум", пока я шумодав не подрублю». Звук есть,
+    # речи нет, ничего конкретного уши не назвали — это и есть шум.
+    if (rms is not None and src == "mic"
+            and rms >= float(CFG.get("hearing.noise_rms", 0.004))
+            and float(STATE.get("speech", 0.0)) < 0.3
+            and not any(float(p) >= 0.3 for _n, p in tags)):
+        tags = list(tags) + [("Noise", 0.99)]
     linger = float(CFG.get("hearing.feed_linger_s", 2.5))
     conf_n = int(CFG.get("hearing.confirm_windows", 2))
     out_n = int(CFG.get("hearing.confirm_windows_outdoor", 3))
@@ -223,9 +335,30 @@ def _feed_sounds(tags):
         and str(n).lower() not in _GENERIC
         and not any(k in str(n).lower() for k in _FEED_SKIP)
         for n, p in tags[:3])
+    # человеческие звуки — по своим порогам, из ВСЕХ меток окна
+    _hum = _human_events(tags)
+    cand = [(ru, p, ru) for ru, p in _hum]
     for name, p in tags[:3]:
         low = str(name).lower()
+        if low in _HUMAN_EV:
+            continue                      # уже учтён выше по своему порогу
+        if _hum and any(k in low for k in _ANIMAL):
+            continue                      # в комнате с людьми вопль — человек
         if p < float(CFG.get("hearing.feed_min", 0.35)):
+            continue
+        # фоновые метки (музыка, дождь, клавиатура) — только уверенные:
+        # человеческие звуки идут выше по своим порогам, а «фон» на 0.2
+        # это чаще шумовой пол, чем звук. На тихом звуке (комнатный фон,
+        # rms < 0.03) планка ещё выше: «артиллерия 0.45» из шороха — не звук.
+        _bg_min = float(CFG.get("hearing.feed_min_bg", 0.35))
+        if rms is not None and rms < float(CFG.get("hearing.quiet_rms", 0.03)):
+            _bg_min = max(_bg_min, float(CFG.get("hearing.feed_min_bg_quiet", 0.55)))
+        # ПРИРОДА ПОД РЕЧЬЮ (владелец, аниме 06.09: «звуки огня есть, а метки
+        # не было»). Костёр, дождь, ветер, птицы, сверчки под диалогом дают
+        # 0.2-0.3 — человек их слышит, планка для них ниже
+        if any(k in low for k in _NATURE):
+            _bg_min = min(_bg_min, float(CFG.get("hearing.feed_min_nature", 0.22)))
+        if p < _bg_min:
             continue
         if any(k in low for k in _FEED_SKIP):
             continue
@@ -234,16 +367,26 @@ def _feed_sounds(tags):
         _out = any(k in low for k in _OUTDOOR)
         if _out and p < out_min:
             continue
+        cand.append((low, p, name))
+    for low, p, name in cand:
+        _out = any(k in low for k in _OUTDOOR)
         ent = _active.get(low)
         if ent is None:
-            ono = ""
-            for k, v in _ONOMA.items():
-                if k in low:
-                    ono = v
-                    break
-            _active[low] = {"ru": _ru(name), "en": name, "ono": ono,
+            ono = _HUMAN_ONO.get(low, "")
+            if not ono:
+                for k, v in _ONOMA.items():
+                    if k in low:
+                        ono = v
+                        break
+            _ru_name = name if low in {v[0] for v in _HUMAN_EV.values()} else _ru(name)
+            _active[low] = {"ru": _ru_name, "en": name, "ono": ono,
                             "p": round(float(p), 2), "last": now,
-                            "seen": 1, "need": out_n if _out else conf_n}
+                            "kind": _kind(_ru_name), "born": now,
+                            "seen": 1,
+                            # миг (смех, крик, пик) живёт полсекунды — ждать
+                            # второго окна значит его не услышать
+                            "need": out_n if _out else (
+                                1 if _kind(_ru_name) == "миг" else conf_n)}
         else:
             ent["p"] = round(float(p), 2)
             ent["last"] = now
@@ -257,11 +400,20 @@ def _feed_sounds(tags):
              if int(v.get("seen", 1)) >= int(v.get("need", 1))}
     keys = tuple(sorted(ready))
     if keys != _last_sent:
+        _prev = set(_last_sent or ())
         _last_sent = keys
-        cur = [{k: v[k] for k in ("ru", "en", "ono", "p")}
+        _last_by[src] = keys
+        cur = [{k: v.get(k) for k in ("ru", "en", "ono", "p", "kind")}
                for v in ready.values()]
-        STATE["sounds"] = [{"now": cur, "dist": STATE.get("dist", ""),
-                            "ts": now}]
+        on = [{k: v.get(k) for k in ("ru", "en", "ono", "p", "kind")}
+              for k_, v in ready.items() if k_ not in _prev]
+        off = [k_ for k_ in _prev if k_ not in ready]
+        if on or off:
+            log.info("Уши (%s, %.4f): +%s -%s", src, rms or 0.0,
+                     [(e["ru"], e["p"]) for e in on], off)
+        STATE["sounds"] = (STATE.get("sounds") or []) + [
+            {"now": cur, "on": on, "off": off,
+             "dist": STATE.get("dist", ""), "src": src, "ts": now}]
 
 
 def pop_sounds() -> list:
@@ -276,6 +428,8 @@ def pop_event():
     return ev
 
 _buf = np.zeros(0, dtype=np.float32)
+_bufs = {}            # src -> буфер в долях [-1, 1]
+_fresh = {}           # src -> сколько новых отсчётов с прошлого окна
 _lock = threading.Lock()
 _worker = None
 _model = None
@@ -366,6 +520,20 @@ _RU = {
     "ocean": "океан", "waves, surf": "прибой", "splash, splatter": "плеск",
     "gurgling": "журчание", "fire": "огонь", "crackle": "потрескивание",
     "hail": "град", "sonar": "сонар",
+    # «gunfire» содержит «fire» и переводилось «огнём» (06.09.2026, живой
+    # случай: тишина в наушниках — «огонь»); теперь своё слово
+    "gunshot, gunfire": "выстрел", "machine gun": "пулемёт",
+    # инструменты и природа (журнал аниме 06.09: «Guitar» шёл по-английски)
+    "guitar": "гитара", "acoustic guitar": "гитара", "electric guitar": "электрогитара",
+    "bass guitar": "бас", "piano": "пианино", "electric piano": "пианино",
+    "organ": "орган", "violin, fiddle": "скрипка", "cello": "виолончель",
+    "orchestra": "оркестр", "choir": "хор", "synthesizer": "синтезатор",
+    "harp": "арфа", "flute": "флейта", "trumpet": "труба", "saxophone": "саксофон",
+    "bell": "колокол", "church bell": "колокол", "wind chime": "колокольчики",
+    "fire": "огонь", "crackle": "потрескивание", "fire crackle": "костёр",
+    "wood": "дерево", "chirp tone": "писк",
+    "fusillade": "стрельба", "artillery fire": "артиллерия",
+    "cap gun": "пугач", "fireworks": "фейерверк", "firecracker": "петарда",
     # дом и вещи
     "door": "дверь", "slam": "хлопок двери", "creak": "скрип",
     "squeal": "визг", "cupboard open or close": "шкаф",
@@ -491,18 +659,36 @@ def _loop():
     _load()
     if STATE["off"]:
         return
-    need = int(WINDOW_S * SR_IN)
     while True:
-        time.sleep(EVERY_S)
+        # окно/шаг — из пульта: для ролика 1.0/0.5 (события длиной в
+        # полсекунды, крик и смех, не тонут в двухсекундном окне речи)
+        need = int(float(CFG.get("hearing.window_s", WINDOW_S)) * SR_IN)
+        time.sleep(float(CFG.get("hearing.every_s", EVERY_S)))
         if not enabled():
             continue
+        hop = int(float(CFG.get("hearing.every_s", EVERY_S)) * SR_IN * 0.8)
         with _lock:
-            if len(_buf) < need // 2:
-                continue
-            chunk = _buf[-need:].copy()
+            todo = []
+            for _s, _b in list(_bufs.items()):
+                if len(_b) < need // 2 or _fresh.get(_s, 0) < hop:
+                    continue
+                _fresh[_s] = 0
+                todo.append((_s, _b[-need:].copy()))
+        if not todo:
+            continue
+        # «главный» канал для общего состояния (речь ли сейчас) — самый громкий
+        todo.sort(key=lambda t: -float(np.sqrt(np.mean(t[1] ** 2))))
+        for _src_i, chunk in todo[1:]:
+            try:
+                _tg, _sp = _classify(chunk)
+                _feed_sounds(_spectral_veto(_tg, chunk),
+                             float(np.sqrt(np.mean(chunk ** 2))), _src_i)
+            except Exception as _e_i:
+                log.debug("уши (%s) споткнулись: %s", _src_i, _e_i)
+        src_main, chunk = todo[0]
         try:
             tags, speech = _classify(chunk)
-            STATE.update(tags=tags, speech=speech, ts=time.time())
+            STATE.update(tags=tags, speech=speech, ts=time.time(), src=src_main)
             try:
                 from anamorf import sound_map
                 _top_ru = _ru(tags[0][0]) if tags else ""
@@ -551,7 +737,8 @@ def _loop():
             except Exception as _ce:
                 log.debug("CLAP пропущен: %s", _ce)
             try:
-                _feed_sounds(_spectral_veto(tags, chunk))
+                _feed_sounds(_spectral_veto(tags, chunk),
+                             float(np.sqrt(np.mean(chunk ** 2))), src_main)
             except Exception:
                 pass
             # разовые события: чих/кашель/крик — с порогом из таблицы
@@ -628,22 +815,45 @@ def _loop():
             log.debug("уши споткнулись: %s", e)
 
 
-def feed(pcm):
+def feed(pcm, src=""):
     """Кормить из того же места, что и voiceprint — из аудиоцикла."""
     global _buf, _worker
     if not enabled():
         return
+    if src:
+        STATE["src"] = src
+    STATE["scale"] = 1.0
     try:
-        a = np.asarray(pcm, dtype=np.float32).ravel()
+        _raw = np.asarray(pcm)
+        a = _raw.astype(np.float32).ravel()
+        # ОДНА ШКАЛА ДЛЯ ВСЕХ (06.09.2026): int16 из микрофона/петли и
+        # float из шумодава сходятся в один буфер — в долях [-1, 1], как
+        # обучен классификатор. Иначе уровень тишины «прыгал» 0.00007 ↔ 1600.
+        if _raw.dtype.kind in "iu":
+            a = a / 32768.0
     except Exception:
         return
     if not a.size:
         return
+    # копия в буфер узнавания музыки (anamorf/music_id.py, 12 с на канал)
+    try:
+        from anamorf import music_id as _mid
+        _mid.feed(a, src or "mic")
+    except Exception:
+        pass
     with _lock:
-        _buf = np.concatenate([_buf, a])[-int(WINDOW_S * SR_IN * 1.5):]
-    if _worker is None:
-        _worker = threading.Thread(target=_loop, daemon=True, name="ears")
-        _worker.start()
+        _k = src or "mic"
+        _keep = int(max(WINDOW_S, float(CFG.get("hearing.window_s", WINDOW_S))) * SR_IN * 1.5)
+        _prev = _bufs.get(_k)
+        _bufs[_k] = (np.concatenate([_prev, a]) if _prev is not None and _prev.size else a)[-_keep:]
+        _fresh[_k] = _fresh.get(_k, 0) + a.size
+        _buf = _bufs[_k]
+    # старт под замком: два канала (петля и Discord) звали feed разом, и
+    # уши поднимались дважды — две модели на видеокарте (журнал 18:30/18:31)
+    with _lock:
+        if _worker is None:
+            _worker = threading.Thread(target=_loop, daemon=True, name="ears")
+            _worker.start()
 
 
 # звуки, которые чаще всего заводят фантомные «голоса» в карте. Живой

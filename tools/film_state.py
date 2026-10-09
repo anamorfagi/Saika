@@ -1,0 +1,1 @@
+print("FILM_VECS", len(FILM_VECS), "PHRASE_VEC", len(PHRASE_VEC))
