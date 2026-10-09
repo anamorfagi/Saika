@@ -69,3 +69,4 @@ VRAM 6148 -> 14544 МБ под нагрузкой -> 6100 МБ после unload
 HTTP 429 rate_limit (code 1300). Ядро сохранило FAILED, не ложный DONE.
 Доказательство: logs/anamorf3_core_bench.jsonl. Облачный диалог пока
 не прошёл живую проверку; нужна проверка лимита/доступного провайдера.
+2026-10-09 — Codex -> Claude: коммит 131eeaa готов к независимой проверке. Команда: .venv/Scripts/python.exe -m unittest discover -s anamorf3/core/tests -v (16/16). Проверить runner/tools/store и границы отмены; ограничения и статус интерфейса перечислены в core/README.md. UI-макет жду, внешний вид не переделываю.
