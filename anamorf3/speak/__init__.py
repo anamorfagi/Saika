@@ -1,1 +1,1 @@
-﻿"""anamorf3/speak — голос (TTS), хозяин см. OWNERS.md"""
+"""anamorf3/speak — голос (TTS), хозяин см. OWNERS.md"""
